@@ -28,17 +28,24 @@ A `shared/` directory (symlinked into each role) holds cross-role conventions. A
 ## Quick start (~5 minutes)
 
 1. Click **Use this template** → create your `claude-personas` repo (memory-only repo)
-2. Clone it once: `git clone git@github.com:you/claude-personas.git`
-3. For each role you want active in your **project repo**:
-   - Create a project worktree for that role (e.g. `git worktree add ../my-app-pm -b pm/workspace`)
-   - Inside that project worktree, copy `claude-personas/settings.local.json.example` →
+2. Clone it once, anywhere — one clone serves many project repos:
+   `git clone git@github.com:<your-github-username>/claude-personas.git ~/projects/claude-personas`
+3. For each role you want active, switch to your **project repo** (not claude-personas)
+   and run these steps from there:
+   - Create a project worktree for that role:
+     `git worktree add ../my-app-pm -b pm/workspace`
+   - Inside that project worktree, copy
+     `<your-claude-personas-clone>/settings.local.json.example` →
      `.claude/settings.local.json`, with `autoMemoryDirectory` pointing at the matching
-     role folder inside your claude-personas clone (e.g. `/Users/you/projects/claude-personas/pm`)
-   - Inside that project worktree, copy `claude-personas/CLAUDE.local.md.example` →
-     `CLAUDE.local.md`, fill in the role label and the same absolute path, and add
-     `CLAUDE.local.md` to your project repo's `.gitignore`
+     role folder inside your claude-personas clone (e.g.
+     `/Users/you/projects/claude-personas/pm`)
+   - Inside that project worktree, copy
+     `<your-claude-personas-clone>/CLAUDE.local.md.example` → `CLAUDE.local.md`, fill
+     in the role label and the same absolute path, and add `CLAUDE.local.md` to your
+     project repo's `.gitignore`
 4. Open Claude Code in the project worktree → it auto-loads the right `MEMORY.md`
-5. Browse `examples/` for patterns, copy what fits into your role's `feedback_*.md` files
+5. Browse `examples/` for patterns, copy what fits into your role's `feedback_*.md`
+   files (then commit + push from your claude-personas clone to keep them durable)
 
 ## How it works
 
