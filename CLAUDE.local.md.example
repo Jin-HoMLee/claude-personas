@@ -1,0 +1,27 @@
+# Local notes (this machine only — gitignored)
+
+<!--
+  Copy this file to CLAUDE.local.md inside each PROJECT worktree
+  (not inside claude-personas). Replace the role and absolute path
+  below with values for that worktree, then add CLAUDE.local.md to
+  your project repo's .gitignore (it contains a machine-specific path).
+
+  Each project worktree gets its own CLAUDE.local.md — same role
+  it's pointed at via autoMemoryDirectory, same absolute path.
+-->
+
+## Worktree role: <Developer | PM | Designer>
+
+This is the <Role> worktree. claude-personas role memory and behavior rules
+are in `autoMemoryDirectory` (loaded automatically at session start).
+
+## claude-personas memory absolute path
+
+Use this prefix with the Read tool when accessing role memory or shared memory:
+
+```
+/absolute/path/to/claude-personas/<role>/
+```
+
+- Role MEMORY.md: `<above>/MEMORY.md`
+- Shared MEMORY.md: `<above>/shared/MEMORY.md` (the `shared/` folder is a symlink to `../shared/`)

@@ -127,14 +127,10 @@ inside `claude-personas`. This solves a chicken-and-egg problem: the role's
 the role's MEMORY.md itself*, Claude needs an absolute path — and that path
 is machine-specific.
 
-Example `CLAUDE.local.md` for the Developer project worktree:
-
-```markdown
-# Local context — not committed
-
-Memory directory for this session:
-/Users/you/projects/claude-personas/developer/
-```
+See `CLAUDE.local.md.example` in this repo for a ready-to-copy template — it
+includes the role label, the absolute-path code block, and the role/shared
+MEMORY.md path conventions. Copy it into each project worktree, fill in the
+role and path, and add it to your project repo's `.gitignore`.
 
 The role's `MEMORY.md` "Always in effect" section instructs Claude to read
 this file for the absolute path before doing anything else.
@@ -149,8 +145,9 @@ this file for the absolute path before doing anything else.
      that *project worktree* (not inside claude-personas), and update
      `autoMemoryDirectory` to the absolute path of the matching role folder
      inside your claude-personas clone
-   - Create a `CLAUDE.local.md` in the same project worktree (gitignored)
-     with the same absolute path
+   - Copy `CLAUDE.local.md.example` → `CLAUDE.local.md` in the same project
+     worktree (and add it to your project repo's `.gitignore`), filling in
+     the role label and the same absolute path
 4. Open Claude Code in that project worktree → it auto-loads the right
    `MEMORY.md`
 5. Browse `examples/` for patterns to adopt into your `feedback_*.md` files
