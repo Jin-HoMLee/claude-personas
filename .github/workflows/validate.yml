@@ -1,0 +1,26 @@
+name: validate
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: settings.local.json.example is valid JSON
+        run: python3 -c "import json,sys; json.load(open('settings.local.json.example'))" && echo "OK"
+
+      - name: symlinks resolve
+        run: |
+          for role in developer pm designer; do
+            target=$(readlink "$role/shared")
+            resolved="$role/$target"
+            if [ ! -d "$resolved" ]; then
+              echo "FAIL: $role/shared -> $target does not resolve"
+              exit 1
+            fi
+            echo "OK: $role/shared -> $target"
+          done
