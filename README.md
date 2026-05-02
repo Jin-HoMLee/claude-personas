@@ -1,28 +1,26 @@
 # claude-personas
 
-Role-aware persistent memory for solo multi-persona Claude Code workflows.
+**Lead your own AI team.** Role-aware persistent memory for solo multi-persona Claude Code workflows.
+
+![Four VSCode windows running cerebrum, Scientist, Developer, and PM personas in parallel on macOS](assets/mac-vscode-personas-overview.png)
+
+*A real setup: four roles working in parallel — `cerebrum` (shared memory), Scientist, Developer, and PM — each in its own VSCode window, each with its own `MEMORY.md`.*
 
 ---
 
 ## The problem
 
-Claude Code auto-loads memory from `autoMemoryDirectory`. But when you play multiple
-roles on a project — writing code Monday, triaging issues Tuesday, reviewing results
-Wednesday — one memory directory isn't enough. Developer Claude shouldn't wade through
-PM rules; PM Claude shouldn't inherit Developer conventions.
+Claude Code auto-loads memory from `autoMemoryDirectory`. Great — until you start playing multiple roles on the same project. Coding Monday, triaging issues Tuesday, reviewing results Wednesday: your Developer Claude shouldn't have to wade through PM rules, and your PM Claude shouldn't inherit Developer habits. One memory directory mashes them all together.
+
+You need a roster, not a single shared brain.
 
 ## What this gives you
 
-A scaffold where each role has its own `MEMORY.md`. `claude-personas` is a
-**memory-only repo** — you clone it once and never use it as your project codebase.
-Your project repo stays separate. From each project worktree, you point Claude at
-the matching role folder inside `claude-personas`, and Claude auto-loads the right
-`MEMORY.md` based on which project worktree you opened.
+Each persona or role on your team gets its own `MEMORY.md` — a playbook of habits, conventions, and rules tailored to that role. `claude-personas` is a **memory-only repo** — you clone it once and never use it as your project codebase. Your actual project repo stays separate. For each role you want active, you create a project worktree and point Claude at the matching persona folder inside `claude-personas`. Claude auto-loads the right playbook based on which worktree you opened.
 
-A `shared/` directory (symlinked into each role) holds cross-role conventions. An
-`examples/` tree of ~25 real-world patterns is included for opt-in adoption.
+A `shared/` folder (linked into every persona) holds team-wide conventions — things every role on your team should know. An `examples/` tree of ~25 real-world patterns is included if you want to crib plays from another team.
 
-**For:** solo developers who genuinely play multiple personas across git worktrees.
+**For:** solo developers who lead multiple personas across git worktrees.
 **Not for:** multi-human teams, agent-to-agent coordination, or automated memory capture.
 
 ## Quick start (~5 minutes)
@@ -49,7 +47,7 @@ A `shared/` directory (symlinked into each role) holds cross-role conventions. A
 
 ## How it works
 
-```
+```text
 claude-personas/                ← memory-only repo (clone once, reusable across projects)
 ├── shared/MEMORY.md            ← cross-role conventions (linked into every role)
 ├── developer/
