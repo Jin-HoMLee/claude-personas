@@ -1,5 +1,7 @@
 # claude-personas
 
+[![CI](https://github.com/Jin-HoMLee/claude-personas/actions/workflows/validate.yml/badge.svg)](https://github.com/Jin-HoMLee/claude-personas/actions/workflows/validate.yml)
+
 **Lead your own AI team.** Role-aware persistent memory for solo multi-persona Claude Code workflows.
 
 ![Four VSCode windows running cerebrum, Scientist, Developer, and PM personas in parallel on macOS](assets/mac-vscode-personas-overview.png)
@@ -18,7 +20,7 @@ You need a roster, not a single shared brain.
 
 Each persona or role on your team gets its own `MEMORY.md` — a playbook of habits, conventions, and rules tailored to that role. `claude-personas` is a **memory-only repo** — you clone it once and never use it as your project codebase. Your actual project repo stays separate. For each role you want active, you create a project worktree and point Claude at the matching persona folder inside `claude-personas`. Claude auto-loads the right playbook based on which worktree you opened.
 
-A `shared/` folder (linked into every persona) holds team-wide conventions — things every role on your team should know. An `examples/` tree of ~25 real-world patterns is included if you want to crib plays from another team.
+A `shared/` folder (linked into every persona) holds team-wide conventions — things every role on your team should know. An `examples/` tree of ~28 real-world patterns is included if you want to crib plays from another team.
 
 **For:** solo developers who lead multiple personas across git worktrees.
 **Not for:** multi-human teams, agent-to-agent coordination, or automated memory capture.
@@ -59,7 +61,7 @@ claude-personas/                ← memory-only repo (clone once, reusable acros
 ├── designer/
 │   ├── MEMORY.md               ← Designer-only rules
 │   └── shared -> ../shared
-└── examples/                   ← ~25 sanitized real-world patterns, opt-in
+└── examples/                   ← ~28 sanitized real-world patterns, opt-in
     ├── shared/
     ├── developer/
     ├── pm/
@@ -138,4 +140,4 @@ claude-personas clone can serve many different project repos.
 
 ## License
 
-MIT
+[MIT](LICENSE)
