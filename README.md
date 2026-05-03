@@ -103,6 +103,14 @@ same absolute path in plain text so the role's `MEMORY.md` can instruct Claude t
 it. This solves a chicken-and-egg problem: the memory files use relative paths, but
 Claude needs an absolute path to find them in the first place.
 
+**Add both to your project repo's `.gitignore`** — they contain machine-specific
+absolute paths that won't work on another machine:
+
+```
+CLAUDE.local.md
+.claude/settings.local.json
+```
+
 ## Windows
 
 Git symlinks require Developer Mode (Settings → Privacy & Security → Developer Mode). If

@@ -70,13 +70,32 @@ if [[ -e "$WORKTREE_PATH" ]]; then
   exit 1
 fi
 
+if git show-ref --verify --quiet "refs/heads/$BRANCH_NAME"; then
+  echo "Error: branch '$BRANCH_NAME' already exists." >&2
+  echo "Pass a different branch name as the 3rd argument, or delete the existing branch first." >&2
+  exit 1
+fi
+
 echo "Creating worktree:"
 echo "  Path:   $WORKTREE_PATH"
 echo "  Branch: $BRANCH_NAME"
 echo "  Role:   $ROLE → $ROLE_DIR"
 echo ""
 
+# If a step after `git worktree add` fails, undo the worktree + branch so the
+# user can re-run the script without first cleaning up by hand.
+WORKTREE_CREATED=""
+cleanup_on_error() {
+  if [[ -n "$WORKTREE_CREATED" && -d "$WORKTREE_CREATED" ]]; then
+    echo "Cleaning up partial worktree at $WORKTREE_CREATED..." >&2
+    git worktree remove --force "$WORKTREE_CREATED" 2>/dev/null || true
+    git branch -D "$BRANCH_NAME" 2>/dev/null || true
+  fi
+}
+trap cleanup_on_error ERR
+
 git worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME"
+WORKTREE_CREATED="$WORKTREE_PATH"
 
 WORKTREE_ABS="$( cd "$WORKTREE_PATH" && pwd )"
 
