@@ -30,19 +30,17 @@ A `shared/` folder (linked into every persona) holds team-wide conventions — t
 1. Click **Use this template** → create your `claude-personas` repo (memory-only repo)
 2. Clone it once, anywhere — one clone serves many project repos:
    `git clone git@github.com:<your-github-username>/claude-personas.git ~/projects/claude-personas`
-3. For each role you want active, switch to your **project repo** (not claude-personas)
-   and run these steps from there:
-   - Create a project worktree for that role:
-     `git worktree add ../my-app-pm -b pm/workspace`
-   - Inside that project worktree, copy
-     `<your-claude-personas-clone>/settings.local.json.example` →
-     `.claude/settings.local.json`, with `autoMemoryDirectory` pointing at the matching
-     role folder inside your claude-personas clone (e.g.
-     `/Users/you/projects/claude-personas/pm`)
-   - Inside that project worktree, copy
-     `<your-claude-personas-clone>/CLAUDE.local.md.example` → `CLAUDE.local.md`, fill
-     in the role label and the same absolute path, and add `CLAUDE.local.md` to your
-     project repo's `.gitignore`
+3. For each role you want active, run the init script from inside your **project repo**
+   (not claude-personas):
+
+   ```sh
+   ~/projects/claude-personas/scripts/init-worktree.sh pm ../my-app-pm
+   ```
+
+   This creates a worktree at `../my-app-pm` on a new `pm/workspace` branch, writes
+   `.claude/settings.local.json` and `CLAUDE.local.md`, and adds both to `.gitignore`.
+   See [Per-project-worktree setup](#per-project-worktree-setup-one-time) below if you'd
+   rather do it by hand.
 4. Open Claude Code in the project worktree → it auto-loads the right `MEMORY.md`
 5. Browse `examples/` for patterns, copy what fits into your role's `feedback_*.md`
    files (then commit + push from your claude-personas clone to keep them durable)
@@ -87,8 +85,9 @@ See `CONVENTIONS.md` for the full pattern.
 
 ## Per-project-worktree setup (one-time)
 
-Each *project worktree* (not claude-personas itself) gets two files, both gitignored
-in your project repo:
+`scripts/init-worktree.sh` automates this section. Read on if you want to know what
+it does, or do it by hand. Each *project worktree* (not claude-personas itself) gets
+two files, both gitignored in your project repo:
 
 **`.claude/settings.local.json`** — copy from `claude-personas/settings.local.json.example`.
 A single `autoMemoryDirectory` key pointing at the role folder inside claude-personas:
