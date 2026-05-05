@@ -4,7 +4,7 @@
 
 **Lead your own AI team.** Role-aware persistent memory for solo multi-persona Claude Code workflows.
 
-![Four VSCode windows running cerebrum, Scientist, Developer, and PM personas in parallel on macOS](assets/mac-vscode-personas-overview.png)
+![Four VSCode windows running cerebrum, Scientist, Developer, and PM personas in parallel on macOS, annotated to show cerebrum as the shared-memory hub](assets/mac-vscode-personas-overview-annotated.png)
 
 *A real setup: four roles working in parallel — `cerebrum` (shared memory), Scientist, Developer, and PM — each in its own VSCode window, each with its own `MEMORY.md`.*
 
