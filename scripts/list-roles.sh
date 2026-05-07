@@ -13,35 +13,11 @@ if [[ ! -d "$PROJECTS_DIR" ]]; then
 fi
 
 # Reverse the hash transform: -Users-foo-bar → /Users/foo/bar
-# Note: the hash function (replace / with -) is lossy when paths contain dashes.
-# We use heuristics to preserve common patterns that shouldn't be split:
-# - mktemp-style temp directory names (e.g., list-roles-healthy-XXXX.randomstuff)
-# - project name suffixes (e.g., -project-pm)
+# Note: this is lossy if the original path contained dashes (e.g., my-app-pm
+# becomes my/app/pm). The output is for human auditing, not exact reconstruction —
+# users can recognize their worktrees from the role name + general structure.
 unhash() {
-  local hash="$1"
-  local path="${hash#-}"  # Remove leading dash
-
-  # Match paths with /var/folders (macOS temp directory style)
-  # Pattern: var-folders-...-T-<tempdir-with-dashes>-XXXX.<alphanum>-<suffix>
-  if [[ "$path" =~ ^(.+)-T-([a-z-]+-XXXX\.[a-zA-Z0-9]+)(.*)$ ]]; then
-    local prefix="${BASH_REMATCH[1]}"
-    local tempdir="${BASH_REMATCH[2]}"
-    local suffix="${BASH_REMATCH[3]}"  # e.g., "-project-pm"
-
-    # Convert prefix dashes to slashes
-    prefix="${prefix//-//}"
-
-    # Convert suffix leading dash to slash (but preserve remaining dashes in project name)
-    suffix="${suffix/#-//}"
-
-    path="/$prefix/T/$tempdir$suffix"
-  else
-    # Fallback for non-/var/folders paths: convert all dashes
-    # This will be lossy but is the best we can do without the T/ marker
-    path="/${path//-//}"
-  fi
-
-  echo "$path"
+  echo "$1" | sed 's|^-|/|; s|-|/|g'
 }
 
 found=0

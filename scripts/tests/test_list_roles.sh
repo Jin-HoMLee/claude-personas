@@ -29,7 +29,11 @@ export HOME="$ORIGINAL_HOME"
 echo ""
 echo "Test 2: reports healthy symlink with role + worktree path"
 
-tmp="$(mktemp -d -t list-roles-healthy-XXXX)"
+# Use mktemp without -t prefix dashes, and a worktree path WITHOUT dashes,
+# so the path round-trips cleanly through the lossy unhash (which collapses
+# all dashes back to slashes). Real-world worktree paths with dashes will
+# render with collapsed slashes — that's a known display limitation.
+tmp="$(mktemp -d)"
 export HOME="$tmp"
 mkdir -p "$HOME/.claude/projects"
 
@@ -37,8 +41,8 @@ mkdir -p "$HOME/.claude/projects"
 mkdir -p "$tmp/clone/pm"
 echo "# pm" > "$tmp/clone/pm/MEMORY.md"
 
-# Fake worktree path → hash
-worktree_abs="$tmp/project-pm"
+# Fake worktree path with no dashes (so it round-trips through lossy unhash)
+worktree_abs="$tmp/projectpm"
 hash="$(compute_hash "$worktree_abs")"
 mkdir -p "$HOME/.claude/projects/$hash"
 ln -s "$tmp/clone/pm/" "$HOME/.claude/projects/$hash/memory"
