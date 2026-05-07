@@ -10,10 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: settings.local.json.example is valid JSON
-        run: python3 -c "import json,sys; json.load(open('settings.local.json.example'))" && echo "OK"
-
-      - name: symlinks resolve
+      - name: claude-personas internal symlinks resolve
         run: |
           for role in developer pm designer; do
             target=$(readlink "$role/shared")
@@ -24,3 +21,26 @@ jobs:
             fi
             echo "OK: $role/shared -> $target"
           done
+
+      - name: scripts are executable
+        run: |
+          for s in scripts/init-worktree.sh scripts/list-roles.sh scripts/tests/run_all.sh; do
+            if [ ! -x "$s" ]; then
+              echo "FAIL: $s is not executable"
+              exit 1
+            fi
+            echo "OK: $s is executable"
+          done
+
+      - name: each role has MEMORY.md
+        run: |
+          for role in developer pm designer shared; do
+            if [ ! -f "$role/MEMORY.md" ]; then
+              echo "FAIL: $role/MEMORY.md missing"
+              exit 1
+            fi
+            echo "OK: $role/MEMORY.md exists"
+          done
+
+      - name: run tests
+        run: bash scripts/tests/run_all.sh
