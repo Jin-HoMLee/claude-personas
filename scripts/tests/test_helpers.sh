@@ -103,10 +103,13 @@ assert_exit_nonzero() {
   fi
 }
 
-# Compute Claude Code's project hash (path → hash transform)
-# Replicates whatever transform Claude Code uses; based on observation: /Users/foo/bar → -Users-foo-bar
+# Compute Claude Code's project hash (path → hash transform).
+# Claude Code replaces both "/" and "." with "-" — verified by inspecting
+# ~/.claude/projects/<hash>/<sessionid>.jsonl cwd field on macOS:
+#   /private/var/folders/x.y/test → -private-var-folders-x-y-test
+# Caller must pre-resolve symlinks (use `cd $path && pwd -P`).
 compute_hash() {
-  echo "$1" | sed 's|/|-|g'
+  echo "$1" | tr '/.' '-'
 }
 
 # Print test summary; exit non-zero if any failed

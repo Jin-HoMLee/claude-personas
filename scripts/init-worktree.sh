@@ -36,10 +36,11 @@ Examples:
 EOF
 }
 
-# Compute Claude Code's project hash from an absolute path
-# Algorithm: replace each "/" with "-"
+# Compute Claude Code's project hash from an absolute path.
+# Claude Code replaces both "/" and "." with "-" (e.g. /var/folders/x.y/test → -var-folders-x-y-test).
+# Caller is responsible for resolving the path to its physical (symlink-resolved) form first.
 compute_hash() {
-  echo "$1" | sed 's|/|-|g'
+  echo "$1" | tr '/.' '-'
 }
 
 # Parse flags
@@ -92,24 +93,30 @@ if git show-ref --verify --quiet "refs/heads/$BRANCH_NAME"; then
   exit 1
 fi
 
-# Compute hashes from the canonical absolute paths
-# Use show-cdup + pwd (not show-toplevel) to preserve logical path on macOS
-# (git rev-parse --show-toplevel resolves /var -> /private/var symlinks)
+# Compute hashes from the canonical PHYSICAL absolute paths.
+# Claude Code resolves /var → /private/var on macOS, so we use pwd -P to match.
 _GIT_CDUP="$(git rev-parse --show-cdup)"
 if [[ -z "$_GIT_CDUP" ]]; then
-  PROJECT_ABS="$(pwd)"
+  PROJECT_ABS="$(pwd -P)"
 else
-  PROJECT_ABS="$(cd "$_GIT_CDUP" && pwd)"
+  PROJECT_ABS="$(cd "$_GIT_CDUP" && pwd -P)"
 fi
 MAIN_HASH="$(compute_hash "$PROJECT_ABS")"
 
-# Resolve worktree path to absolute (it doesn't exist yet, so we resolve manually)
+# Resolve worktree path to absolute physical form. The worktree leaf doesn't exist
+# yet, so we resolve the parent (which exists) via pwd -P, then append the leaf.
 case "$WORKTREE_PATH" in
   /*) WORKTREE_ABS_TARGET="$WORKTREE_PATH" ;;
-  *)  WORKTREE_ABS_TARGET="$(pwd)/$WORKTREE_PATH" ;;
+  *)  WORKTREE_ABS_TARGET="$(pwd -P)/$WORKTREE_PATH" ;;
 esac
 # Normalize: collapse .. and . segments
 WORKTREE_ABS_TARGET="$(python3 -c "import os, sys; print(os.path.normpath(sys.argv[1]))" "$WORKTREE_ABS_TARGET")"
+# Resolve any symlinks in the parent path (e.g. /var → /private/var on macOS)
+_WT_PARENT="$(dirname "$WORKTREE_ABS_TARGET")"
+_WT_LEAF="$(basename "$WORKTREE_ABS_TARGET")"
+if [[ -d "$_WT_PARENT" ]]; then
+  WORKTREE_ABS_TARGET="$(cd "$_WT_PARENT" && pwd -P)/$_WT_LEAF"
+fi
 ROLE_HASH="$(compute_hash "$WORKTREE_ABS_TARGET")"
 
 ROLE_HASH_DIR="$HOME/.claude/projects/$ROLE_HASH"
@@ -177,7 +184,7 @@ trap cleanup_on_error ERR
 # --- Create the git worktree ---
 git worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME"
 WORKTREE_CREATED="$WORKTREE_PATH"
-WORKTREE_ABS="$( cd "$WORKTREE_PATH" && pwd )"
+WORKTREE_ABS="$( cd "$WORKTREE_PATH" && pwd -P )"
 
 # Re-verify role hash matches what we computed (in case of normalization differences)
 ACTUAL_ROLE_HASH="$(compute_hash "$WORKTREE_ABS")"

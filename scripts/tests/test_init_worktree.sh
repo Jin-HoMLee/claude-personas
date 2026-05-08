@@ -15,6 +15,9 @@ make_test_env() {
   local test_name="$1"
   local tmp
   tmp="$(mktemp -d -t "claude-personas-test-${test_name}-XXXXXX")"
+  # Resolve to physical path so test-side compute_hash matches what
+  # init-worktree.sh (which uses pwd -P) computes.
+  tmp="$(cd "$tmp" && pwd -P)"
 
   # Fake project repo
   mkdir -p "$tmp/project"

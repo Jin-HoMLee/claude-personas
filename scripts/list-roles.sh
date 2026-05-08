@@ -13,9 +13,11 @@ if [[ ! -d "$PROJECTS_DIR" ]]; then
 fi
 
 # Reverse the hash transform: -Users-foo-bar → /Users/foo/bar
-# Note: this is lossy if the original path contained dashes (e.g., my-app-pm
-# becomes my/app/pm). The output is for human auditing, not exact reconstruction —
-# users can recognize their worktrees from the role name + general structure.
+# Note: lossy if the original path contained dashes OR dots (compute_hash replaces
+# both / and . with -, so the reverse can't tell which "-" came from which).
+# E.g. "my-app-pm" or "my.app.pm" both render with slashes ("my/app/pm"). The output
+# is for human auditing, not exact reconstruction — users can recognize worktrees
+# from the role name + general structure.
 unhash() {
   echo "$1" | sed 's|^-|/|; s|-|/|g'
 }
