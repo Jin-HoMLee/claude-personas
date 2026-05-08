@@ -32,9 +32,13 @@ role folder. The clone's `shared/` is a symlink to the project's main-repo hash 
 
 1. In each role's project worktree, delete `.claude/settings.local.json` and
    `CLAUDE.local.md`, and remove their entries from `.gitignore`.
-2. Re-run `scripts/init-worktree.sh <role> <worktree-path>` from your project repo.
-
-No memory data is lost; only the wiring mechanism changes.
+2. Re-run `scripts/init-worktree.sh --force <role> <worktree-path>` from your
+   project repo. The `--force` flag is needed because v1 users who ran Claude
+   sessions in the worktree will have content at `~/.claude/projects/<hash>/memory/`
+   (Claude Code wrote there because v1's `autoMemoryDirectory` was silently
+   ignored). `--force` backs up that directory to `memory.backup-<date>/` next
+   to it before installing the symlink — no memory data is lost; only the
+   wiring mechanism changes.
 
 ## [1.0] — 2026-04-30
 

@@ -161,11 +161,16 @@ replaces this with native filesystem symlinks.
 
 1. In each role's project worktree, delete `.claude/settings.local.json` and
    `CLAUDE.local.md`, and remove their entries from `.gitignore`.
-2. Re-run `scripts/init-worktree.sh <role> <worktree-path>` from your project
-   repo — the v2 script produces symlink-based wiring instead of v1's config files.
+2. Re-run `scripts/init-worktree.sh --force <role> <worktree-path>` from your
+   project repo — the v2 script produces symlink-based wiring instead of v1's
+   config files. `--force` is required because v1 users who ran Claude sessions
+   in the worktree will have content at `~/.claude/projects/<hash>/memory/`
+   (Claude Code wrote there because v1's `autoMemoryDirectory` was silently
+   ignored). `--force` backs up that directory to `memory.backup-<date>/`
+   alongside before installing the symlink.
 
 Your `claude-personas/<role>/` memory files are unchanged; only the wiring mechanism
-between project worktree and role memory has changed.
+between project worktree and role memory has changed. No memory data is lost.
 
 ## License
 

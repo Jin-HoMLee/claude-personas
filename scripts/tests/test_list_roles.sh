@@ -18,9 +18,11 @@ export HOME="$tmp"
 mkdir -p "$HOME/.claude/projects"
 
 output="$(bash "$LIST_SCRIPT" 2>&1 || true)"
-echo "$output" | grep -qi "no" || echo "$output" | grep -qE "0 |empty|none"
+# Tight assertion: list-roles should explicitly say "no … symlinks found"
+# when there's nothing to report.
+echo "$output" | grep -qE "[Nn]o.+(symlinks|wired)"
 status=$?
-assert_equal "0" "$status" "list-roles handles empty state without crashing"
+assert_equal "0" "$status" "list-roles reports empty state explicitly"
 
 rm -rf "$tmp"
 export HOME="$ORIGINAL_HOME"

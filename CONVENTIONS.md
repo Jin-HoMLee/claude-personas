@@ -13,9 +13,9 @@ its `~/.claude/projects/<hash>/memory/` directory to the matching role folder
 inside your `claude-personas` clone. Claude then loads the right `MEMORY.md`
 automatically depending on which project worktree you're working in.
 
-This separation is deliberate: you can use the same `claude-personas` clone
-across many different project repos. Memory rules are about how *you* work,
-not about any one codebase.
+This separation is deliberate: memory rules are about how *you* work, not
+about any one codebase. (v2 wires one `claude-personas` clone to one project;
+multi-project from a single clone is a v3 candidate.)
 
 ## The two-system split
 
@@ -120,16 +120,10 @@ there instead of symlinking. The rest of the system works identically.
 
 ## Getting started
 
-1. Click **Use this template** on GitHub → create your `claude-personas` repo
-   and clone it once to your machine
-2. Read this file once
-3. For each project worktree where you want a role active:
-   - Determine the worktree's hash: open Claude Code in that worktree once so
-     it creates `~/.claude/projects/<hash>/`
-   - Symlink `~/.claude/projects/<hash>/memory/` to the matching role folder
-     inside your `claude-personas` clone (e.g. `ln -s ~/claude-personas/developer ~/.claude/projects/<hash>/memory`)
-4. Open Claude Code in that project worktree → it auto-loads the right
-   `MEMORY.md`
-5. Browse `examples/` for patterns to adopt into your `feedback_*.md` files
-6. Start writing rules into your role's `MEMORY.md` (in your claude-personas
-   clone, then commit and push)
+See the [Quick start in README.md](README.md#quick-start-5-minutes-per-project)
+— `scripts/init-worktree.sh` automates the worktree creation, hash computation,
+and symlink wiring described above. Once a role is wired, open Claude Code in
+the role's worktree and it auto-loads the matching `MEMORY.md`.
+
+Then: browse `examples/` for patterns to adopt, and start writing rules into
+your role's `MEMORY.md` (in your claude-personas clone, then commit and push).

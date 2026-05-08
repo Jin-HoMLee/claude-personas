@@ -159,7 +159,8 @@ if [[ -L "$ROLE_MEMORY_LINK" ]]; then
     echo "Note: $ROLE_MEMORY_LINK already symlinked to this role (idempotent re-run)."
   else
     echo "Error: $ROLE_MEMORY_LINK is a symlink pointing elsewhere: $CURRENT_ROLE_TARGET" >&2
-    echo "Manual review required (use --force to back up and overwrite)." >&2
+    echo "Manual review required (use --force to overwrite the symlink — note:" >&2
+    echo "no backup is made for symlinks, only for real directories)." >&2
     if [[ "$FORCE" -ne 1 ]]; then exit 1; fi
   fi
 elif [[ -e "$ROLE_MEMORY_LINK" ]]; then
@@ -204,7 +205,11 @@ if [[ "$FORCE" -eq 1 && -e "$ROLE_MEMORY_LINK" && ! -L "$ROLE_MEMORY_LINK" ]]; t
   echo "✓ Backed up existing memory dir to $BACKUP_DIR"
 fi
 
-if [[ "$FORCE" -eq 1 && -L "$ROLE_MEMORY_LINK" ]]; then
+# Only remove a pre-existing symlink with --force when it's MISPOINTING.
+# A correctly-pointing symlink (ROLE_LINK_PRE_EXISTS=1) is left alone — removing
+# and recreating it would be a no-op churn at best, and a bug if the recreate
+# guard below skips (since ROLE_LINK_PRE_EXISTS is still 1).
+if [[ "$FORCE" -eq 1 && -L "$ROLE_MEMORY_LINK" && "$ROLE_LINK_PRE_EXISTS" -eq 0 ]]; then
   rm "$ROLE_MEMORY_LINK"
 fi
 

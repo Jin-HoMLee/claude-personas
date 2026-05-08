@@ -229,5 +229,35 @@ assert_equal "1" "$status" "init exits non-zero on unknown role"
 
 cleanup_test_env "$env_dir"
 
+# ---- Test 10: --force on a correctly-wired symlink leaves it intact ----
+# Regression test for: --force unconditionally rm'd the symlink, and the
+# recreate guard then skipped because ROLE_LINK_PRE_EXISTS=1, leaving the
+# role with no memory symlink at all.
+echo ""
+echo "Test 10: --force on a correctly-wired symlink leaves it intact"
+
+env_dir="$(make_test_env "force-correct")"
+project="$env_dir/project"
+clone="$env_dir/clone"
+worktree="$env_dir/project-pm"
+
+# First init: creates the symlink correctly
+(cd "$project" && bash "$clone/scripts/init-worktree.sh" pm "$worktree" >/dev/null 2>&1)
+
+# Drop the worktree but keep the symlink so init can recompute the same hash
+git -C "$project" worktree remove --force "$worktree" >/dev/null 2>&1
+rm -rf "$worktree"
+git -C "$project" branch -D pm/workspace >/dev/null 2>&1 || true
+
+role_hash="$(compute_hash "$worktree")"
+
+# Re-run with --force — symlink correctly points, should be a no-op
+(cd "$project" && bash "$clone/scripts/init-worktree.sh" --force pm "$worktree" >/dev/null 2>&1)
+status=$?
+assert_equal "0" "$status" "--force on correctly-wired symlink succeeds"
+assert_symlink "$HOME/.claude/projects/$role_hash/memory" "$clone/pm/" "symlink still points to role after --force re-run"
+
+cleanup_test_env "$env_dir"
+
 print_summary
 exit $?
