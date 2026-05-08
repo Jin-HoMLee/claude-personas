@@ -8,29 +8,27 @@ Read this once to understand the system. Then close it and start writing rules.
 it as your project codebase. Inside it, each role (`developer/`, `pm/`,
 `designer/`) is just a folder of memory files. Your **project repo** (the
 codebase you actually work on) is separate. For each role you want to use, you
-create one **project worktree** (e.g. `my-app/`, `my-app-pm/`) and configure
-its `.claude/settings.local.json` to point `autoMemoryDirectory` at the
-matching role folder inside your `claude-personas` clone. Claude then loads
-the right `MEMORY.md` automatically depending on which project worktree you're
-working in.
+create one **project worktree** (e.g. `my-app/`, `my-app-pm/`) and symlink
+its `~/.claude/projects/<hash>/memory/` directory to the matching role folder
+inside your `claude-personas` clone. Claude then loads the right `MEMORY.md`
+automatically depending on which project worktree you're working in.
 
-This separation is deliberate: you can use the same `claude-personas` clone
-across many different project repos. Memory rules are about how *you* work,
-not about any one codebase.
+This separation is deliberate: memory rules are about how *you* work, not
+about any one codebase. (v2 wires one `claude-personas` clone to one project;
+multi-project from a single clone is a v3 candidate.)
 
-## The three-system split
+## The two-system split
 
-Claude Code offers three places to give Claude persistent instructions:
+Claude Code offers two places to give Claude persistent instructions:
 
 | Layer | File | What goes here | Committed? |
 |---|---|---|---|
 | **Project facts** | `CLAUDE.md` (in your project repo) | Non-obvious codebase decisions, known gotchas, infra quirks, API behavior | Yes |
 | **AI behavior rules** | Memory files (`MEMORY.md` + `feedback_*.md`, in this repo) | How Claude should behave: tone, habits, workflow rules, role-specific conventions | Yes (in this repo) |
-| **Machine-specific** | `CLAUDE.local.md` (in each project worktree) | Absolute paths to memory directories, personal shortcuts, anything that differs per machine | No (gitignored) |
 
-Keeping these separate prevents a common failure mode: hardcoding
-machine-specific paths in your committed files, which breaks on other
-machines or when the repo is shared.
+Keeping these separate prevents a common failure mode: mixing codebase
+facts with AI behavior rules, which makes both harder to maintain and
+share.
 
 ## Why role-specific memory directories?
 
@@ -39,11 +37,13 @@ Tuesday, Designer on Wednesday), you want Claude to behave differently in
 each context. The Developer should know your test conventions; the PM should
 know your milestone format; neither should wade through the other's rules.
 
-`autoMemoryDirectory` (a Claude Code setting) points Claude at a single
-directory to load `MEMORY.md` from at session start. By giving each role its
-own directory inside `claude-personas` — and giving each *project worktree*
-its own `.claude/settings.local.json` pointing at the matching role folder —
-Claude context-switches automatically when you switch project worktrees.
+Claude Code automatically loads `MEMORY.md` from a per-project directory
+under `~/.claude/projects/<hash>/memory/`, where `<hash>` is derived from the
+project worktree's absolute path. By creating a separate worktree per role
+(each with its own absolute path → its own hash → its own memory dir) and
+symlinking each role's memory dir to the matching role folder inside
+claude-personas, Claude context-switches automatically when you switch
+worktrees — no settings to configure.
 
 ## The MEMORY.md two-tier structure
 
@@ -118,38 +118,12 @@ Privacy & Security → Developer Mode). If you're on Windows without Developer
 Mode, create a `shared/` folder inside each role directory and copy files
 there instead of symlinking. The rest of the system works identically.
 
-## CLAUDE.local.md per project worktree
-
-Each project worktree has its own `CLAUDE.local.md` (gitignored in your
-project repo) that stores the absolute path to the role's memory directory
-inside `claude-personas`. This solves a chicken-and-egg problem: the role's
-`MEMORY.md` can reference `shared/MEMORY.md` by relative path, but to *read
-the role's MEMORY.md itself*, Claude needs an absolute path — and that path
-is machine-specific.
-
-See `CLAUDE.local.md.example` in this repo for a ready-to-copy template — it
-includes the role label, the absolute-path code block, and the role/shared
-MEMORY.md path conventions. Copy it into each project worktree, fill in the
-role and path, and add it to your project repo's `.gitignore`.
-
-The role's `MEMORY.md` "Always in effect" section instructs Claude to read
-this file for the absolute path before doing anything else.
-
 ## Getting started
 
-1. Click **Use this template** on GitHub → create your `claude-personas` repo
-   and clone it once to your machine
-2. Read this file once
-3. For each project worktree where you want a role active:
-   - Copy `settings.local.json.example` → `.claude/settings.local.json` in
-     that *project worktree* (not inside claude-personas), and update
-     `autoMemoryDirectory` to the absolute path of the matching role folder
-     inside your claude-personas clone
-   - Copy `CLAUDE.local.md.example` → `CLAUDE.local.md` in the same project
-     worktree (and add it to your project repo's `.gitignore`), filling in
-     the role label and the same absolute path
-4. Open Claude Code in that project worktree → it auto-loads the right
-   `MEMORY.md`
-5. Browse `examples/` for patterns to adopt into your `feedback_*.md` files
-6. Start writing rules into your role's `MEMORY.md` (in your claude-personas
-   clone, then commit and push)
+See the [Quick start in README.md](README.md#quick-start-5-minutes-per-project)
+— `scripts/init-worktree.sh` automates the worktree creation, hash computation,
+and symlink wiring described above. Once a role is wired, open Claude Code in
+the role's worktree and it auto-loads the matching `MEMORY.md`.
+
+Then: browse `examples/` for patterns to adopt, and start writing rules into
+your role's `MEMORY.md` (in your claude-personas clone, then commit and push).
