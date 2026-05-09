@@ -1,5 +1,29 @@
 # Changelog
 
+## [2.0.1] — 2026-05-09
+
+### Fixed
+
+- Test scaffolding silently polluted the developer's real `~/.claude/projects/`
+  directory. `make_test_env` ran inside `$()` command substitution which forks
+  a subshell, so its `export HOME="$tmp/home"` evaporated when the subshell
+  exited and `init-worktree.sh` then ran with the real `$HOME`. Each
+  `run_all.sh` left ~18 orphan hash dirs in the developer's home. Tests still
+  passed (the bug doesn't break correctness, only isolation), but it could
+  collide with real session data over time.
+
+  Fix: split responsibility cleanly. The renamed `make_test_fixture` /
+  `cleanup_test_fixture` helpers do filesystem setup/teardown only; callers
+  export and restore `HOME` in their own (parent) scope around each test.
+  `run_all.sh` now adds zero entries to the developer's real home.
+
+### Added
+
+- 5 deferred coverage tests for `init-worktree.sh` edge cases identified in
+  the v2.0.0 PR review: `--force` on a mispointing symlink, custom branch
+  name (3rd argument), worktree path already exists, `--force` with an empty
+  memory dir, and re-init while worktree is still mounted.
+
 ## [2.0.0] — 2026-05-08
 
 ### Breaking changes
