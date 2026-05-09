@@ -284,5 +284,137 @@ assert_symlink "$HOME/.claude/projects/$role_hash/memory" "$clone/pm/" "symlink 
 export HOME="$ORIGINAL_HOME"
 cleanup_test_fixture "$env_dir"
 
+# ---- Test 11: --force replaces a mispointing symlink ----
+# The canonical --force use case: an existing role-hash/memory symlink that
+# points somewhere wrong (not to $ROLE_DIR/). Without --force, init aborts.
+# With --force, init removes the bad symlink and recreates pointing at the role.
+echo ""
+echo "Test 11: --force replaces a mispointing symlink"
+
+env_dir="$(make_test_fixture "force-mispointing")"
+export HOME="$env_dir/home"
+project="$env_dir/project"
+clone="$env_dir/clone"
+worktree="$env_dir/project-pm"
+
+# Pre-create a mispointing symlink: role-hash/memory → some unrelated path
+role_hash="$(compute_hash "$worktree")"
+mkdir -p "$HOME/.claude/projects/$role_hash"
+mkdir -p "$env_dir/wrong-target"
+ln -s "$env_dir/wrong-target" "$HOME/.claude/projects/$role_hash/memory"
+
+(cd "$project" && bash "$clone/scripts/init-worktree.sh" --force pm "$worktree" >/dev/null 2>&1)
+status=$?
+assert_equal "0" "$status" "--force on mispointing symlink succeeds"
+assert_symlink "$HOME/.claude/projects/$role_hash/memory" "$clone/pm/" "symlink replaced to point at correct role"
+
+export HOME="$ORIGINAL_HOME"
+cleanup_test_fixture "$env_dir"
+
+# ---- Test 12: 3rd-arg branch name overrides default <role>/workspace ----
+echo ""
+echo "Test 12: 3rd-arg branch name overrides default <role>/workspace"
+
+env_dir="$(make_test_fixture "custom-branch")"
+export HOME="$env_dir/home"
+project="$env_dir/project"
+clone="$env_dir/clone"
+worktree="$env_dir/project-pm"
+custom_branch="experiment/foo-bar"
+
+(cd "$project" && bash "$clone/scripts/init-worktree.sh" pm "$worktree" "$custom_branch" >/dev/null 2>&1)
+status=$?
+assert_equal "0" "$status" "init succeeds with custom branch"
+
+git -C "$project" show-ref --verify --quiet "refs/heads/$custom_branch"
+custom_ok=$?
+assert_equal "0" "$custom_ok" "custom branch '$custom_branch' was created"
+
+git -C "$project" show-ref --verify --quiet "refs/heads/pm/workspace"
+default_check=$?
+assert_equal "1" "$default_check" "default 'pm/workspace' branch was NOT created"
+
+export HOME="$ORIGINAL_HOME"
+cleanup_test_fixture "$env_dir"
+
+# ---- Test 13: Init fails when worktree path already exists ----
+echo ""
+echo "Test 13: Init fails when worktree path already exists"
+
+env_dir="$(make_test_fixture "wt-exists")"
+export HOME="$env_dir/home"
+project="$env_dir/project"
+clone="$env_dir/clone"
+worktree="$env_dir/project-pm"
+
+# Pre-create the worktree path as a regular directory
+mkdir -p "$worktree"
+echo "stuff" > "$worktree/some-file"
+
+(cd "$project" && bash "$clone/scripts/init-worktree.sh" pm "$worktree" >/dev/null 2>&1)
+status=$?
+assert_equal "1" "$status" "init exits non-zero when worktree path already exists"
+assert_exists "$worktree/some-file" "pre-existing content was not touched"
+
+export HOME="$ORIGINAL_HOME"
+cleanup_test_fixture "$env_dir"
+
+# ---- Test 14: --force on an empty memory dir backs up and replaces ----
+# Edge case between Test 5 (real dir with content, no --force, fails) and
+# Test 6 (real dir with content, --force, succeeds + backup). Even though
+# the source dir is empty, --force still creates a backup-DATE/ marker.
+echo ""
+echo "Test 14: --force on empty memory dir backs up and replaces with symlink"
+
+env_dir="$(make_test_fixture "force-empty")"
+export HOME="$env_dir/home"
+project="$env_dir/project"
+clone="$env_dir/clone"
+worktree="$env_dir/project-pm"
+
+role_hash="$(compute_hash "$worktree")"
+mkdir -p "$HOME/.claude/projects/$role_hash/memory"
+# Note: no files inside — empty dir
+
+(cd "$project" && bash "$clone/scripts/init-worktree.sh" --force pm "$worktree" >/dev/null 2>&1)
+status=$?
+assert_equal "0" "$status" "--force on empty memory dir succeeds"
+assert_symlink "$HOME/.claude/projects/$role_hash/memory" "$clone/pm/" "role symlink created"
+backup_count=$(find "$HOME/.claude/projects/$role_hash" -maxdepth 1 -name 'memory.backup-*' -type d 2>/dev/null | wc -l)
+assert_equal "1" "$(echo "$backup_count" | tr -d ' ')" "backup dir created (even though source was empty)"
+
+export HOME="$ORIGINAL_HOME"
+cleanup_test_fixture "$env_dir"
+
+# ---- Test 15: Re-init fails when worktree is still mounted ----
+# Locks in current behavior: the WORKTREE_PATH-exists guard at the top of
+# init-worktree.sh fires before any wiring checks, so even a correctly-wired
+# worktree can't be re-init'd in place. Test 3 covers the case where the
+# worktree was removed between runs (idempotent wiring); this covers the
+# subtly different "worktree still mounted" case where init aborts early.
+echo ""
+echo "Test 15: Re-init fails when worktree is still mounted"
+
+env_dir="$(make_test_fixture "rerun-mounted")"
+export HOME="$env_dir/home"
+project="$env_dir/project"
+clone="$env_dir/clone"
+worktree="$env_dir/project-pm"
+
+# First init succeeds
+(cd "$project" && bash "$clone/scripts/init-worktree.sh" pm "$worktree" >/dev/null 2>&1)
+
+# Second init WITHOUT removing the worktree
+(cd "$project" && bash "$clone/scripts/init-worktree.sh" pm "$worktree" >/dev/null 2>&1)
+status=$?
+assert_equal "1" "$status" "re-init with mounted worktree exits non-zero"
+
+# Original wiring should be intact (failed re-init shouldn't have mutated state)
+role_hash="$(compute_hash "$worktree")"
+assert_symlink "$HOME/.claude/projects/$role_hash/memory" "$clone/pm/" "original symlink still intact after failed re-init"
+
+export HOME="$ORIGINAL_HOME"
+cleanup_test_fixture "$env_dir"
+
 print_summary
 exit $?
