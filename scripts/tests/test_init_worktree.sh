@@ -55,6 +55,11 @@ cleanup_test_fixture() {
 }
 
 ORIGINAL_HOME="$HOME"
+# Defensive: ensure HOME is restored if the script exits unexpectedly mid-test
+# (e.g. a future refactor flipping `set -e` and having an assertion abort).
+# In current shape this is mostly a no-op since the script has no early-exit
+# paths, but it costs nothing and protects against future drift.
+trap 'export HOME="$ORIGINAL_HOME"' EXIT
 
 # ---- Test 1: Basic init creates expected symlinks ----
 echo "Test 1: Basic init creates role-hash symlink + main-hash dir + shared symlink"
