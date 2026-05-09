@@ -10,8 +10,14 @@ INIT_SCRIPT="$PERSONAS_ROOT/scripts/init-worktree.sh"
 
 source "$SCRIPT_DIR/test_helpers.sh"
 
-# Each test creates its own temp dir with a fake project repo + a fake claude-personas clone
-make_test_env() {
+# Build a fresh test fixture (filesystem only): a fake project repo + a fake
+# claude-personas clone + a fake home dir. Returns the fixture's tmp path.
+#
+# Note: this function does NOT export HOME. It runs inside `$(...)` command
+# substitution which forks a subshell, so any `export` here would evaporate
+# when the subshell exits. The caller must `export HOME="$env_dir/home"` in
+# the parent shell after capturing the returned path.
+make_test_fixture() {
   local test_name="$1"
   local tmp
   tmp="$(mktemp -d -t "claude-personas-test-${test_name}-XXXXXX")"
@@ -36,17 +42,16 @@ make_test_env() {
   mkdir -p "$tmp/clone/scripts"
   cp "$INIT_SCRIPT" "$tmp/clone/scripts/init-worktree.sh"
 
-  # Use a fake HOME so we don't pollute the real ~/.claude/projects/
-  export HOME="$tmp/home"
-  mkdir -p "$HOME/.claude/projects"
+  # Pre-create the fake-home claude-projects dir. Use $tmp/home directly —
+  # this function does not touch $HOME (see header comment).
+  mkdir -p "$tmp/home/.claude/projects"
 
   echo "$tmp"
 }
 
-cleanup_test_env() {
+# Tear down the fixture's temp dir. Caller is responsible for restoring HOME.
+cleanup_test_fixture() {
   rm -rf "$1"
-  unset HOME
-  export HOME="$ORIGINAL_HOME"
 }
 
 ORIGINAL_HOME="$HOME"
@@ -54,7 +59,8 @@ ORIGINAL_HOME="$HOME"
 # ---- Test 1: Basic init creates expected symlinks ----
 echo "Test 1: Basic init creates role-hash symlink + main-hash dir + shared symlink"
 
-env_dir="$(make_test_env "basic")"
+env_dir="$(make_test_fixture "basic")"
+export HOME="$env_dir/home"
 project="$env_dir/project"
 clone="$env_dir/clone"
 worktree="$env_dir/project-pm"
@@ -69,13 +75,15 @@ assert_exists "$HOME/.claude/projects/$main_hash/memory" "main-hash memory dir c
 assert_symlink "$clone/shared" "$HOME/.claude/projects/$main_hash/memory/" "clone/shared symlinked to main-hash"
 assert_exists "$HOME/.claude/projects/$main_hash/memory/feedback_test.md" "shared content migrated to main-hash"
 
-cleanup_test_env "$env_dir"
+export HOME="$ORIGINAL_HOME"
+cleanup_test_fixture "$env_dir"
 
 # ---- Test 2: No project-side files created ----
 echo ""
 echo "Test 2: No .claude/settings.local.json or CLAUDE.local.md created in worktree"
 
-env_dir="$(make_test_env "no-project-files")"
+env_dir="$(make_test_fixture "no-project-files")"
+export HOME="$env_dir/home"
 project="$env_dir/project"
 clone="$env_dir/clone"
 worktree="$env_dir/project-dev"
@@ -85,13 +93,15 @@ worktree="$env_dir/project-dev"
 assert_not_exists "$worktree/.claude/settings.local.json" "settings.local.json not created"
 assert_not_exists "$worktree/CLAUDE.local.md" "CLAUDE.local.md not created"
 
-cleanup_test_env "$env_dir"
+export HOME="$ORIGINAL_HOME"
+cleanup_test_fixture "$env_dir"
 
 # ---- Test 3: Idempotent re-run with same role ----
 echo ""
 echo "Test 3: Re-running init for same role is idempotent (no error)"
 
-env_dir="$(make_test_env "idempotent")"
+env_dir="$(make_test_fixture "idempotent")"
+export HOME="$env_dir/home"
 project="$env_dir/project"
 clone="$env_dir/clone"
 worktree="$env_dir/project-pm"
@@ -107,13 +117,15 @@ git -C "$project" branch -D pm/workspace >/dev/null 2>&1 || true
 status=$?
 assert_equal "0" "$status" "second run succeeds"
 
-cleanup_test_env "$env_dir"
+export HOME="$ORIGINAL_HOME"
+cleanup_test_fixture "$env_dir"
 
 # ---- Test 4: Second role in same project — shared symlink already correct, skip migration ----
 echo ""
 echo "Test 4: Second role init skips shared-folder migration but creates role symlink"
 
-env_dir="$(make_test_env "second-role")"
+env_dir="$(make_test_fixture "second-role")"
+export HOME="$env_dir/home"
 project="$env_dir/project"
 clone="$env_dir/clone"
 worktree_pm="$env_dir/project-pm"
@@ -128,13 +140,15 @@ dev_hash="$(compute_hash "$worktree_dev")"
 assert_symlink "$HOME/.claude/projects/$dev_hash/memory" "$clone/developer/" "dev role symlink created on second init"
 assert_symlink "$clone/shared" "$HOME/.claude/projects/$main_hash/memory/" "clone/shared still pointing at same main-hash"
 
-cleanup_test_env "$env_dir"
+export HOME="$ORIGINAL_HOME"
+cleanup_test_fixture "$env_dir"
 
 # ---- Test 5: Refuses if memory dir already exists as real dir ----
 echo ""
 echo "Test 5: Init fails if <role-hash>/memory exists as real dir (without --force)"
 
-env_dir="$(make_test_env "preexisting-real")"
+env_dir="$(make_test_fixture "preexisting-real")"
+export HOME="$env_dir/home"
 project="$env_dir/project"
 clone="$env_dir/clone"
 worktree="$env_dir/project-pm"
@@ -149,13 +163,15 @@ echo "existing content" > "$HOME/.claude/projects/$role_hash/memory/MEMORY.md"
 status=$?
 assert_equal "1" "$status" "init exits non-zero when memory dir has prior content"
 
-cleanup_test_env "$env_dir"
+export HOME="$ORIGINAL_HOME"
+cleanup_test_fixture "$env_dir"
 
 # ---- Test 6: --force flag backs up and overwrites ----
 echo ""
 echo "Test 6: --force flag backs up existing memory and creates symlink"
 
-env_dir="$(make_test_env "force-flag")"
+env_dir="$(make_test_fixture "force-flag")"
+export HOME="$env_dir/home"
 project="$env_dir/project"
 clone="$env_dir/clone"
 worktree="$env_dir/project-pm"
@@ -171,13 +187,15 @@ assert_symlink "$HOME/.claude/projects/$role_hash/memory" "$clone/pm/" "role sym
 backup_count=$(find "$HOME/.claude/projects/$role_hash" -maxdepth 1 -name 'memory.backup-*' -type d 2>/dev/null | wc -l)
 assert_equal "1" "$(echo "$backup_count" | tr -d ' ')" "backup directory created"
 
-cleanup_test_env "$env_dir"
+export HOME="$ORIGINAL_HOME"
+cleanup_test_fixture "$env_dir"
 
 # ---- Test 7: Refuses to use clone wired to a different project ----
 echo ""
 echo "Test 7: Init fails if clone's shared/ is symlinked to a different main-hash"
 
-env_dir="$(make_test_env "wrong-clone")"
+env_dir="$(make_test_fixture "wrong-clone")"
+export HOME="$env_dir/home"
 project_a="$env_dir/project-a"
 project_b="$env_dir/project-b"
 clone="$env_dir/clone"
@@ -198,13 +216,15 @@ mkdir -p "$project_b"
 status=$?
 assert_equal "1" "$status" "init exits non-zero when clone is wired to a different project"
 
-cleanup_test_env "$env_dir"
+export HOME="$ORIGINAL_HOME"
+cleanup_test_fixture "$env_dir"
 
 # ---- Test 8: Worktree is created (git worktree add succeeds) ----
 echo ""
 echo "Test 8: git worktree is actually created"
 
-env_dir="$(make_test_env "worktree-created")"
+env_dir="$(make_test_fixture "worktree-created")"
+export HOME="$env_dir/home"
 project="$env_dir/project"
 clone="$env_dir/clone"
 worktree="$env_dir/project-pm"
@@ -213,13 +233,15 @@ worktree="$env_dir/project-pm"
 
 assert_exists "$worktree/.git" "worktree's .git exists"
 
-cleanup_test_env "$env_dir"
+export HOME="$ORIGINAL_HOME"
+cleanup_test_fixture "$env_dir"
 
 # ---- Test 9: Unknown role exits with error ----
 echo ""
 echo "Test 9: Unknown role rejected"
 
-env_dir="$(make_test_env "bad-role")"
+env_dir="$(make_test_fixture "bad-role")"
+export HOME="$env_dir/home"
 project="$env_dir/project"
 clone="$env_dir/clone"
 
@@ -227,7 +249,8 @@ clone="$env_dir/clone"
 status=$?
 assert_equal "1" "$status" "init exits non-zero on unknown role"
 
-cleanup_test_env "$env_dir"
+export HOME="$ORIGINAL_HOME"
+cleanup_test_fixture "$env_dir"
 
 # ---- Test 10: --force on a correctly-wired symlink leaves it intact ----
 # Regression test for: --force unconditionally rm'd the symlink, and the
@@ -236,7 +259,8 @@ cleanup_test_env "$env_dir"
 echo ""
 echo "Test 10: --force on a correctly-wired symlink leaves it intact"
 
-env_dir="$(make_test_env "force-correct")"
+env_dir="$(make_test_fixture "force-correct")"
+export HOME="$env_dir/home"
 project="$env_dir/project"
 clone="$env_dir/clone"
 worktree="$env_dir/project-pm"
@@ -257,7 +281,8 @@ status=$?
 assert_equal "0" "$status" "--force on correctly-wired symlink succeeds"
 assert_symlink "$HOME/.claude/projects/$role_hash/memory" "$clone/pm/" "symlink still points to role after --force re-run"
 
-cleanup_test_env "$env_dir"
+export HOME="$ORIGINAL_HOME"
+cleanup_test_fixture "$env_dir"
 
 print_summary
 exit $?
