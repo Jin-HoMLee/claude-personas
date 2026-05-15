@@ -129,3 +129,52 @@ print_summary() {
   fi
   return 0
 }
+
+# --- v3 clone-test fixtures ---
+
+# Create a fake memory repo + bare project repo for clone-based tests.
+# Layout produced at $1:
+#   $1/memory-repo/                  (working clone-personas-style repo)
+#     .git/                          (real git repo with one commit)
+#     developer/MEMORY.md
+#     pm/MEMORY.md
+#     scientist/MEMORY.md
+#     shared/MEMORY.md
+#     <role>/shared -> ../shared      (symlink in each role)
+#   $1/project-repo.git/             (bare repo to clone from)
+make_clone_test_fixture() {
+  local base="$1"
+  mkdir -p "$base"
+
+  # Bare project repo to clone from
+  git init --bare --quiet "$base/project-repo.git"
+  # Seed the bare repo with one commit
+  local seed; seed="$(mktemp -d)"
+  ( cd "$seed" && git init --quiet && \
+    echo "# project" > README.md && \
+    git add README.md && \
+    git -c user.email=test@x -c user.name=Test commit --quiet -m "init" && \
+    git remote add origin "$base/project-repo.git" && \
+    git push --quiet origin master 2>/dev/null || git push --quiet origin main 2>/dev/null )
+  rm -rf "$seed"
+
+  # Memory repo
+  mkdir -p "$base/memory-repo"
+  ( cd "$base/memory-repo" && git init --quiet )
+  for role in developer pm scientist designer; do
+    mkdir -p "$base/memory-repo/$role"
+    printf "# Memory Index — %s\n" "$role" > "$base/memory-repo/$role/MEMORY.md"
+    ( cd "$base/memory-repo/$role" && ln -s ../shared shared )
+  done
+  mkdir -p "$base/memory-repo/shared"
+  printf "# Shared Memory Index\n" > "$base/memory-repo/shared/MEMORY.md"
+  ( cd "$base/memory-repo" && \
+    git -c user.email=test@x -c user.name=Test add . && \
+    git -c user.email=test@x -c user.name=Test commit --quiet -m "init memory repo" )
+}
+
+# Remove the fixture directory created by make_clone_test_fixture.
+cleanup_clone_test_fixture() {
+  local base="$1"
+  rm -rf "$base"
+}
