@@ -40,4 +40,59 @@ else
 fi
 
 cleanup_clone_test_fixture "$tmp"
+
+# --- Role validation ---
+echo "=== test_init_clone role validation ==="
+tmp2="$(mktemp -d)"
+make_clone_test_fixture "$tmp2"
+mv "$tmp2/memory-repo" "$tmp2/claude-personas-myapp"
+
+# Unknown role should fail
+if ( cd "$tmp2/claude-personas-myapp" && \
+     bash "$INIT_CLONE" nonexistentrole --project-url "$tmp2/project-repo.git" ) 2>/dev/null; then
+  echo "  FAIL: should have exited nonzero for unknown role"
+  exit 1
+else
+  echo "  PASS: unknown role rejected"
+fi
+
+cleanup_clone_test_fixture "$tmp2"
+
+# --- URL precedence: flag > project.txt > prompt ---
+echo "=== test_init_clone URL precedence ==="
+tmp3="$(mktemp -d)"
+make_clone_test_fixture "$tmp3"
+mv "$tmp3/memory-repo" "$tmp3/claude-personas-myapp"
+
+# Pre-seed project.txt with a WRONG url
+mkdir -p "$tmp3/claude-personas-myapp/.claude-personas"
+echo "/this/does/not/exist.git" > "$tmp3/claude-personas-myapp/.claude-personas/project.txt"
+
+# --project-url flag should override the file
+( cd "$tmp3/claude-personas-myapp" && \
+  bash "$INIT_CLONE" developer --project-url "$tmp3/project-repo.git" )
+
+assert_exists "$tmp3/myapp" "flag overrode project.txt; clone landed"
+
+# project.txt should NOT be overwritten by the flag (only created if missing)
+saved_url="$(cat "$tmp3/claude-personas-myapp/.claude-personas/project.txt")"
+assert_equal "/this/does/not/exist.git" "$saved_url" "project.txt preserved (not overwritten by flag)"
+
+cleanup_clone_test_fixture "$tmp3"
+
+# --- URL from project.txt when no flag ---
+echo "=== test_init_clone URL from project.txt ==="
+tmp4="$(mktemp -d)"
+make_clone_test_fixture "$tmp4"
+mv "$tmp4/memory-repo" "$tmp4/claude-personas-myapp"
+
+mkdir -p "$tmp4/claude-personas-myapp/.claude-personas"
+echo "$tmp4/project-repo.git" > "$tmp4/claude-personas-myapp/.claude-personas/project.txt"
+
+( cd "$tmp4/claude-personas-myapp" && bash "$INIT_CLONE" pm )
+
+assert_exists "$tmp4/myapp-pm" "URL read from project.txt; pm clone landed (suffixed)"
+
+cleanup_clone_test_fixture "$tmp4"
+
 print_summary
