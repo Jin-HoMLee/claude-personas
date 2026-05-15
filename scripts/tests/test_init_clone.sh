@@ -95,4 +95,41 @@ assert_exists "$tmp4/myapp-pm" "URL read from project.txt; pm clone landed (suff
 
 cleanup_clone_test_fixture "$tmp4"
 
+# --- --main flag claims no-suffix slot for non-default role ---
+echo "=== test_init_clone --main flag ==="
+tmp5="$(mktemp -d)"
+make_clone_test_fixture "$tmp5"
+mv "$tmp5/memory-repo" "$tmp5/claude-personas-myapp"
+
+( cd "$tmp5/claude-personas-myapp" && \
+  bash "$INIT_CLONE" pm --main --project-url "$tmp5/project-repo.git" )
+
+assert_exists "$tmp5/myapp" "pm with --main landed at no-suffix path"
+assert_symlink "$tmp5/myapp/memory" "../claude-personas-myapp/pm" "memory points to pm/"
+
+cleanup_clone_test_fixture "$tmp5"
+
+# --- main-role.txt overrides default 'developer' ---
+echo "=== test_init_clone main-role.txt override ==="
+tmp6="$(mktemp -d)"
+make_clone_test_fixture "$tmp6"
+mv "$tmp6/memory-repo" "$tmp6/claude-personas-myapp"
+
+mkdir -p "$tmp6/claude-personas-myapp/.claude-personas"
+echo "scientist" > "$tmp6/claude-personas-myapp/.claude-personas/main-role.txt"
+
+( cd "$tmp6/claude-personas-myapp" && \
+  bash "$INIT_CLONE" scientist --project-url "$tmp6/project-repo.git" )
+
+assert_exists "$tmp6/myapp" "scientist landed at no-suffix path (main-role.txt)"
+assert_symlink "$tmp6/myapp/memory" "../claude-personas-myapp/scientist" "memory points to scientist/"
+
+# Now running developer should NOT claim no-suffix (already taken)
+( cd "$tmp6/claude-personas-myapp" && \
+  bash "$INIT_CLONE" developer --project-url "$tmp6/project-repo.git" )
+
+assert_exists "$tmp6/myapp-developer" "developer fell back to suffixed path"
+
+cleanup_clone_test_fixture "$tmp6"
+
 print_summary
