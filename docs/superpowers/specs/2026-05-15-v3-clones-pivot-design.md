@@ -106,7 +106,7 @@ Default roles shipped in skeleton: **developer, pm, designer, scientist**, plus 
 4. **Validate target.** Must not already exist. `--force` override: existing dir must be a clean git checkout of the same `project-url`; if so, only re-wire the `memory/` symlink (do not re-clone).
 5. **Clone.** `git clone <project-url> <target>`.
 6. **Wire memory symlink.** `ln -s ../claude-personas-<app>/<role> <target>/memory` (relative path — survives sibling-dir moves).
-7. **Add `memory/` to `<target>/.git/info/exclude`** if not already there. Idempotent (grep before append). Per-clone, untracked — does not pollute the project repo's tracked `.gitignore`.
+7. **Add `memory/` to `<target>/.gitignore`** if not already there. Idempotent (grep before append). Tracked — visible to anyone reading the repo, single source of truth across role clones (matches splice's PR #371 pattern).
 8. **Print next-step hint.** `"Open <target> in Claude Code → role MEMORY.md auto-loads via memory/MEMORY.md."`
 
 **Edge-case handling preserved from v2:**
@@ -138,9 +138,10 @@ Step-by-step walkthrough from v2 to v3. Six steps, ~10 min per project:
 1. Push v2 memory repo to GitHub (verify all role content is committed).
 2. Tear down v2 worktrees (`git worktree remove`) and delete the hash-symlinks at `~/.claude/projects/<hash>/memory/`.
 3. (Optional) Archive `~/.claude/projects/<old-hashes>/`.
-4. Run `init-clone.sh <role>` once per role. Memory content carries over unchanged. (The script handles `memory/` gitignoring per-clone via `.git/info/exclude` — no need to touch the project repo's tracked `.gitignore`.)
-5. Verify: open each clone in Claude Code, confirm role MEMORY.md auto-loads, confirm `memory/shared/MEMORY.md` resolves.
-6. Tidy: optionally `git tag v2-final` in the memory repo before pushing v3 layout, for traceability.
+4. Add `memory/` to the project repo's tracked `.gitignore` (one line). Commit + push so all role clones inherit it. (Skip if `init-clone.sh` has already done this on first run — the script is idempotent.)
+5. Run `init-clone.sh <role>` once per role. Memory content carries over unchanged. (Script verifies `memory/` is in `.gitignore` and adds it if not.)
+6. Verify: open each clone in Claude Code, confirm role MEMORY.md auto-loads, confirm `memory/shared/MEMORY.md` resolves.
+7. Tidy: optionally `git tag v2-final` in the memory repo before pushing v3 layout, for traceability.
 
 ### 5. Retired v2 surface
 
@@ -197,14 +198,14 @@ Migrate the v2 test suite shape (`scripts/tests/`) to cover v3:
 - No-suffix slot logic (developer claims it; configurable via `main-role.txt`; fallthrough if path taken).
 - `--force` on broken symlink; `--force` on existing-clean-same-project clone; `--force` on existing-WRONG-project clone (must fail).
 - `project.txt` precedence (flag > file > prompt).
-- `memory/` added to `.git/info/exclude` exactly once even on repeated `--force` runs.
+- `memory/` added to `.gitignore` exactly once even on repeated `--force` runs.
 - `list-roles.sh` reports broken symlinks, missing clones, dirty git state correctly.
 
 Tests must run in an isolated `$HOME` per fixture (lesson from v2.0.1 — see CHANGELOG); helpers `make_test_fixture` / `cleanup_test_fixture` carried over with no behavior change.
 
 ## Resolutions captured post-brainstorm
 
-- **Where does `memory/` get gitignored?** In each clone's `.git/info/exclude` (untracked, per-clone). Avoids polluting the project repo's tracked `.gitignore`. Matches the "memory is per-user setup" principle.
+- **Where does `memory/` get gitignored?** In the project repo's tracked `.gitignore` (matches splice's PR #371 pattern). Single line, single source of truth, visible to anyone reading the repo. `init-clone.sh` adds it idempotently on first run; subsequent clones inherit via the tracked file.
 - **Should `list-roles.sh` accept `--json` for scripting?** YAGNI for v3; revisit if a user asks.
 - **Should we ship a `pre-commit` hook in role MEMORY.md skeletons that blocks committing role-specific paths into the project repo?** Out of scope for v3.
 
