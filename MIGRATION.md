@@ -1,6 +1,6 @@
 # Migrating from claude-personas v2 to v3
 
-v3 replaces v2's git worktrees + hash-symlinks mechanism with independent project-repo clones + a single `memory/` symlink per clone.
+v3 replaces v2's git worktrees + hash-symlinks mechanism with independent project-repo clones + a single `.claude/memory/` symlink per clone.
 
 **Why migrate?** v2 silently broke under Claude Code v2.1.49+ (Feb 2026), which collapses all worktrees of one repo into a single auto-memory hash dir. v2 symlinks at per-worktree hash paths never load.
 
@@ -66,7 +66,7 @@ cd ~/path/to/claude-personas-<app>
 
 The first run persists the project URL to `.claude-personas/project.txt` — subsequent runs read it automatically.
 
-**Note:** `init-clone.sh` adds `memory/` to each clone's `.gitignore`. After the first role's init, commit and push that `.gitignore` change from the first clone before running init for the other roles, so each subsequent role clone inherits the entry from the remote (instead of each clone re-adding it locally and diverging until pushed):
+**Note:** `init-clone.sh` adds `.claude/memory/` to each clone's `.gitignore`. After the first role's init, commit and push that `.gitignore` change from the first clone before running init for the other roles, so each subsequent role clone inherits the entry from the remote (instead of each clone re-adding it locally and diverging until pushed):
 
 ```bash
 cd <project>                       # first clone — wherever init-clone.sh landed it
@@ -77,7 +77,7 @@ Result:
 
 - `<project>/` — Developer clone (no suffix, primary)
 - `<project>-pm/`, `<project>-designer/`, `<project>-scientist/` — other role clones
-- Each with a `memory/` symlink into the memory repo
+- Each with a `.claude/memory/` symlink into the memory repo
 
 ### 5. Verify
 
@@ -88,7 +88,7 @@ Result:
 Expected: all roles reported `OK`. Open each clone in Claude Code, confirm:
 
 - Role's `MEMORY.md` auto-loads (look for the "always in effect" rules in the first response).
-- `memory/shared/MEMORY.md` resolves (try a Read on it).
+- `.claude/memory/shared/MEMORY.md` resolves (try a Read on it).
 
 ### 6. Optional: tidy old hash dirs
 
@@ -122,3 +122,23 @@ Likely cause: `.claude-personas/project.txt` was wiped or never created. Re-run 
 
 **Q: My saved project URL is wrong — passing `--project-url` doesn't update it.**
 `init-clone.sh` only writes `project.txt` if it doesn't already exist; `--project-url` overrides the saved value for the current invocation but does not rewrite the file. To fix a wrong saved URL, delete `.claude-personas/project.txt` and re-run with `--project-url <correct-url>` — the file will be re-created with the new value.
+
+## v3.0 → v3.1
+
+v3.1 moves the role-memory symlink from `<clone>/memory` to `<clone>/.claude/memory` for consistency with Claude Code's own `.claude/` namespace. The memory content itself (in your sister `claude-personas-<app>/` repo) is unchanged.
+
+For each role clone (run from inside your `claude-personas-<app>/` memory repo):
+
+```bash
+scripts/init-clone.sh --force <role>
+```
+
+`--force` detects the legacy v3.0 layout, backs up the old root-level `memory/` symlink to `<clone>/.claude/memory.legacy-backup-<timestamp>`, removes the stale `/memory/` line from the clone's `.gitignore`, and writes the new `.claude/memory/` symlink + `/.claude/memory/` gitignore entry.
+
+Verification:
+
+- `ls -l <clone>/.claude/memory` shows a symlink pointing to `../../claude-personas-<app>/<role>`.
+- `cat <clone>/.gitignore | grep memory` shows only `/.claude/memory/` (no bare `/memory/`).
+- Restart Claude Code in the clone; the next session-start memory load should resolve `.claude/memory/MEMORY.md`.
+
+After all clones are migrated, you can delete the `.claude/memory.legacy-backup-*` directories.
