@@ -292,4 +292,43 @@ assert_not_exists "$tmp13/myapp/.claude/memory" ".claude/memory NOT created in r
 
 cleanup_clone_test_fixture "$tmp13"
 
+# --- v3.0 -> v3.1 migration via --force ---
+echo "=== test_init_clone v3.0 -> v3.1 migration ==="
+tmp14="$(mktemp -d)"
+make_clone_test_fixture "$tmp14"
+mv "$tmp14/memory-repo" "$tmp14/claude-personas-myapp"
+
+# Arrange: clone the project, then plant a LEGACY v3.0 layout by hand
+# (root-level memory/ symlink + /memory/ gitignore line)
+git clone --quiet "$tmp14/project-repo.git" "$tmp14/myapp"
+ln -s "../claude-personas-myapp/developer" "$tmp14/myapp/memory"
+printf "\n# legacy v3.0 marker\n/memory/\n" >> "$tmp14/myapp/.gitignore"
+
+# Act: run --force, which should detect the legacy layout and migrate
+( cd "$tmp14/claude-personas-myapp" && \
+  bash "$INIT_CLONE" developer --force --project-url "$tmp14/project-repo.git" )
+
+# Assert: new layout exists
+assert_symlink "$tmp14/myapp/.claude/memory" "../../claude-personas-myapp/developer" "new .claude/memory symlink created"
+assert_exists "$tmp14/myapp/.claude/memory/MEMORY.md" "MEMORY.md resolves through new symlink"
+
+# Assert: legacy root symlink removed
+assert_not_exists "$tmp14/myapp/memory" "legacy root memory/ symlink removed"
+
+# Assert: legacy /memory/ line removed from .gitignore, new /.claude/memory/ line present
+if grep -qE '^/?memory/?$' "$tmp14/myapp/.gitignore"; then
+  echo "  FAIL: legacy /memory/ line still in .gitignore"
+  exit 1
+else
+  echo "  PASS: legacy /memory/ line removed from .gitignore"
+fi
+if grep -qE '^/?\.claude/memory/?$' "$tmp14/myapp/.gitignore"; then
+  echo "  PASS: /.claude/memory/ line present in .gitignore"
+else
+  echo "  FAIL: /.claude/memory/ line not in .gitignore"
+  exit 1
+fi
+
+cleanup_clone_test_fixture "$tmp14"
+
 print_summary
