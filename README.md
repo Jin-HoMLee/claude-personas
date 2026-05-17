@@ -4,173 +4,139 @@
 
 **Lead your own AI team.** Role-aware persistent memory for solo multi-persona Claude Code workflows.
 
-![Four VSCode windows running cerebrum, Scientist, Developer, and PM personas in parallel on macOS, annotated to show cerebrum as the shared-memory hub](assets/mac-vscode-personas-overview-annotated.png)
+![Four VSCode windows running Developer, PM, Designer, and Scientist personas in parallel on macOS, each with its own MEMORY.md](assets/mac-vscode-personas-overview-annotated.png)
 
-*A real setup: four roles working in parallel — `cerebrum` (shared memory), Scientist, Developer, and PM — each in its own VSCode window, each with its own `MEMORY.md`.*
+*A real setup: four roles working in parallel, each in its own VSCode window, each with its own `MEMORY.md`.*
 
 ---
 
 ## The problem
 
-When you play multiple roles on a project (coding Monday, triaging Tuesday,
-reviewing Wednesday), you want Claude to behave differently in each context.
-Your Developer Claude shouldn't have to wade through PM rules, and your PM
-Claude shouldn't inherit Developer habits. One memory directory mashes them
-all together.
+When you play multiple roles on a project (coding Monday, triaging Tuesday, reviewing Wednesday), you want Claude to behave differently in each context. Your Developer Claude shouldn't have to wade through PM rules, and your PM Claude shouldn't inherit Developer habits. One memory directory mashes them all together.
 
 You need a roster, not a single shared brain.
 
 ## What this gives you
 
-Each persona or role on your team gets its own `MEMORY.md` — a playbook of habits, conventions, and rules tailored to that role. `claude-personas` is a **memory-only repo** — you clone one copy per project and never use it as your project codebase. Your actual project repo stays separate. For each role you want active, you create a project worktree; Claude auto-loads the right playbook based on which worktree you opened via native symlinks.
+Each persona or role on your team gets its own `MEMORY.md` — a playbook of habits, conventions, and rules tailored to that role. `claude-personas` is a **memory-only repo** — you fork the template once per project and never use it as your project codebase. Your actual project repo stays separate.
 
-A `shared/` folder holds team-wide conventions — things every role on your team should know. An `examples/` tree of ~28 real-world patterns is included if you want to crib plays from another team.
+For each role you want active, you create an independent **clone** of your project repo (sibling-dir style: `my-app/`, `my-app-pm/`, `my-app-scientist/`, ...). Each project clone has a `memory/` symlink into the matching role folder in your `claude-personas-<my-app>` repo. Claude auto-loads the right playbook based on which clone you open.
 
-**For:** solo developers who lead multiple personas across git worktrees.
+A `shared/` folder holds team-wide conventions. An `examples/` tree of patterns is included if you want to crib plays from another team.
+
+**For:** solo developers who lead multiple personas across project clones.
 **Not for:** multi-human teams, agent-to-agent coordination, or automated memory capture.
 
-## Quick start (~5 minutes per project)
+## Quick start (~10 minutes per project)
 
-1. Click **Use this template** → create your `claude-personas-<my-app>` repo (one per project)
-2. Clone it next to your project repo:
-   `git clone git@github.com:<you>/claude-personas-<my-app>.git ~/projects/claude-personas-<my-app>`
-3. From inside your **project repo** (not claude-personas), create a worktree per role:
-
+1. Click **Use this template** → create your `claude-personas-<my-app>` repo (one per project).
+2. Clone the memory repo next to where you want your project clones:
    ```sh
-   ~/projects/claude-personas-<my-app>/scripts/init-worktree.sh developer ../my-app-dev
-   ~/projects/claude-personas-<my-app>/scripts/init-worktree.sh pm ../my-app-pm
-   ~/projects/claude-personas-<my-app>/scripts/init-worktree.sh designer ../my-app-designer
+   cd ~/dev
+   git clone git@github.com:<you>/claude-personas-<my-app>.git
    ```
+3. Run `init-clone.sh` once per role you want active:
+   ```sh
+   cd claude-personas-<my-app>
+   ./scripts/init-clone.sh developer --project-url git@github.com:<you>/<my-app>.git
+   ./scripts/init-clone.sh pm
+   ./scripts/init-clone.sh designer
+   ./scripts/init-clone.sh scientist
+   ```
+   First call persists the project URL — subsequent calls don't need `--project-url`.
+4. Open any role's clone (e.g. `~/dev/my-app-pm/`) in Claude Code → role's MEMORY.md auto-loads via `memory/MEMORY.md`.
+5. Browse `examples/` for patterns; copy what fits into your role's `feedback_*.md` files (then commit + push from your memory repo).
 
-   Each call creates a worktree on a `<role>/workspace` branch and sets up the symlinks
-   so Claude Code auto-loads the right MEMORY.md when you open the worktree.
-
-4. Open Claude Code in any role's worktree → it auto-loads that role's MEMORY.md.
-
-5. Browse `examples/` for patterns; copy what fits into your role's `feedback_*.md`
-   files (then commit + push from your claude-personas clone).
-
-**Note**: every role gets its own worktree. The main project repo path stays
-"unused by any role" — its hash dir hosts the shared layer.
+**Default no-suffix slot:** `developer` claims the `<project>/` (no-suffix) path. Override with `--main` on another role or by writing the role name into `.claude-personas/main-role.txt`.
 
 ## How it works
 
 ```text
-~/projects/my-app/                       (main repo — no role uses it; hosts shared)
-~/projects/my-app-dev/                   (developer worktree)
-~/projects/my-app-pm/                    (PM worktree)
-~/projects/my-app-designer/              (designer worktree)
-
-~/projects/claude-personas-my-app/       (per-project clone of this repo)
-├── developer/MEMORY.md
-├── pm/MEMORY.md
-├── designer/MEMORY.md
-└── shared  ─symlink─►  ~/.claude/projects/<main-hash>/memory/
-
-Claude Code's native paths:
-~/.claude/projects/<dev-hash>/memory   ─symlink─►  claude-personas-my-app/developer/
-~/.claude/projects/<pm-hash>/memory    ─symlink─►  claude-personas-my-app/pm/
-~/.claude/projects/<des-hash>/memory   ─symlink─►  claude-personas-my-app/designer/
-~/.claude/projects/<main-hash>/memory/  (real dir — actual shared content)
+~/dev/                                       (parent dir; both repos are siblings here)
+├── my-app/                                  (Developer clone — no suffix)
+│   ├── .git/                                (real, full project repo)
+│   ├── memory ─symlink─► ../claude-personas-my-app/developer/
+│   └── [project files...]
+│
+├── my-app-pm/                               (PM clone)
+│   ├── memory ─symlink─► ../claude-personas-my-app/pm/
+│   └── [project files...]
+│
+├── my-app-designer/                         (Designer clone — same shape)
+├── my-app-scientist/                        (Scientist clone — same shape)
+│
+└── claude-personas-my-app/                  (memory repo, your fork of the template)
+    ├── developer/
+    │   ├── MEMORY.md
+    │   └── shared ─symlink─► ../shared
+    ├── pm/         (same shape)
+    ├── designer/   (same shape)
+    ├── scientist/  (same shape)
+    ├── shared/                              (canonical shared layer)
+    │   └── MEMORY.md
+    ├── examples/   (cribbable patterns)
+    └── scripts/    init-clone.sh, list-roles.sh
 ```
 
-Open Claude Code in any role's worktree and it auto-loads the matching MEMORY.md
-through the symlink chain. No `autoMemoryDirectory`, no per-worktree config files.
+When you open `my-app-pm/` in Claude Code, the auto-memory loader reads `my-app-pm/memory/MEMORY.md` — which resolves through the symlink to `claude-personas-my-app/pm/MEMORY.md`. References to `memory/shared/MEMORY.md` resolve through a second symlink (`pm/shared -> ../shared`) to the canonical shared layer.
 
-> ⓘ **Coming in v3**: a single claude-personas clone serving multiple projects
-> via a project-tier structure. v2 is one clone per project.
+Two layers of symlinks; both invisible to Claude Code.
 
 Each `MEMORY.md` has two sections:
 
-- **Always in effect** — rules inlined directly; Claude reads these at session start with
-  no file reads required
-- **Reference** — links to `feedback_*.md` files Claude reads on demand
+- **Always in effect** — rules inlined directly; Claude reads these at session start with no file reads required.
+- **Reference** — links to `feedback_*.md` files Claude reads on demand.
 
-Rules start in Reference, get promoted to Always-in-effect when they keep being missed.
-See `CONVENTIONS.md` for the full pattern.
+Rules start in Reference, get promoted to Always-in-effect when they keep being missed. See [`CONVENTIONS.md`](CONVENTIONS.md) for the full pattern.
 
-## What init-worktree.sh does (one-time per role)
-
-`scripts/init-worktree.sh` automates this section. Read on if you want to know what
-it does, or do it by hand.
+## What `init-clone.sh` does (one-time per role)
 
 For each role, the script:
 
-1. Creates a git worktree on a new `<role>/workspace` branch
-2. Computes Claude Code's hash from the worktree's absolute path
-3. Symlinks `~/.claude/projects/<role-hash>/memory` to the role folder in your clone
-4. (First role only) migrates your clone's `shared/` content into
-   `~/.claude/projects/<main-hash>/memory/` and replaces `shared/` with a symlink
-   pointing there
+1. Validates the role exists in the memory repo (`<role>/MEMORY.md` present).
+2. Resolves the project URL: `--project-url` flag > `.claude-personas/project.txt` > prompt.
+3. Decides the target clone path:
+   - If `--main` or the role matches `.claude-personas/main-role.txt` (default `developer`), claims `<parent>/<project-name>/`.
+   - Otherwise, target is `<parent>/<project-name>-<role>/`.
+   - Falls through to suffixed path if the no-suffix path is taken.
+4. `git clone <url> <target>`.
+5. Creates the `memory/` symlink in the new clone pointing into `<memory-repo>/<role>`.
+6. Adds `memory/` to the clone's `.gitignore` (idempotent).
+7. On first run, persists the project URL to `.claude-personas/project.txt`.
 
-After init, the project worktree contains nothing claude-personas-related — no
-`.claude/settings.local.json`, no `CLAUDE.local.md`. Your project's `.gitignore`
-stays clean.
-
-**Audit:** run `~/projects/claude-personas-<my-app>/scripts/list-roles.sh` to see
-which worktrees are currently wired to which roles.
+**Audit:** run `./scripts/list-roles.sh` from inside your memory repo to see which clones exist, which are wired correctly, and which need fixing.
 
 ## Windows
 
-v2 requires symlinks at multiple paths. Enable Developer Mode (Settings → Privacy
-& Security → Developer Mode) so non-admin users can create symlinks. If Developer
-Mode isn't an option in your environment, use WSL — claude-personas v2 has no
-non-symlink fallback.
+Symlink creation needs Developer Mode on Windows (Settings → Privacy & Security → Developer Mode). If Developer Mode isn't an option in your environment, use WSL.
 
 ## FAQ
 
-**Q: Do I need all three roles?**
-Delete any role you don't use. The remaining roles still work — the symlinks are independent.
+**Q: Do I need all four roles?**
+No. Skip roles you don't use. Each `init-clone.sh` call is independent. The role dirs you don't run still ship in your fork's memory repo — delete them if you want.
 
-**Q: Can I add more roles?**
-Yes. Create a new folder, add a `MEMORY.md` stub, then run
-`scripts/init-worktree.sh <new-role> <worktree-path>` to wire it up.
+**Q: Can I add custom roles?**
+Yes. Create a new folder in your memory repo (e.g. `mlops/`), add a `MEMORY.md` + `shared -> ../shared` symlink, then `init-clone.sh mlops`.
 
 **Q: How is this different from auto-memory?**
-Auto-memory captures everything automatically. This is curated and hand-edited — you
-decide what rules to keep and how to phrase them. Different tradeoff: more work, more
-intentional.
+Auto-memory captures everything automatically. This is curated and hand-edited — you decide what rules to keep and how to phrase them. Different tradeoff: more work, more intentional.
 
-**Q: What if I only want to start with one role for now?**
-Run `scripts/init-worktree.sh` for just that one role. You can add more roles
-(and the worktrees they need) later without restructuring. The shared layer is
-initialized on first-role init, so adding roles later just needs the same script call.
+**Q: Disk cost?**
+Each project clone is a full `git clone` — for most projects, ~few hundred MB. Today's machines have terabytes; disk is no longer a concern for the typical solo developer.
 
-**Q: Does claude-personas need to be in the same parent directory as my project?**
-No, but it must be reachable via an absolute path that won't move (the role
-symlinks store the path verbatim). One natural place: `~/projects/claude-personas-<my-app>/`
-next to your project repo.
+**Q: What if I move the memory repo after init?**
+The `memory/` symlinks become broken. Re-run `init-clone.sh <role> --force` for each affected clone, OR manually re-point the symlink with `ln -sf ../<new-path>/<role> <clone>/memory`.
 
-**Q: What if I move or rename the claude-personas clone after init?**
-The role symlinks become broken. Run `scripts/list-roles.sh` to detect, then
-re-run `scripts/init-worktree.sh <role> <worktree>` (with `--force`) for each
-role to re-create the symlinks at the new path.
+**Q: Multiple projects?**
+Each project needs its own memory repo (`claude-personas-<app1>`, `claude-personas-<app2>`, ...). Memory content and conventions are project-specific anyway.
 
-**Q: Can I have multiple projects share one claude-personas clone?**
-Not in v2. Each clone is wired to one project on first init (the `shared` symlink
-hardcodes that project's main-hash). Use a separate clone per project. v3 may
-support multi-project via a project-tier directory structure.
+## Upgrading from v2
 
-## Upgrading from v1
+See [`MIGRATION.md`](MIGRATION.md) for a six-step walkthrough. Takes ~10 minutes per project.
 
-v2 is a breaking change from v1. v1 used `autoMemoryDirectory` in a project-level
-settings file, which is silently ignored by Claude Code (see issue #55801). v2
-replaces this with native filesystem symlinks.
+**Why v3?** v2's mechanism (git worktrees + hash-derived symlinks) silently broke under Claude Code v2.1.49+ — that release collapses all worktrees into a single hash dir, so v2's per-worktree symlinks never load. v3 uses real independent clones, which each get their own native auto-memory dir.
 
-**Manual upgrade per project**:
-
-1. In each role's project worktree, delete `.claude/settings.local.json` and
-   `CLAUDE.local.md`, and remove their entries from `.gitignore`.
-2. Re-run `scripts/init-worktree.sh --force <role> <worktree-path>` from your
-   project repo — the v2 script produces symlink-based wiring instead of v1's
-   config files. `--force` is required because v1 users who ran Claude sessions
-   in the worktree will have content at `~/.claude/projects/<hash>/memory/`
-   (Claude Code wrote there because v1's `autoMemoryDirectory` was silently
-   ignored). `--force` backs up that directory to `memory.backup-<date>/`
-   alongside before installing the symlink.
-
-Your `claude-personas/<role>/` memory files are unchanged; only the wiring mechanism
-between project worktree and role memory has changed. No memory data is lost.
+Users on Claude Code <v2.1.49 can pin their memory repo to the `v2-final` git tag.
 
 ## License
 
