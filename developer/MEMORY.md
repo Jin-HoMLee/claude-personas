@@ -1,7 +1,7 @@
 # Memory Index — Developer
 
 <!--
-  Usage: this folder is loaded by Claude Code via the `memory/` symlink in your
+  Usage: this folder is loaded by Claude Code via the `.claude/memory/` symlink in your
   Developer project clone. The symlink is created by scripts/init-clone.sh.
   See CONVENTIONS.md for the v3 mechanism.
 -->
@@ -12,7 +12,7 @@
 
 ## Shared (all sessions)
 
-- [Shared memory index](shared/MEMORY.md) — All cross-role conventions
+- [Shared memory index](.claude/memory/shared/MEMORY.md) — All cross-role conventions
 
 ## Role: Developer
 
