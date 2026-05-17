@@ -53,4 +53,43 @@ else
 fi
 
 cleanup_clone_test_fixture "$tmp"
+
+# --- list-roles reports dirty git state ---
+echo "=== test_list_roles reports dirty git state ==="
+tmp2="$(mktemp -d)"
+make_clone_test_fixture "$tmp2"
+mv "$tmp2/memory-repo" "$tmp2/claude-personas-myapp"
+
+# Wire developer; then dirty the clone by modifying a tracked file
+( cd "$tmp2/claude-personas-myapp" && \
+  bash "$INIT_CLONE" developer --project-url "$tmp2/project-repo.git" )
+echo "modification" >> "$tmp2/myapp/README.md"
+
+output="$( cd "$tmp2/claude-personas-myapp" && bash "$LIST_ROLES" 2>&1 || true )"
+
+if echo "$output" | grep -qE "developer.*dirty"; then
+  echo "  PASS: developer reported dirty"
+else
+  echo "  FAIL: developer not reported dirty"
+  echo "$output"
+  exit 1
+fi
+
+cleanup_clone_test_fixture "$tmp2"
+
+# --- list-roles errors when memory repo name lacks claude-personas- prefix ---
+echo "=== test_list_roles non-claude-personas-* repo name errors ==="
+tmp3="$(mktemp -d)"
+make_clone_test_fixture "$tmp3"
+# Leave memory-repo name as-is (does NOT start with claude-personas-)
+
+if ( cd "$tmp3/memory-repo" && bash "$LIST_ROLES" ) 2>/dev/null; then
+  echo "  FAIL: list-roles should exit non-zero for non-claude-personas-* repo name"
+  exit 1
+else
+  echo "  PASS: list-roles errored on non-claude-personas-* repo name"
+fi
+
+cleanup_clone_test_fixture "$tmp3"
+
 print_summary

@@ -94,6 +94,11 @@ NO_SUFFIX_PATH="$PARENT_DIR/$PROJECT_NAME"
 if [[ "$MAIN" -eq 1 ]] || [[ "$ROLE" == "$DEFAULT_MAIN" ]]; then
   if [[ ! -e "$NO_SUFFIX_PATH" ]] || [[ "$FORCE" -eq 1 ]]; then
     CLAIMS_NO_SUFFIX=1
+  elif [[ "$MAIN" -eq 1 ]]; then
+    # Explicit --main: fail rather than silently fall back to suffix.
+    echo "Error: --main requested but '$NO_SUFFIX_PATH' already exists." >&2
+    echo "Pass --force to re-wire memory/ in place, or remove/rename the existing directory." >&2
+    exit 1
   fi
 fi
 

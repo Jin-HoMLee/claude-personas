@@ -66,7 +66,15 @@ cd ~/path/to/claude-personas-<app>
 
 The first run persists the project URL to `.claude-personas/project.txt` — subsequent runs read it automatically.
 
+**Note:** `init-clone.sh` adds `memory/` to each clone's `.gitignore`. After the first role's init, commit and push that `.gitignore` change from the first clone before running init for the other roles, so each subsequent role clone inherits the entry from the remote (instead of each clone re-adding it locally and diverging until pushed):
+
+```bash
+cd <project>                       # first clone — wherever init-clone.sh landed it
+git add .gitignore && git commit -m "chore: gitignore role-memory symlink" && git push
+```
+
 Result:
+
 - `<project>/` — Developer clone (no suffix, primary)
 - `<project>-pm/`, `<project>-designer/`, `<project>-scientist/` — other role clones
 - Each with a `memory/` symlink into the memory repo
@@ -78,6 +86,7 @@ Result:
 ```
 
 Expected: all roles reported `OK`. Open each clone in Claude Code, confirm:
+
 - Role's `MEMORY.md` auto-loads (look for the "always in effect" rules in the first response).
 - `memory/shared/MEMORY.md` resolves (try a Read on it).
 
@@ -95,7 +104,7 @@ If anything goes wrong:
 
 ```bash
 cd ~/path/to/claude-personas-<app>
-git checkout v2-final         # the archival tag
+git checkout -b v2-restore v2-final   # branch off the archival tag (avoids detached HEAD)
 ```
 
 Re-run the v2 `init-worktree.sh` from that checkout — your role memory content is unchanged.
@@ -110,3 +119,6 @@ Yes — pin your memory repo to the `v2-final` tag and use the v2 scripts. v3 on
 
 **Q: My init-clone.sh asks for a project URL each time.**
 Likely cause: `.claude-personas/project.txt` was wiped or never created. Re-run with `--project-url` once; the file will be re-created.
+
+**Q: My saved project URL is wrong — passing `--project-url` doesn't update it.**
+`init-clone.sh` only writes `project.txt` if it doesn't already exist; `--project-url` overrides the saved value for the current invocation but does not rewrite the file. To fix a wrong saved URL, delete `.claude-personas/project.txt` and re-run with `--project-url <correct-url>` — the file will be re-created with the new value.

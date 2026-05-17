@@ -16,7 +16,7 @@ v3 promotes that proven splice pattern into the framework default.
 
 ## Non-goals
 
-- **No support for both mechanisms in parallel.** v2 is retired (git-tagged `v2.0.1`, archived). Users on Claude Code <v2.1.49 who want v2 can pin to that tag.
+- **No support for both mechanisms in parallel.** v2 is retired (git-tagged `v2-final`, archived). Users on Claude Code <v2.1.49 who want v2 can pin to that tag.
 - **No automated v2→v3 migration script.** User base is small; a written walkthrough is sufficient.
 - **No rename of the framework.** Despite 3 namespace collisions per the 2026-05-14 landscape survey, `claude-personas` stays. Differentiate via README, not rename.
 
@@ -145,7 +145,7 @@ Step-by-step walkthrough from v2 to v3. Six steps, ~10 min per project:
 
 ### 5. Retired v2 surface
 
-Deleted from main (preserved in git tag `v2.0.1`):
+Deleted from main (preserved in git tag `v2-final`):
 
 - `scripts/init-worktree.sh`
 - v2 versions of `scripts/list-roles.sh` (replaced with v3 version, same filename)

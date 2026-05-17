@@ -224,4 +224,72 @@ assert_equal "1" "$count2" "exactly one memory/ line in .gitignore"
 
 cleanup_clone_test_fixture "$tmp10"
 
+# --- --main on taken no-suffix path must fail (no silent suffix fallback) ---
+echo "=== test_init_clone --main with taken no-suffix path fails hard ==="
+tmp11="$(mktemp -d)"
+make_clone_test_fixture "$tmp11"
+mv "$tmp11/memory-repo" "$tmp11/claude-personas-myapp"
+
+# Block the no-suffix slot with developer first
+( cd "$tmp11/claude-personas-myapp" && \
+  bash "$INIT_CLONE" developer --project-url "$tmp11/project-repo.git" )
+
+# Now pm --main should fail (no-suffix taken, no --force)
+if ( cd "$tmp11/claude-personas-myapp" && \
+     bash "$INIT_CLONE" pm --main --project-url "$tmp11/project-repo.git" ) 2>/dev/null; then
+  echo "  FAIL: --main should have errored when no-suffix path was taken without --force"
+  exit 1
+else
+  echo "  PASS: --main errored when no-suffix path was taken without --force"
+fi
+
+# Importantly: pm should NOT have been written to the suffix path
+assert_not_exists "$tmp11/myapp-pm" "pm did NOT silently fall back to suffix path"
+
+cleanup_clone_test_fixture "$tmp11"
+
+# --- --target explicit path overrides suffix logic ---
+echo "=== test_init_clone --target overrides suffix logic ==="
+tmp12="$(mktemp -d)"
+make_clone_test_fixture "$tmp12"
+mv "$tmp12/memory-repo" "$tmp12/claude-personas-myapp"
+
+custom="$tmp12/custom-clone-path"
+
+( cd "$tmp12/claude-personas-myapp" && \
+  bash "$INIT_CLONE" developer --target "$custom" --project-url "$tmp12/project-repo.git" )
+
+assert_exists "$custom" "developer landed at --target custom path"
+assert_exists "$custom/.git" "--target clone is a real git repo"
+assert_symlink "$custom/memory" "../claude-personas-myapp/developer" "memory symlink in --target clone"
+# Default paths should NOT have been created
+assert_not_exists "$tmp12/myapp" "default no-suffix path NOT created when --target given"
+assert_not_exists "$tmp12/myapp-developer" "default suffix path NOT created when --target given"
+
+cleanup_clone_test_fixture "$tmp12"
+
+# --- --force on a plain non-git directory at TARGET refuses ---
+echo "=== test_init_clone --force on non-git directory refuses ==="
+tmp13="$(mktemp -d)"
+make_clone_test_fixture "$tmp13"
+mv "$tmp13/memory-repo" "$tmp13/claude-personas-myapp"
+
+# Create a plain (non-git) directory at the no-suffix path
+mkdir "$tmp13/myapp"
+touch "$tmp13/myapp/some-existing-file"
+
+if ( cd "$tmp13/claude-personas-myapp" && \
+     bash "$INIT_CLONE" developer --force --project-url "$tmp13/project-repo.git" ) 2>/dev/null; then
+  echo "  FAIL: --force should have refused on non-git directory"
+  exit 1
+else
+  echo "  PASS: --force refused non-git directory at TARGET"
+fi
+
+# Should not have clobbered the existing file or created a memory/ symlink
+assert_exists "$tmp13/myapp/some-existing-file" "non-git directory contents preserved"
+assert_not_exists "$tmp13/myapp/memory" "memory/ NOT created in refused dir"
+
+cleanup_clone_test_fixture "$tmp13"
+
 print_summary
