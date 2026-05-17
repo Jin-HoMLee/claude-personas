@@ -23,7 +23,7 @@ assert_symlink "$tmp/myapp/.claude/memory" "../../claude-personas-myapp/develope
 assert_exists "$tmp/myapp/.claude/memory/MEMORY.md" "MEMORY.md resolves through symlink"
 
 # memory/ added to .gitignore
-if grep -q "^\.claude/memory/$\|^/\.claude/memory/$" "$tmp/myapp/.gitignore" 2>/dev/null; then
+if grep -qE '^/?\.claude/memory/?$' "$tmp/myapp/.gitignore" 2>/dev/null; then
   echo "  PASS: .claude/memory/ in .gitignore"
 else
   echo "  FAIL: .claude/memory/ not in .gitignore (or .gitignore missing)"
@@ -286,7 +286,7 @@ else
   echo "  PASS: --force refused non-git directory at TARGET"
 fi
 
-# Should not have clobbered the existing file or created a memory/ symlink
+# Should not have clobbered the existing file or created a .claude/memory symlink
 assert_exists "$tmp13/myapp/some-existing-file" "non-git directory contents preserved"
 assert_not_exists "$tmp13/myapp/.claude/memory" ".claude/memory NOT created in refused dir"
 
