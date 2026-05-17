@@ -1,9 +1,9 @@
-# Memory Index — PM
+# Memory Index — Scientist
 
 <!--
   Usage: this folder is loaded by Claude Code via the `memory/` symlink in your
-  PM project clone. The symlink is created by scripts/init-clone.sh.
-  See CONVENTIONS.md for the v3 mechanism.
+  Scientist project clone. The symlink is created by scripts/init-clone.sh.
+  See CONVENTIONS.md for the full v3 mechanism.
 -->
 
 ## Always in effect (no file read required)
@@ -14,8 +14,8 @@
 
 - [Shared memory index](shared/MEMORY.md) — All cross-role conventions
 
-## Role: PM
+## Role: Scientist
 
 <!-- Add links to role-specific memory files. Example:
-- [Check board first](feedback_check_board.md) — query live board at session start, not memory snapshots
+- [Manuscript editing workflow](feedback_manuscript_edits.md) — section-by-section with todo list
 -->

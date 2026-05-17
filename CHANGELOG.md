@@ -1,5 +1,45 @@
 # Changelog
 
+## [3.0.0] — 2026-05-15
+
+### Breaking changes
+
+v3 replaces v2's git-worktree + hash-derived-symlink mechanism with
+**independent project-repo clones** per role, wired by a single `memory/`
+symlink in each clone pointing into a sibling memory repo.
+
+**Why**: Claude Code v2.1.49+ (Feb 2026) intentionally collapses all
+worktrees of one repo into the main repo's auto-memory hash dir. v2's
+per-worktree symlinks silently never load on current Claude Code.
+
+**Architecture**: each role gets a real `git clone` at a sibling path
+(e.g. `my-app/`, `my-app-pm/`, `my-app-scientist/`). The Developer role
+claims the no-suffix path by default; other roles get `-<role>` suffixes.
+Override the claimer with `--main` or `.claude-personas/main-role.txt`.
+
+Pinned `v2-final` git tag preserves v2 for users on older Claude Code.
+
+### Added
+
+- `scripts/init-clone.sh` replaces v2's `scripts/init-worktree.sh`.
+- `scientist/` role skeleton + `examples/scientist/` ported patterns.
+- `MIGRATION.md` with six-step v2-to-v3 walkthrough.
+- `.claude-personas/project.txt` (gitignored) persists project URL after first init.
+- `.claude-personas/main-role.txt` (tracked, optional) overrides default no-suffix claimer.
+
+### Changed
+
+- `scripts/list-roles.sh` rewritten to walk sibling clone dirs instead of
+  `~/.claude/projects/<hash>/memory` paths.
+- `README.md` and `CONVENTIONS.md` rewritten for the clones model.
+- Role MEMORY.md boilerplate updated to drop v2-specific commentary.
+
+### Removed
+
+- `scripts/init-worktree.sh` (preserved in the `v2-final` tag).
+- `scripts/tests/test_init_worktree.sh` (preserved in the `v2-final` tag).
+- v2 `autoMemoryDirectory` references in docs.
+
 ## [2.0.1] — 2026-05-09
 
 ### Fixed
