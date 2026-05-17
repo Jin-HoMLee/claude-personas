@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.1.0] — 2026-05-17
+
+### Breaking changes
+
+- **Role-memory symlink moves from `<clone>/memory` to `<clone>/.claude/memory`** for consistency with Claude Code's own `.claude/` namespace.
+- `.gitignore` entry written by `init-clone.sh` is now `/.claude/memory/` instead of `/memory/`.
+
+### Migration
+
+- For each existing v3.0 role clone, run `scripts/init-clone.sh --force <role>` from inside the sister `claude-personas-<app>/` memory repo. The script detects the legacy layout, backs up the old root symlink to `<clone>/.claude/memory.legacy-backup-<timestamp>`, removes the stale `/memory/` line from `.gitignore`, and writes the new layout. See [MIGRATION.md](MIGRATION.md) for details.
+
 ## [3.0.0] — 2026-05-15
 
 ### Breaking changes
