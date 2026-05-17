@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # init-clone.sh — create an independent project-repo clone for a role and wire
-# the memory/ symlink to the sibling claude-personas memory repo.
+# the .claude/memory/ symlink to the sibling claude-personas memory repo.
 #
 # Run from inside your memory repo (claude-personas-<app>/).
 
@@ -135,28 +135,47 @@ else
   git clone "$PROJECT_URL" "$TARGET"
 fi
 
-# Wire memory symlink (back up existing first if --force and broken)
-MEMORY_LINK="$TARGET/memory"
+# Wire memory symlink under .claude/. On --force, also clean up any legacy
+# root-level memory/ symlink and stale /memory/ .gitignore line from v3.0.
+mkdir -p "$TARGET/.claude"
+MEMORY_LINK="$TARGET/.claude/memory"
+
+# Migrate v3.0 layout: legacy root symlink → back up under .claude/
+LEGACY_LINK="$TARGET/memory"
+if [[ "$FORCE" -eq 1 && ( -L "$LEGACY_LINK" || -e "$LEGACY_LINK" ) ]]; then
+  LEGACY_BACKUP="$TARGET/.claude/memory.legacy-backup-$(date +%Y%m%d-%H%M%S)"
+  mv "$LEGACY_LINK" "$LEGACY_BACKUP"
+  echo "✓ Migrated legacy root memory/ → $LEGACY_BACKUP"
+fi
+
 if [[ -e "$MEMORY_LINK" || -L "$MEMORY_LINK" ]]; then
   if [[ "$FORCE" -eq 1 ]]; then
-    BACKUP="$TARGET/memory.backup-$(date +%Y%m%d-%H%M%S)"
+    BACKUP="$TARGET/.claude/memory.backup-$(date +%Y%m%d-%H%M%S)"
     mv "$MEMORY_LINK" "$BACKUP"
-    echo "✓ Backed up existing memory/ to $BACKUP"
+    echo "✓ Backed up existing .claude/memory → $BACKUP"
   else
     echo "Error: $MEMORY_LINK already exists. Use --force to back up." >&2
     exit 1
   fi
 fi
 
-ln -s "../$MEMORY_REPO_NAME/$ROLE" "$MEMORY_LINK"
-echo "✓ Symlinked $MEMORY_LINK → ../$MEMORY_REPO_NAME/$ROLE"
+ln -s "../../$MEMORY_REPO_NAME/$ROLE" "$MEMORY_LINK"
+echo "✓ Symlinked $MEMORY_LINK → ../../$MEMORY_REPO_NAME/$ROLE"
 
-# Add memory/ to .gitignore idempotently
+# Update .gitignore: add /.claude/memory/, remove legacy /memory/ if present
 GITIGNORE="$TARGET/.gitignore"
 touch "$GITIGNORE"
-if ! grep -qE '^/?memory/?$' "$GITIGNORE"; then
-  printf "\n# claude-personas role-memory symlink\n/memory/\n" >> "$GITIGNORE"
-  echo "✓ Added /memory/ to $GITIGNORE"
+
+# Remove legacy /memory/ line on --force (v3.0 → v3.1 migration)
+if [[ "$FORCE" -eq 1 ]] && grep -qE '^/?memory/?$' "$GITIGNORE"; then
+  # Portable in-place edit: write to temp, swap
+  grep -vE '^/?memory/?$' "$GITIGNORE" > "$GITIGNORE.tmp" && mv "$GITIGNORE.tmp" "$GITIGNORE"
+  echo "✓ Removed legacy /memory/ from $GITIGNORE"
+fi
+
+if ! grep -qE '^/?\.claude/memory/?$' "$GITIGNORE"; then
+  printf "\n# claude-personas role-memory symlink\n/.claude/memory/\n" >> "$GITIGNORE"
+  echo "✓ Added /.claude/memory/ to $GITIGNORE"
 fi
 
 # Persist project URL
@@ -167,4 +186,4 @@ if [[ ! -f "$PROJECT_TXT" ]]; then
 fi
 
 echo ""
-echo "Done. Open $TARGET in Claude Code → memory/MEMORY.md auto-loads."
+echo "Done. Open $TARGET in Claude Code → .claude/memory/MEMORY.md auto-loads."

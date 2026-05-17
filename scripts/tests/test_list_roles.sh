@@ -19,8 +19,8 @@ mv "$tmp/memory-repo" "$tmp/claude-personas-myapp"
   bash "$INIT_CLONE" pm --project-url "$tmp/project-repo.git" )
 
 # Break the pm memory symlink (simulate drift)
-rm "$tmp/myapp-pm/memory"
-ln -s /nonexistent "$tmp/myapp-pm/memory"
+rm "$tmp/myapp-pm/.claude/memory"
+ln -s /nonexistent "$tmp/myapp-pm/.claude/memory"
 
 # Run list-roles.sh
 output="$( cd "$tmp/claude-personas-myapp" && bash "$LIST_ROLES" 2>&1 || true )"
