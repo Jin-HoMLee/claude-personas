@@ -22,7 +22,7 @@ assert_exists "$tmp/myapp/.git" "developer clone is a real git repo"
 assert_symlink "$tmp/myapp/.claude/memory" "../../claude-personas-myapp/developer" "memory symlink points to developer/"
 assert_exists "$tmp/myapp/.claude/memory/MEMORY.md" "MEMORY.md resolves through symlink"
 
-# memory/ added to .gitignore
+# .claude/memory/ added to .gitignore
 if grep -qE '^/?\.claude/memory/?$' "$tmp/myapp/.gitignore" 2>/dev/null; then
   echo "  PASS: .claude/memory/ in .gitignore"
 else
