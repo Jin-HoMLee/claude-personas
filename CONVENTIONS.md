@@ -6,7 +6,7 @@ Read this once to understand the system. Then close it and start writing rules.
 
 `claude-personas` is a **memory-only repo** — you fork it once per project (`claude-personas-<my-app>`) and never use it as your project codebase. Inside it, each role (`developer/`, `pm/`, `designer/`, `scientist/`) is just a folder of memory files.
 
-Your **project repo** (the codebase you actually work on) is separate. For each role you want to use, you create one **independent project clone** at a sibling path (`my-app/`, `my-app-pm/`, etc.). Each project clone has a single `memory/` symlink pointing into the matching role folder of the memory repo. Claude Code auto-loads the right `MEMORY.md` based on which clone you're working in.
+Your **project repo** (the codebase you actually work on) is separate. For each role you want to use, you create one **independent project clone** at a sibling path (`my-app/`, `my-app-pm/`, etc.). Each project clone has a single `.claude/memory/` symlink pointing into the matching role folder of the memory repo. Claude Code auto-loads the right `MEMORY.md` based on which clone you're working in.
 
 Each role's clone is a real `git clone` of the project — `git fetch origin` between clones is exactly how human team members sync via GitHub.
 
@@ -25,7 +25,7 @@ Keeping these separate prevents a common failure mode: mixing codebase facts wit
 
 When you play multiple roles on a project (Developer on Monday, PM on Tuesday, Designer on Wednesday, Scientist on Thursday), you want Claude to behave differently in each context. The Developer should know your test conventions; the PM should know your milestone format; neither should wade through the other's rules.
 
-Each role gets its own project clone (and so its own Claude Code auto-memory hash dir). The `memory/` symlink in that clone resolves to the role-specific folder in the memory repo. Claude context-switches automatically when you open a different clone — no settings to configure inside the clone, no per-session flags.
+Each role gets its own project clone (and so its own Claude Code auto-memory hash dir). The `.claude/memory/` symlink in that clone resolves to the role-specific folder in the memory repo. Claude context-switches automatically when you open a different clone — no settings to configure inside the clone, no per-session flags.
 
 ## The MEMORY.md two-tier structure
 
@@ -79,7 +79,7 @@ Examples:
 
 The `shared/` symlink inside each role folder (`developer/shared -> ../shared`) lets you reference shared memory files with a consistent relative path (`shared/feedback_X.md`) regardless of which role you're in. This path appears in drift annotations.
 
-The `memory/` symlink in each project clone (`<project-clone>/memory -> ../claude-personas-<app>/<role>`) is what Claude Code reads at session start. It's created by `init-clone.sh`.
+The `.claude/memory/` symlink in each project clone (`<project-clone>/.claude/memory -> ../../claude-personas-<app>/<role>`) is what Claude Code reads at session start. It's created by `init-clone.sh`.
 
 **Windows:** Symlink creation requires Developer Mode on Windows (Settings → Privacy & Security → Developer Mode). If you're on Windows without Developer Mode, use WSL.
 
