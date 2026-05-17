@@ -12,7 +12,7 @@
 
 ## Shared (all sessions)
 
-- [Shared memory index](.claude/memory/shared/MEMORY.md) — All cross-role conventions
+- [Shared memory index](shared/MEMORY.md) — All cross-role conventions
 
 ## Role: Developer
 
