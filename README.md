@@ -20,7 +20,7 @@ You need a roster, not a single shared brain.
 
 Each persona or role on your team gets its own `MEMORY.md` — a playbook of habits, conventions, and rules tailored to that role. `claude-personas` is a **memory-only repo** — you fork the template once per project and never use it as your project codebase. Your actual project repo stays separate.
 
-For each role you want active, you create an independent **clone** of your project repo (sibling-dir style: `my-app/`, `my-app-pm/`, `my-app-scientist/`, ...). Each project clone has a `memory/` symlink into the matching role folder in your `claude-personas-<my-app>` repo. Claude auto-loads the right playbook based on which clone you open.
+For each role you want active, you create an independent **clone** of your project repo (sibling-dir style: `my-app/`, `my-app-pm/`, `my-app-scientist/`, ...). Each project clone has a `.claude/memory/` symlink into the matching role folder in your `claude-personas-<my-app>` repo. Claude auto-loads the right playbook based on which clone you open.
 
 A `shared/` folder holds team-wide conventions. An `examples/` tree of patterns is included if you want to crib plays from another team.
 
@@ -44,7 +44,7 @@ A `shared/` folder holds team-wide conventions. An `examples/` tree of patterns 
    ./scripts/init-clone.sh scientist
    ```
    First call persists the project URL — subsequent calls don't need `--project-url`.
-4. Open any role's clone (e.g. `~/dev/my-app-pm/`) in Claude Code → role's MEMORY.md auto-loads via `memory/MEMORY.md`.
+4. Open any role's clone (e.g. `~/dev/my-app-pm/`) in Claude Code → role's MEMORY.md auto-loads via `.claude/memory/MEMORY.md`.
 5. Browse `examples/` for patterns; copy what fits into your role's `feedback_*.md` files (then commit + push from your memory repo).
 
 **Default no-suffix slot:** `developer` claims the `<project>/` (no-suffix) path. Override with `--main` on another role or by writing the role name into `.claude-personas/main-role.txt`.
@@ -78,7 +78,7 @@ A `shared/` folder holds team-wide conventions. An `examples/` tree of patterns 
     └── scripts/    init-clone.sh, list-roles.sh
 ```
 
-When you open `my-app-pm/` in Claude Code, the auto-memory loader reads `my-app-pm/memory/MEMORY.md` — which resolves through the symlink to `claude-personas-my-app/pm/MEMORY.md`. References to `memory/shared/MEMORY.md` resolve through a second symlink (`pm/shared -> ../shared`) to the canonical shared layer.
+When you open `my-app-pm/` in Claude Code, the auto-memory loader reads `my-app-pm/.claude/memory/MEMORY.md` — which resolves through the symlink to `claude-personas-my-app/pm/MEMORY.md`. References to `.claude/memory/shared/MEMORY.md` resolve through a second symlink (`pm/shared -> ../shared`) to the canonical shared layer.
 
 Two layers of symlinks; both invisible to Claude Code.
 
@@ -100,8 +100,8 @@ For each role, the script:
    - Otherwise, target is `<parent>/<project-name>-<role>/`.
    - Falls through to suffixed path if the no-suffix path is taken.
 4. `git clone <url> <target>`.
-5. Creates the `memory/` symlink in the new clone pointing into `<memory-repo>/<role>`.
-6. Adds `memory/` to the clone's `.gitignore` (idempotent).
+5. Creates the `.claude/memory/` symlink in the new clone pointing into `<memory-repo>/<role>`.
+6. Adds `.claude/memory/` to the clone's `.gitignore` (idempotent).
 7. On first run, persists the project URL to `.claude-personas/project.txt`.
 
 **Audit:** run `./scripts/list-roles.sh` from inside your memory repo to see which clones exist, which are wired correctly, and which need fixing.
@@ -125,7 +125,7 @@ Auto-memory captures everything automatically. This is curated and hand-edited �
 Each project clone is a full `git clone` — for most projects, ~few hundred MB. Today's machines have terabytes; disk is no longer a concern for the typical solo developer.
 
 **Q: What if I move the memory repo after init?**
-The `memory/` symlinks become broken. Re-run `init-clone.sh <role> --force` for each affected clone, OR manually re-point the symlink with `ln -sf ../<new-path>/<role> <clone>/memory`.
+The `.claude/memory/` symlinks become broken. Re-run `init-clone.sh <role> --force` for each affected clone, OR manually re-point the symlink with `ln -sf ../../<new-path>/<role> <clone>/.claude/memory`.
 
 **Q: Multiple projects?**
 Each project needs its own memory repo (`claude-personas-<app1>`, `claude-personas-<app2>`, ...). Memory content and conventions are project-specific anyway.
