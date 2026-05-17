@@ -17,7 +17,7 @@ jobs:
 
       - name: claude-personas internal symlinks resolve
         run: |
-          for role in developer pm designer; do
+          for role in developer pm designer scientist; do
             target=$(readlink "$role/shared")
             resolved="$role/$target"
             if [ ! -d "$resolved" ]; then
@@ -29,7 +29,7 @@ jobs:
 
       - name: scripts are executable
         run: |
-          for s in scripts/init-worktree.sh scripts/list-roles.sh scripts/tests/run_all.sh; do
+          for s in scripts/init-clone.sh scripts/list-roles.sh scripts/tests/run_all.sh; do
             if [ ! -x "$s" ]; then
               echo "FAIL: $s is not executable"
               exit 1
@@ -39,7 +39,7 @@ jobs:
 
       - name: each role has MEMORY.md
         run: |
-          for role in developer pm designer shared; do
+          for role in developer pm designer scientist shared; do
             if [ ! -f "$role/MEMORY.md" ]; then
               echo "FAIL: $role/MEMORY.md missing"
               exit 1
