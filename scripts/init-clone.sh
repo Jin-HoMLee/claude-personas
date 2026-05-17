@@ -19,7 +19,7 @@ Usage: $(basename "$0") <role> [--project-url <url>] [--target <path>] [--main] 
   --project-url   Project git URL to clone. Falls back to .claude-personas/project.txt, then prompts.
   --target        Explicit target path for the clone. Overrides suffix rules.
   --main          Force this role to claim the no-suffix path \$PARENT/<project-name>/.
-  --force         Re-wire memory/ in an existing clean clone (must be same project URL).
+  --force         Re-wire .claude/memory/ in an existing clean clone (must be same project URL).
 
 Run from inside your memory repo (claude-personas-<app>/).
 EOF
@@ -97,7 +97,7 @@ if [[ "$MAIN" -eq 1 ]] || [[ "$ROLE" == "$DEFAULT_MAIN" ]]; then
   elif [[ "$MAIN" -eq 1 ]]; then
     # Explicit --main: fail rather than silently fall back to suffix.
     echo "Error: --main requested but '$NO_SUFFIX_PATH' already exists." >&2
-    echo "Pass --force to re-wire memory/ in place, or remove/rename the existing directory." >&2
+    echo "Pass --force to re-wire .claude/memory/ in place, or remove/rename the existing directory." >&2
     exit 1
   fi
 fi
@@ -128,7 +128,7 @@ if [[ -e "$TARGET" && "$FORCE" -eq 1 ]]; then
     echo "Error: '$TARGET' is a clone of '$EXISTING_URL', not '$PROJECT_URL'. Refusing --force." >&2
     exit 1
   fi
-  echo "✓ --force: existing clone at '$TARGET' matches project URL; will only re-wire memory/"
+  echo "✓ --force: existing clone at '$TARGET' matches project URL; will only re-wire .claude/memory/"
 else
   # Clone fresh
   echo "Cloning $PROJECT_URL → $TARGET"
@@ -168,8 +168,11 @@ touch "$GITIGNORE"
 
 # Remove legacy /memory/ line on --force (v3.0 → v3.1 migration)
 if [[ "$FORCE" -eq 1 ]] && grep -qE '^/?memory/?$' "$GITIGNORE"; then
-  # Portable in-place edit: write to temp, swap
-  grep -vE '^/?memory/?$' "$GITIGNORE" > "$GITIGNORE.tmp" && mv "$GITIGNORE.tmp" "$GITIGNORE"
+  # Portable in-place edit: write to temp, swap. grep -v exits 1 when output
+  # is empty (e.g. .gitignore was only the legacy line); || true keeps us
+  # going so the mv still runs and replaces the file with empty content.
+  grep -vE '^/?memory/?$' "$GITIGNORE" > "$GITIGNORE.tmp" || true
+  mv "$GITIGNORE.tmp" "$GITIGNORE"
   echo "✓ Removed legacy /memory/ from $GITIGNORE"
 fi
 

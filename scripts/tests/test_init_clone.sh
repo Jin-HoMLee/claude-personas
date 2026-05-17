@@ -331,4 +331,42 @@ fi
 
 cleanup_clone_test_fixture "$tmp14"
 
+# --- v3.0 -> v3.1 migration when .gitignore contains ONLY the legacy line ---
+echo "=== test_init_clone v3.0 -> v3.1 migration, single-line .gitignore ==="
+tmp15="$(mktemp -d)"
+make_clone_test_fixture "$tmp15"
+mv "$tmp15/memory-repo" "$tmp15/claude-personas-myapp"
+
+# Arrange: clone the project, plant the v3.0 layout, but make .gitignore
+# contain ONLY the legacy /memory/ line (no other content).
+git clone --quiet "$tmp15/project-repo.git" "$tmp15/myapp"
+ln -s "../claude-personas-myapp/developer" "$tmp15/myapp/memory"
+printf "/memory/\n" > "$tmp15/myapp/.gitignore"
+
+# Act
+( cd "$tmp15/claude-personas-myapp" && \
+  bash "$INIT_CLONE" developer --force --project-url "$tmp15/project-repo.git" )
+
+# Assert legacy /memory/ removed from .gitignore (regression: grep -v exited 1
+# when no lines survived, the && short-circuited mv, silently leaving the line)
+if grep -qE '^/?memory/?$' "$tmp15/myapp/.gitignore"; then
+  echo "  FAIL: legacy /memory/ still present in single-line .gitignore after --force"
+  exit 1
+else
+  echo "  PASS: legacy /memory/ removed from single-line .gitignore"
+fi
+
+# Assert new /.claude/memory/ line was added
+if grep -qE '^/?\.claude/memory/?$' "$tmp15/myapp/.gitignore"; then
+  echo "  PASS: /.claude/memory/ line added"
+else
+  echo "  FAIL: /.claude/memory/ line not added"
+  exit 1
+fi
+
+# Assert no orphaned .gitignore.tmp file
+assert_not_exists "$tmp15/myapp/.gitignore.tmp" ".gitignore.tmp cleaned up"
+
+cleanup_clone_test_fixture "$tmp15"
+
 print_summary
