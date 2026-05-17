@@ -1,3 +1,5 @@
 CLAUDE.local.md
 posts/
 
+# Per-user config for init-clone.sh (project URL is per-clone-user)
+.claude-personas/project.txt
