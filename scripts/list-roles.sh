@@ -2,7 +2,7 @@
 # list-roles.sh — audit v3 role clones in this memory repo's parent dir.
 #
 # Walks $PARENT/<project>* sibling directories, reports for each:
-#   role (from memory/ symlink target), symlink status, git status.
+#   role (from .claude/memory/ symlink target), symlink status, git status.
 #
 # Run from inside your memory repo (claude-personas-<app>/).
 
@@ -43,8 +43,8 @@ for role in "${ROLES[@]}"; do
   found_clone=""
   for cand in "${candidates[@]}"; do
     if [[ ! -d "$cand/.git" ]]; then continue; fi
-    if [[ ! -L "$cand/memory" ]]; then continue; fi
-    target="$(readlink "$cand/memory")"
+    if [[ ! -L "$cand/.claude/memory" ]]; then continue; fi
+    target="$(readlink "$cand/.claude/memory")"
     # Match if symlink target ends with /<role> (handles both healthy and broken symlinks)
     if [[ "$target" == *"/$role" || "$target" == "$role" ]]; then
       found_clone="$cand"
@@ -65,7 +65,7 @@ for role in "${ROLES[@]}"; do
   fi
 
   # Inspect symlink health
-  resolved="$found_clone/memory/MEMORY.md"
+  resolved="$found_clone/.claude/memory/MEMORY.md"
   if [[ -f "$resolved" ]]; then
     sym_status="OK → $role/"
     healthy=$((healthy + 1))

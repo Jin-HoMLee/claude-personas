@@ -19,14 +19,14 @@ mv "$tmp/memory-repo" "$tmp/claude-personas-myapp"
 
 assert_exists "$tmp/myapp" "developer clone landed at no-suffix path"
 assert_exists "$tmp/myapp/.git" "developer clone is a real git repo"
-assert_symlink "$tmp/myapp/memory" "../claude-personas-myapp/developer" "memory symlink points to developer/"
-assert_exists "$tmp/myapp/memory/MEMORY.md" "MEMORY.md resolves through symlink"
+assert_symlink "$tmp/myapp/.claude/memory" "../../claude-personas-myapp/developer" "memory symlink points to developer/"
+assert_exists "$tmp/myapp/.claude/memory/MEMORY.md" "MEMORY.md resolves through symlink"
 
-# memory/ added to .gitignore
-if grep -q "^memory/$\|^memory$\|^/memory$\|^/memory/$" "$tmp/myapp/.gitignore" 2>/dev/null; then
-  echo "  PASS: memory/ in .gitignore"
+# .claude/memory/ added to .gitignore
+if grep -qE '^/?\.claude/memory/?$' "$tmp/myapp/.gitignore" 2>/dev/null; then
+  echo "  PASS: .claude/memory/ in .gitignore"
 else
-  echo "  FAIL: memory/ not in .gitignore (or .gitignore missing)"
+  echo "  FAIL: .claude/memory/ not in .gitignore (or .gitignore missing)"
   exit 1
 fi
 
@@ -105,7 +105,7 @@ mv "$tmp5/memory-repo" "$tmp5/claude-personas-myapp"
   bash "$INIT_CLONE" pm --main --project-url "$tmp5/project-repo.git" )
 
 assert_exists "$tmp5/myapp" "pm with --main landed at no-suffix path"
-assert_symlink "$tmp5/myapp/memory" "../claude-personas-myapp/pm" "memory points to pm/"
+assert_symlink "$tmp5/myapp/.claude/memory" "../../claude-personas-myapp/pm" "memory points to pm/"
 
 cleanup_clone_test_fixture "$tmp5"
 
@@ -122,7 +122,7 @@ echo "scientist" > "$tmp6/claude-personas-myapp/.claude-personas/main-role.txt"
   bash "$INIT_CLONE" scientist --project-url "$tmp6/project-repo.git" )
 
 assert_exists "$tmp6/myapp" "scientist landed at no-suffix path (main-role.txt)"
-assert_symlink "$tmp6/myapp/memory" "../claude-personas-myapp/scientist" "memory points to scientist/"
+assert_symlink "$tmp6/myapp/.claude/memory" "../../claude-personas-myapp/scientist" "memory points to scientist/"
 
 # Now running developer should NOT claim no-suffix (already taken)
 ( cd "$tmp6/claude-personas-myapp" && \
@@ -144,15 +144,15 @@ mv "$tmp7/memory-repo" "$tmp7/claude-personas-myapp"
   bash "$INIT_CLONE" developer --project-url "$tmp7/project-repo.git" )
 
 # Break the memory symlink
-rm "$tmp7/myapp/memory"
-ln -s /nonexistent "$tmp7/myapp/memory"
+rm "$tmp7/myapp/.claude/memory"
+ln -s /nonexistent "$tmp7/myapp/.claude/memory"
 
 # --force should detect, back up, re-wire
 ( cd "$tmp7/claude-personas-myapp" && \
   bash "$INIT_CLONE" developer --force --project-url "$tmp7/project-repo.git" )
 
-assert_symlink "$tmp7/myapp/memory" "../claude-personas-myapp/developer" "memory re-wired"
-backup_count="$(find "$tmp7/myapp" -maxdepth 1 -name "memory.backup-*" | wc -l | tr -d ' ')"
+assert_symlink "$tmp7/myapp/.claude/memory" "../../claude-personas-myapp/developer" "memory re-wired"
+backup_count="$(find "$tmp7/myapp/.claude" -maxdepth 1 -name "memory.backup-*" | wc -l | tr -d ' ')"
 assert_equal "1" "$backup_count" "exactly one backup created"
 
 cleanup_clone_test_fixture "$tmp7"
@@ -212,15 +212,15 @@ mv "$tmp10/memory-repo" "$tmp10/claude-personas-myapp"
 ( cd "$tmp10/claude-personas-myapp" && \
   bash "$INIT_CLONE" developer --project-url "$tmp10/project-repo.git" )
 
-count1="$(grep -cE '^/?memory/?$' "$tmp10/myapp/.gitignore" || true)"
+count1="$(grep -cE '^\/?\.claude\/memory\/?$' "$tmp10/myapp/.gitignore" || true)"
 
 # Re-run with --force
 ( cd "$tmp10/claude-personas-myapp" && \
   bash "$INIT_CLONE" developer --force --project-url "$tmp10/project-repo.git" )
 
-count2="$(grep -cE '^/?memory/?$' "$tmp10/myapp/.gitignore" || true)"
-assert_equal "$count1" "$count2" "memory/ line count unchanged after --force re-run"
-assert_equal "1" "$count2" "exactly one memory/ line in .gitignore"
+count2="$(grep -cE '^\/?\.claude\/memory\/?$' "$tmp10/myapp/.gitignore" || true)"
+assert_equal "$count1" "$count2" ".claude/memory/ line count unchanged after --force re-run"
+assert_equal "1" "$count2" "exactly one .claude/memory/ line in .gitignore"
 
 cleanup_clone_test_fixture "$tmp10"
 
@@ -261,7 +261,7 @@ custom="$tmp12/custom-clone-path"
 
 assert_exists "$custom" "developer landed at --target custom path"
 assert_exists "$custom/.git" "--target clone is a real git repo"
-assert_symlink "$custom/memory" "../claude-personas-myapp/developer" "memory symlink in --target clone"
+assert_symlink "$custom/.claude/memory" "../../claude-personas-myapp/developer" "memory symlink in --target clone"
 # Default paths should NOT have been created
 assert_not_exists "$tmp12/myapp" "default no-suffix path NOT created when --target given"
 assert_not_exists "$tmp12/myapp-developer" "default suffix path NOT created when --target given"
@@ -286,10 +286,87 @@ else
   echo "  PASS: --force refused non-git directory at TARGET"
 fi
 
-# Should not have clobbered the existing file or created a memory/ symlink
+# Should not have clobbered the existing file or created a .claude/memory symlink
 assert_exists "$tmp13/myapp/some-existing-file" "non-git directory contents preserved"
-assert_not_exists "$tmp13/myapp/memory" "memory/ NOT created in refused dir"
+assert_not_exists "$tmp13/myapp/.claude/memory" ".claude/memory NOT created in refused dir"
 
 cleanup_clone_test_fixture "$tmp13"
+
+# --- v3.0 -> v3.1 migration via --force ---
+echo "=== test_init_clone v3.0 -> v3.1 migration ==="
+tmp14="$(mktemp -d)"
+make_clone_test_fixture "$tmp14"
+mv "$tmp14/memory-repo" "$tmp14/claude-personas-myapp"
+
+# Arrange: clone the project, then plant a LEGACY v3.0 layout by hand
+# (root-level memory/ symlink + /memory/ gitignore line)
+git clone --quiet "$tmp14/project-repo.git" "$tmp14/myapp"
+ln -s "../claude-personas-myapp/developer" "$tmp14/myapp/memory"
+printf "\n# legacy v3.0 marker\n/memory/\n" >> "$tmp14/myapp/.gitignore"
+
+# Act: run --force, which should detect the legacy layout and migrate
+( cd "$tmp14/claude-personas-myapp" && \
+  bash "$INIT_CLONE" developer --force --project-url "$tmp14/project-repo.git" )
+
+# Assert: new layout exists
+assert_symlink "$tmp14/myapp/.claude/memory" "../../claude-personas-myapp/developer" "new .claude/memory symlink created"
+assert_exists "$tmp14/myapp/.claude/memory/MEMORY.md" "MEMORY.md resolves through new symlink"
+
+# Assert: legacy root symlink removed
+assert_not_exists "$tmp14/myapp/memory" "legacy root memory/ symlink removed"
+
+# Assert: legacy /memory/ line removed from .gitignore, new /.claude/memory/ line present
+if grep -qE '^/?memory/?$' "$tmp14/myapp/.gitignore"; then
+  echo "  FAIL: legacy /memory/ line still in .gitignore"
+  exit 1
+else
+  echo "  PASS: legacy /memory/ line removed from .gitignore"
+fi
+if grep -qE '^/?\.claude/memory/?$' "$tmp14/myapp/.gitignore"; then
+  echo "  PASS: /.claude/memory/ line present in .gitignore"
+else
+  echo "  FAIL: /.claude/memory/ line not in .gitignore"
+  exit 1
+fi
+
+cleanup_clone_test_fixture "$tmp14"
+
+# --- v3.0 -> v3.1 migration when .gitignore contains ONLY the legacy line ---
+echo "=== test_init_clone v3.0 -> v3.1 migration, single-line .gitignore ==="
+tmp15="$(mktemp -d)"
+make_clone_test_fixture "$tmp15"
+mv "$tmp15/memory-repo" "$tmp15/claude-personas-myapp"
+
+# Arrange: clone the project, plant the v3.0 layout, but make .gitignore
+# contain ONLY the legacy /memory/ line (no other content).
+git clone --quiet "$tmp15/project-repo.git" "$tmp15/myapp"
+ln -s "../claude-personas-myapp/developer" "$tmp15/myapp/memory"
+printf "/memory/\n" > "$tmp15/myapp/.gitignore"
+
+# Act
+( cd "$tmp15/claude-personas-myapp" && \
+  bash "$INIT_CLONE" developer --force --project-url "$tmp15/project-repo.git" )
+
+# Assert legacy /memory/ removed from .gitignore (regression: grep -v exited 1
+# when no lines survived, the && short-circuited mv, silently leaving the line)
+if grep -qE '^/?memory/?$' "$tmp15/myapp/.gitignore"; then
+  echo "  FAIL: legacy /memory/ still present in single-line .gitignore after --force"
+  exit 1
+else
+  echo "  PASS: legacy /memory/ removed from single-line .gitignore"
+fi
+
+# Assert new /.claude/memory/ line was added
+if grep -qE '^/?\.claude/memory/?$' "$tmp15/myapp/.gitignore"; then
+  echo "  PASS: /.claude/memory/ line added"
+else
+  echo "  FAIL: /.claude/memory/ line not added"
+  exit 1
+fi
+
+# Assert no orphaned .gitignore.tmp file
+assert_not_exists "$tmp15/myapp/.gitignore.tmp" ".gitignore.tmp cleaned up"
+
+cleanup_clone_test_fixture "$tmp15"
 
 print_summary

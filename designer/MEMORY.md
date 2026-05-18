@@ -1,7 +1,7 @@
 # Memory Index — Designer
 
 <!--
-  Usage: this folder is loaded by Claude Code via the `memory/` symlink in your
+  Usage: this folder is loaded by Claude Code via the `.claude/memory/` symlink in your
   Designer project clone. The symlink is created by scripts/init-clone.sh.
   See CONVENTIONS.md for the v3 mechanism.
 -->
