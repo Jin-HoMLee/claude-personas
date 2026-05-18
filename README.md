@@ -55,11 +55,11 @@ A `shared/` folder holds team-wide conventions. An `examples/` tree of patterns 
 ~/dev/                                       (parent dir; both repos are siblings here)
 ├── my-app/                                  (Developer clone — no suffix)
 │   ├── .git/                                (real, full project repo)
-│   ├── memory ─symlink─► ../claude-personas-my-app/developer/
+│   ├── .claude/memory ─symlink─► ../../claude-personas-my-app/developer/
 │   └── [project files...]
 │
 ├── my-app-pm/                               (PM clone)
-│   ├── memory ─symlink─► ../claude-personas-my-app/pm/
+│   ├── .claude/memory ─symlink─► ../../claude-personas-my-app/pm/
 │   └── [project files...]
 │
 ├── my-app-designer/                         (Designer clone — same shape)
