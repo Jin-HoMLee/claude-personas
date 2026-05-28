@@ -6,9 +6,9 @@
         "matcher": "Bash",
         "hooks": [
           {
-            "_comment": "Block git push --force / -f. See no-force-push.md.",
+            "_comment": "Block git push --force / -f (including combined short flags like -fv, -fu, -vf) AND the +ref:ref refspec force form. See no-force-push.md.",
             "type": "command",
-            "command": "jq -r '.tool_input.command // \"\"' | grep -qE 'git[[:space:]]+push([[:space:]]+[^&|;]+)*[[:space:]]+(--force([[:space:]]|=|$)|-f([[:space:]]|$))' && { echo 'Blocked: force-push is destructive. Use --force-with-lease if you genuinely need to rewrite, or sync via fetch + rebase.' >&2; exit 2; } || exit 0"
+            "command": "jq -r '.tool_input.command // \"\"' | grep -qE 'git[[:space:]]+push[^&|;]*[[:space:]]+(--force([[:space:]]|=|$)|-[a-zA-Z]*f[a-zA-Z]*([[:space:]]|=|$)|\\+[^[:space:]:]+:[^[:space:]]+)' && { echo 'Blocked: force-push is destructive. Use --force-with-lease if you genuinely need to rewrite, or sync via fetch + rebase.' >&2; exit 2; } || exit 0"
           },
           {
             "_comment": "Block cd out of the worktree. See no-cd-out-of-repo.md.",

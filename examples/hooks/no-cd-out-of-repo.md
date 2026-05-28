@@ -6,7 +6,7 @@ type: hook
 
 ## What it does
 
-Blocks any Bash invocation starting with `cd ` (excluding `cd -` and `cd ~`/`cd $HOME` cases) before the command runs. The principle: stay in the worktree; use `git -C <path>` and absolute paths for cross-repo work.
+Blocks any Bash invocation starting with `cd <path>` (excluding `cd -` and bare `cd` cases) before the command runs. The principle: stay in the worktree; use `git -C <path>` and absolute paths for cross-repo work.
 
 ## Why
 
@@ -58,5 +58,7 @@ git -C /abs/path status  # operates on a path without changing cwd
 ## Caveats
 
 - Does **not** block cd embedded in compound commands (`make build && cd dist && ./run`). For full coverage, add `&&[[:space:]]*cd[[:space:]]` to the regex.
+- Does **not** block cd invoked via `eval` or `sh -c`/`bash -c` (`bash -c "cd /other-repo && ..."`). Same eval-bypass class as the force-push and chained-commit-push hooks — the matcher operates on the literal Bash invocation string, not the inner shell that runs.
 - Some legitimate workflows (running an installer script in a temp dir) genuinely want a session-scoped cd. If you hit this often, narrow the regex to only block cd to paths *outside* a specific allowlist (e.g., excluding `~/dev/`).
 - The `cd -` form is allowed (return to previous dir) because it can only get you back where you already were; not a cross-repo escape vector.
+- The `cd` form with no args (changes to `$HOME`) is allowed by the `[^-]` requirement of at least one non-dash character following — home navigation isn't a cross-repo escape vector.

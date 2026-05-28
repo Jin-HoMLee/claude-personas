@@ -30,9 +30,11 @@ Before copying a rule into "Always in effect", run this triage:
 3. **Lazy-loadable?** Does the rule apply in specific situations only (only on PRs, only when writing tests, only when the topic surfaces)?
    - Yes → **tier 2 (reference)** is fine; keep it as a linked `feedback_*.md` and don't promote inline. The user's "you forgot X" correction may be a one-off rather than a systemic miss.
 
-4. **Otherwise** → **tier 1 (inline)**. Use for ambient defaults (tone, style), identity priors, cross-cutting rules with no specific trigger, and the index function itself. Budget carefully — past ~14 rules in a session's combined load, compliance starts degrading.
+4. **Otherwise** → **tier 1 (always-loaded)**. Use for ambient defaults (tone, style), identity priors, cross-cutting rules with no specific trigger, and the index function itself. Budget carefully — past ~14 rules in a session's combined load, compliance starts degrading.
 
 **Heuristic shortcut:** if the rule is phrased "**never** do X" or "**always** do Y before Z" with a specific command, it's almost certainly a hook. If it's phrased "**prefer** X" or "**when** Y, **consider** Z", it's a memory rule.
+
+**Counterexample to the heuristic:** rules phrased as "**never** do X" but where X requires knowing intent, branch context, or PR-level judgment to apply correctly. Example: "never push directly to main" — phrased as never-X but depends on which branch you're on, and a regex matcher catches legitimate uses like `git push origin feature:main` for a PR-bound merge. Or "never use `gh pr merge --admin`" — the `--admin` flag is a specific command (heuristic predicts hook) but the right judgment depends on PR-specific context (was this an emergency hotfix? did the failing check apply?). In these cases, keep the rule as a memory entry even though the phrasing matches the hook heuristic. The hook is for **trigger × no-judgment-needed** intersections; rules where judgment is needed go in tier 1.
 
 ## When the same rule slips twice
 

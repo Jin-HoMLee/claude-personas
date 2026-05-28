@@ -57,5 +57,9 @@ git push
 
 - Does **not** block chains involving `git rebase`, `git cherry-pick`, etc. — only the commit→push→merge pipeline. Extend the regex if your workflow has other dangerous chains.
 - The matcher allows `git push` alone (no chain), which is the common case. The hook only fires when push is preceded or followed by another change-state operation.
-- Compatible with `git commit; git push` (semicolon-chained) and `git push|tee log.txt && gh pr merge` (mixed operators).
+- Catches `git commit; git push` (semicolon-chained) as well as `&&`-chained — the inner alternation `[&|;]+` covers all three shell separators.
+- **Unblocked variants** worth knowing about (the regex does not catch these — pair with a memory rule if you want full coverage):
+  - `git push | tee log.txt && gh pr merge` — the pipe to `tee` breaks the `[^&|;]*` prefix before the `&&`, so the chain isn't detected. Functionally equivalent to a chain.
+  - `git commit -m foo && sleep 0 && git push` — an intermediate command between commit and push splits the regex's required adjacency.
+  - `bash -c 'git commit -m foo && git push'` — same eval-bypass class as the force-push and no-cd hooks.
 - If you genuinely need an atomic operation (e.g., a release script that ships a tagged commit), invoke that script as a single command — the regex won't match.
