@@ -86,11 +86,11 @@ Skills give **free invocation telemetry**: you can grep JSONL to see when each f
 
 **Use for:** rules with a **discrete trigger** and **high cost of violation**:
 
-- "Never `git push --force`" → PreToolUse Bash matcher on `git push.*--force`
-- "Never `cd` out of the repo" → PreToolUse Bash matcher on `cd <path>`
-- "Lab notebook entries are immutable once dated" → PreToolUse Edit matcher on `lab_notebook.md`
+- "Never `git push --force`" → see [`examples/hooks/no-force-push.md`](examples/hooks/no-force-push.md)
+- "Never `cd` out of the repo" → see [`examples/hooks/no-cd-out-of-repo.md`](examples/hooks/no-cd-out-of-repo.md)
+- "Lab notebook entries are immutable once dated" → a hook on the `Edit` tool matching the file path
 
-Hooks fire deterministically — Claude cannot drift past them. They cost zero tokens until they fire. See [`examples/hooks/`](examples/hooks/) for starter configs.
+Hooks fire deterministically — Claude cannot drift past them. They cost zero tokens until they fire. See [`examples/hooks/`](examples/hooks/) for starter configs (and the schema in [Claude Code's hooks docs](https://docs.claude.com/en/docs/claude-code/hooks) for the full event/matcher reference).
 
 ### Deciding which tier
 

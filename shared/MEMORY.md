@@ -12,13 +12,13 @@ which persona Claude is operating as.
   - See CONVENTIONS.md for the full pattern.
 -->
 
-## Always in effect (no file read required)
+## Tier 1 — Always in effect
 
 <!-- Add inline rules here. Example:
 - **My rule:** Description. <!-- src: shared/feedback_my_rule.md -->
 -->
 
-## Reference
+## Tier 2 — Reference
 
 <!-- Link to memory files. Format:
 - [Rule name](feedback_rule.md) — one-line description

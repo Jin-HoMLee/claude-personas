@@ -34,6 +34,12 @@ Each example file in this directory contains:
 
 To install: open `~/.claude/settings.json`, locate (or create) the `"hooks"` key, and merge the snippet from each example file. If you want a starter file, see [`settings.example.json`](settings.example.json) for all three example hooks combined.
 
+### Merging into an existing `hooks.PreToolUse` array
+
+If your `settings.json` already has hooks configured, **don't replace the array** — copy individual entries from the example into yours. The structure is `hooks.PreToolUse[].hooks[]`, so each example contributes one element to the outer `PreToolUse` array. After merging, validate with `jq '.hooks.PreToolUse | length' ~/.claude/settings.json` — the count should equal your prior entries plus the new ones.
+
+Common mistake: copying the whole `settings.example.json` over an existing file silently overwrites unrelated settings (model, theme, permissions). Open both files side-by-side and merge by hand.
+
 ## Available examples
 
 - [`no-force-push.md`](no-force-push.md) — block `git push --force` and `git push -f`
