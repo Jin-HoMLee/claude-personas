@@ -27,15 +27,34 @@ When you play multiple roles on a project (Developer on Monday, PM on Tuesday, D
 
 Each role gets its own project clone (and so its own Claude Code auto-memory hash dir). The `.claude/memory/` symlink in that clone resolves to the role-specific folder in the memory repo. Claude context-switches automatically when you open a different clone — no settings to configure inside the clone, no per-session flags.
 
-## The MEMORY.md two-tier structure
+## The visibility ladder — four tiers, not two
 
-Each role's `MEMORY.md` has two sections:
+Claude Code offers four mechanisms for delivering persistent instructions to Claude. Each has a different cost / firing semantics / attribution profile. Pick the right tier for the rule's shape.
 
-### Always in effect
+| Tier | Mechanism | Loaded when… | Cost | Fires |
+|---|---|---|---|---|
+| **1. Always-loaded** | Inline rules in `MEMORY.md` "Always in effect" | Every session, every turn | Tokens on every turn | Probabilistic (Claude reads + decides) |
+| **2. Index + lazy** | Links from `MEMORY.md` "Reference" → `feedback_*.md` files | Only when Claude opens the linked file | Tokens only when topic surfaces | Probabilistic |
+| **3. On-demand** | Skills + slash commands (invoked by trigger phrase or user action) | Only when invoked | Tokens only when invoked | Free invocation telemetry (you can grep JSONL to see when it fired) |
+| **4. Harness-deterministic** | Hooks (PreToolUse, PostToolUse, SessionStart, …) in `settings.json` | On every matched harness event | Zero tokens | **Guaranteed** firing — harness enforces, Claude cannot ignore |
 
-Rules inlined directly in the index file. Claude reads these without opening any file — they're in `MEMORY.md` itself, which is auto-loaded every session.
+The asymmetric cost is the key insight: **tier 1 burns tokens every turn even when the rule isn't relevant**. Tiers 2–4 are cost-only-when-firing. The smaller you keep tier 1, the more reliably Claude follows the rules that genuinely belong there.
 
-**Use this tier for:** rules that must be applied on every turn regardless of context. Examples: "never commit to main", "always add a role label to issues", "use Read not cat".
+### Size budgets for tier 1 (Always in effect)
+
+Compliance starts to degrade past these thresholds — Claude reads later rules less reliably, mixes related rules together, and over-applies generic ones. Rough cliffs from internal audit:
+
+- ≤ **14 inline rules** in a given session's combined load (role + shared)
+- ≤ **200 lines** total for "Always in effect"
+- ≤ **4000 tokens** of always-loaded rules
+
+These are **binding past first cliff**, not from session zero. Growing a memory directory organically over weeks naturally hits the first cliff before you've built enough material to need a four-tier structure. When you do hit it: audit, demote where possible, then re-grow.
+
+### Tier 1 — Always in effect
+
+Inline rules in `MEMORY.md`. Auto-loaded every session, no file read needed.
+
+**Use for:** ambient defaults (tone, style), identity priors ("you're the PM, not the developer"), cross-cutting rules with no specific trigger ("link to file path:line when referencing code"), and the index function itself (one-line pointers to deeper material).
 
 **Drift annotations:** when you promote a rule from a reference file into "Always in effect", add a comment showing where it came from:
 
@@ -45,11 +64,46 @@ Rules inlined directly in the index file. Claude reads these without opening any
 
 This lets you find and update the source file if the rule ever changes, and prevents duplicate edits.
 
-### Reference
+### Tier 2 — Reference (index + lazy)
 
-Links to separate `feedback_*.md` files. Claude reads these only when the linked topic is relevant to the current task.
+Links from `MEMORY.md` to separate `feedback_*.md` files. Claude reads these only when the linked topic surfaces.
 
-**Use this tier for:** rules that apply in specific situations (git workflow, PR process, testing conventions), detailed explanations with examples, rules that are rarely needed.
+**Use for:** rules that apply in specific situations (git workflow, PR process, testing conventions), detailed explanations with examples, rules that are rarely needed.
+
+### Tier 3 — Skills + slash commands (on-demand)
+
+Trigger-phrase-invoked rules. The user (or Claude on their own initiative) types `/<skill>` or says a registered phrase ("good morning", "consolidate my memory"); the skill loads and runs.
+
+**Use for:** session-mode workflows (morning routine, end-of-day handoff), multi-step procedures with branching ("triage these PRs", "write a code review"), and recurring rituals that benefit from a checklist rather than always-loaded context.
+
+Skills give **free invocation telemetry**: you can grep JSONL to see when each fired, which makes audit cheap. See [Claude Code's skill docs](https://docs.claude.com/en/docs/claude-code/skills) for the registration format.
+
+### Tier 4 — Hooks (harness-deterministic)
+
+`settings.json` config. The harness runs your shell command on every matched event (e.g., every Bash invocation, every Edit on a path matching a pattern). Your script decides allow/block based on the input.
+
+**Use for:** rules with a **discrete trigger** and **high cost of violation**:
+
+- "Never `git push --force`" → PreToolUse Bash matcher on `git push.*--force`
+- "Never `cd` out of the repo" → PreToolUse Bash matcher on `cd <path>`
+- "Lab notebook entries are immutable once dated" → PreToolUse Edit matcher on `lab_notebook.md`
+
+Hooks fire deterministically — Claude cannot drift past them. They cost zero tokens until they fire. See [`examples/hooks/`](examples/hooks/) for starter configs.
+
+### Deciding which tier
+
+Ask, in order:
+
+1. **Does the rule have a discrete trigger** (a specific Bash command, a specific file edit)?
+   - Yes → **tier 4 (hook)** — harness enforces it for free, even when context isn't loaded
+2. **Does the rule belong to a session-mode workflow** ("good morning", "triage", "handoff")?
+   - Yes → **tier 3 (skill)** — invoked when the mode starts, doesn't burn tokens between
+3. **Does the rule apply in specific situations only** (only on PRs, only when writing tests)?
+   - Yes → **tier 2 (reference)** — Claude opens it when the situation surfaces
+4. **Does the rule apply on every turn regardless of context** (style, identity, cross-cutting defaults)?
+   - Yes → **tier 1 (always-loaded)** — but budget carefully; this is the most expensive tier
+
+The default answer should be tier 2 or 3, not tier 1. Tier 1 is for rules that genuinely need to fire even when nothing in the conversation has surfaced them yet.
 
 ## The escalation pattern
 
