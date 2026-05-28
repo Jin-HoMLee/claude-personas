@@ -1,0 +1,27 @@
+{
+  "_comment": "Example settings.json with all three claude-personas hooks installed. Merge this into your own ~/.claude/settings.json (or project-level .claude/settings.json). See ../README.md for context.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "_comment": "Block git push --force / -f. See no-force-push.md.",
+            "type": "command",
+            "command": "jq -r '.tool_input.command // \"\"' | grep -qE 'git[[:space:]]+push([[:space:]]+[^&|;]+)*[[:space:]]+(--force([[:space:]]|=|$)|-f([[:space:]]|$))' && { echo 'Blocked: force-push is destructive. Use --force-with-lease if you genuinely need to rewrite, or sync via fetch + rebase.' >&2; exit 2; } || exit 0"
+          },
+          {
+            "_comment": "Block cd out of the worktree. See no-cd-out-of-repo.md.",
+            "type": "command",
+            "command": "jq -r '.tool_input.command // \"\"' | grep -qE '^[[:space:]]*cd[[:space:]]+[^-]' && { echo 'Blocked: cd persists across Bash calls and risks operating in the wrong repo. Use `git -C <abs-path>` for cross-repo git ops, or absolute paths with Read/Write/Edit tools. For one-off subshells where cd is genuinely needed: `(cd /path && cmd)`.' >&2; exit 2; } || exit 0"
+          },
+          {
+            "_comment": "Block git commit/push/merge chained in one shell call. See no-chained-commit-push.md.",
+            "type": "command",
+            "command": "jq -r '.tool_input.command // \"\"' | grep -qE 'git[[:space:]]+(commit|push)[^&|;]*[&|;]+[[:space:]]*(git[[:space:]]+(push|merge)|gh[[:space:]]+pr[[:space:]]+merge)' && { echo 'Blocked: do not chain git commit/push/merge in one call. Split into separate Bash invocations so you (and the user) can see the state between each step.' >&2; exit 2; } || exit 0"
+          }
+        ]
+      }
+    ]
+  }
+}
