@@ -17,6 +17,17 @@ started. Come back here when you want proven patterns to copy.
 
 ## What's here
 
+### hooks/ — deterministic enforcement (not memory rules)
+
+Hook configurations for `settings.json` that prevent specific failure modes at the harness level. Use these when a rule has a discrete trigger (specific Bash command, specific file edit) — the harness fires the hook deterministically, so Claude can't drift past it, and it costs zero tokens until it fires.
+
+- `hooks/no-force-push.md` — block `git push --force` / `-f`, allow `--force-with-lease`
+- `hooks/no-cd-out-of-repo.md` — block `cd <path>`, recommend `git -C` / subshell
+- `hooks/no-chained-commit-push.md` — block `git commit && push` / `push && merge` chains
+- `hooks/settings.example.json` — all three combined, ready to merge into `~/.claude/settings.json`
+
+See `hooks/README.md` for when to prefer a hook over a memory rule (and the [four-tier visibility ladder in CONVENTIONS.md](../CONVENTIONS.md#the-visibility-ladder--four-tiers-not-two) for the broader framing).
+
 ### shared/ — universal patterns (apply to any role)
 
 **Claude behavior:**
