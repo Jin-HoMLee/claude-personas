@@ -3,10 +3,10 @@
 <!--
   Usage: this folder is loaded by Claude Code via the `.claude/memory/` symlink in your
   Designer project clone. The symlink is created by scripts/init-clone.sh.
-  See CONVENTIONS.md for the v3 mechanism.
+  See CONVENTIONS.md for the mechanism.
 -->
 
-## Always in effect (no file read required)
+## Tier 1 — Always in effect
 
 <!-- Add inline rules here. Use drift annotations: <!-- src: ... --> -->
 

@@ -27,15 +27,36 @@ When you play multiple roles on a project (Developer on Monday, PM on Tuesday, D
 
 Each role gets its own project clone (and so its own Claude Code auto-memory hash dir). The `.claude/memory/` symlink in that clone resolves to the role-specific folder in the memory repo. Claude context-switches automatically when you open a different clone — no settings to configure inside the clone, no per-session flags.
 
-## The MEMORY.md two-tier structure
+## The visibility ladder — four tiers, not two
 
-Each role's `MEMORY.md` has two sections:
+Claude Code offers four mechanisms for delivering persistent instructions to Claude. Each has a different cost / firing semantics / attribution profile. Pick the right tier for the rule's shape.
 
-### Always in effect
+| Tier | Mechanism | Loaded when… | Cost | Fires |
+|---|---|---|---|---|
+| **1. Always-loaded** | Inline rules in `MEMORY.md` "Always in effect" | Every session, every turn | Tokens on every turn | Probabilistic (Claude reads + decides) |
+| **2. Index + lazy** | Links from `MEMORY.md` "Reference" → `feedback_*.md` files | Only when Claude opens the linked file | Tokens only when topic surfaces | Probabilistic |
+| **3. On-demand** | Skills + slash commands (invoked by trigger phrase or user action) | Only when invoked | Tokens only when invoked | Free invocation telemetry (you can grep JSONL to see when it fired) |
+| **4. Harness-deterministic** | Hooks (PreToolUse, PostToolUse, SessionStart, …) in `settings.json` | On every matched harness event | Zero tokens | **Guaranteed** firing — harness enforces, Claude cannot ignore |
 
-Rules inlined directly in the index file. Claude reads these without opening any file — they're in `MEMORY.md` itself, which is auto-loaded every session.
+The asymmetric cost is the key insight: **tier 1 burns tokens every turn even when the rule isn't relevant**. Tiers 2–4 are cost-only-when-firing. The smaller you keep tier 1, the more reliably Claude follows the rules that genuinely belong there.
 
-**Use this tier for:** rules that must be applied on every turn regardless of context. Examples: "never commit to main", "always add a role label to issues", "use Read not cat".
+### Size budgets for tier 1 (Always in effect)
+
+Compliance starts to degrade past these thresholds — Claude reads later rules less reliably, mixes related rules together, and over-applies generic ones. Rule-of-thumb thresholds from field observation — adjust for your model version and the depth of your other loaded context:
+
+- ≤ **14 inline rules** in a given session's combined load (role + shared)
+- ≤ **200 lines** total for "Always in effect"
+- ≤ **4000 tokens** of always-loaded rules
+
+These are **observed inflection points, not hard limits**. Your session may differ depending on model version, base system prompt length, and how tightly the rules overlap. In practice, the token budget is usually the binding constraint of the three — 14 rules at ~285 tokens each lands at 4000 tokens before the rule count cliff matters.
+
+Growing a memory directory organically over weeks naturally hits the first cliff before you've built enough material to need a four-tier structure. When you do hit it: audit, demote where possible, then re-grow.
+
+### Tier 1 — Always in effect
+
+Inline rules in `MEMORY.md`. Auto-loaded every session, no file read needed.
+
+**Use for:** ambient defaults (tone, style), identity priors ("you're the PM, not the developer"), cross-cutting rules with no specific trigger ("link to file path:line when referencing code"), and the index function itself (one-line pointers to deeper material).
 
 **Drift annotations:** when you promote a rule from a reference file into "Always in effect", add a comment showing where it came from:
 
@@ -45,23 +66,58 @@ Rules inlined directly in the index file. Claude reads these without opening any
 
 This lets you find and update the source file if the rule ever changes, and prevents duplicate edits.
 
-### Reference
+### Tier 2 — Reference (index + lazy)
 
-Links to separate `feedback_*.md` files. Claude reads these only when the linked topic is relevant to the current task.
+Links from `MEMORY.md` to separate `feedback_*.md` files. Claude reads these only when the linked topic surfaces.
 
-**Use this tier for:** rules that apply in specific situations (git workflow, PR process, testing conventions), detailed explanations with examples, rules that are rarely needed.
+**Use for:** rules that apply in specific situations (git workflow, PR process, testing conventions), detailed explanations with examples, rules that are rarely needed.
+
+### Tier 3 — Skills + slash commands (on-demand)
+
+Trigger-phrase-invoked rules. The user (or Claude on their own initiative) types `/<skill>` or says a registered phrase ("good morning", "consolidate my memory"); the skill loads and runs.
+
+**Use for:** session-mode workflows (morning routine, end-of-day handoff), multi-step procedures with branching ("triage these PRs", "write a code review"), and recurring rituals that benefit from a checklist rather than always-loaded context.
+
+Skills give **free invocation telemetry**: you can grep JSONL to see when each fired, which makes audit cheap. See [Claude Code's skill docs](https://docs.claude.com/en/docs/claude-code/skills) for the registration format.
+
+### Tier 4 — Hooks (harness-deterministic)
+
+`settings.json` config. The harness runs your shell command on every matched event (e.g., every Bash invocation, every Edit on a path matching a pattern). Your script decides allow/block based on the input.
+
+**Use for:** rules with a **discrete trigger** and **high cost of violation**:
+
+- "Never `git push --force`" → see [`examples/hooks/no-force-push.md`](examples/hooks/no-force-push.md)
+- "Never `cd` out of the repo" → see [`examples/hooks/no-cd-out-of-repo.md`](examples/hooks/no-cd-out-of-repo.md)
+- "Lab notebook entries are immutable once dated" → a hook on the `Edit` tool matching the file path
+
+Hooks fire deterministically — Claude cannot drift past them. They cost zero tokens until they fire. See [`examples/hooks/`](examples/hooks/) for starter configs (and the schema in [Claude Code's hooks docs](https://docs.claude.com/en/docs/claude-code/hooks) for the full event/matcher reference).
+
+### Deciding which tier
+
+Ask, in order:
+
+1. **Does the rule have a discrete trigger** (a specific Bash command, a specific file edit)?
+   - Yes → **tier 4 (hook)** — harness enforces it for free, even when context isn't loaded
+2. **Does the rule belong to a session-mode workflow** ("good morning", "triage", "handoff")?
+   - Yes → **tier 3 (skill)** — invoked when the mode starts, doesn't burn tokens between
+3. **Does the rule apply in specific situations only** (only on PRs, only when writing tests)?
+   - Yes → **tier 2 (reference)** — Claude opens it when the situation surfaces
+4. **Does the rule apply on every turn regardless of context** (style, identity, cross-cutting defaults)?
+   - Yes → **tier 1 (always-loaded)** — but budget carefully; this is the most expensive tier
+
+The default answer should be tier 2 or 3, not tier 1. Tier 1 is for rules that genuinely need to fire even when nothing in the conversation has surfaced them yet.
 
 ## The escalation pattern
 
-When Claude repeats a mistake you've already corrected:
+When Claude repeats a mistake you've already corrected, first decide which tier the rule belongs in (see [Deciding which tier](#deciding-which-tier) above; the full decision tree lives in [`examples/shared/feedback_memory_escalation.md`](examples/shared/feedback_memory_escalation.md)), then:
 
 1. Search for an existing memory on that topic across all memory files.
-   - Found in "Always in effect" → rule already fires at session start; rewrite it to be more specific or actionable.
-   - Found only behind a link → **promote it**: copy the rule inline into the role's `MEMORY.md` under "Always in effect", add a drift annotation.
-   - Not found anywhere → create a new `feedback_<topic>.md` **and** add it inline to `MEMORY.md` immediately.
+   - Found in "Always in effect" → rule already fires at session start; rewrite it to be more specific or actionable, or consider whether it should be moved to tier 3/4 (skill or hook) instead of being sharpened further as a tier 1 rule.
+   - Found only behind a link → check tier-down first (hookable? skillable?). If tier 1 is genuinely the right tier, **promote it**: copy the rule inline into the role's `MEMORY.md` under "Always in effect", add a drift annotation.
+   - Not found anywhere → create a new memory AND wire it at the right tier (a hook in `settings.json`, a skill registered with the harness, or a `feedback_<topic>.md` + inline `MEMORY.md` entry).
 2. Never create a duplicate — find and update the existing rule first.
 
-The pattern: rules start as reference, get promoted when they're repeatedly needed inline. Browse `examples/shared/feedback_memory_escalation.md` for the full decision tree.
+The pattern: rules start at the cheapest viable tier, get promoted only when a cheaper tier can't accommodate them. The one-way ratchet (always inline) was the v3 default; v4 explicitly considers tier-down so "Always in effect" stays inside its budget.
 
 ## Role boundaries
 

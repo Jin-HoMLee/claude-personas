@@ -87,7 +87,7 @@ Each `MEMORY.md` has two sections:
 - **Always in effect** — rules inlined directly; Claude reads these at session start with no file reads required.
 - **Reference** — links to `feedback_*.md` files Claude reads on demand.
 
-Rules start in Reference, get promoted to Always-in-effect when they keep being missed. See [`CONVENTIONS.md`](CONVENTIONS.md) for the full pattern.
+Rules start in Reference and get promoted to Always-in-effect when they keep being missed — unless a hook or skill fits the rule better. See [`CONVENTIONS.md`](CONVENTIONS.md) for the full four-tier ladder (Always-in-effect / Reference / Skills / Hooks).
 
 ## What `init-clone.sh` does (one-time per role)
 
