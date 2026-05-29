@@ -118,8 +118,14 @@ No. Skip roles you don't use. Each `init-clone.sh` call is independent. The role
 **Q: Can I add custom roles?**
 Yes. Create a new folder in your memory repo (e.g. `mlops/`), add a `MEMORY.md` + `shared -> ../shared` symlink, then `init-clone.sh mlops`.
 
-**Q: How is this different from auto-memory?**
-Auto-memory captures everything automatically. This is curated and hand-edited — you decide what rules to keep and how to phrase them. Different tradeoff: more work, more intentional.
+**Q: How is this different from auto-memory (and Auto Dream)?**
+Three distinct things that are easy to conflate:
+
+- **Auto-memory** — Claude captures notes automatically as you work. Machine-local, append-mostly, and (by design) noisy.
+- **Auto Dream** — Claude Code's native *consolidation* pass over that auto-memory: it dedupes, normalizes relative dates to absolute, prunes contradicted entries, and reorganizes topic files (runs on its own after roughly a day and several sessions, or on demand via `/dream`).
+- **claude-personas** — the *curated, hand-edited, version-controlled* layer. You decide which rules to keep, how to phrase them, and — the part neither of the above touches — **which visibility tier each rule belongs in**: always-loaded, reference, skill, or hook (the four primitives; see [`CONVENTIONS.md`](CONVENTIONS.md)).
+
+They're complementary layers, not competitors: Auto Dream keeps what's already in your store clean; the tier ladder decides what belongs in that store at all. Auto-memory is automatic-but-noisy; this is more work, more intentional, and shareable across the roles on your team.
 
 **Q: Disk cost?**
 Each project clone is a full `git clone` — for most projects, ~few hundred MB. Today's machines have terabytes; disk is no longer a concern for the typical solo developer.
