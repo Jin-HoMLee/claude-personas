@@ -23,13 +23,16 @@ Before choosing a tier, check the cheapest verdict of all: **does this rule just
 - "Keep one `TodoWrite` item `in_progress` at a time" — same.
 - "Read a file before editing it" — the `Edit` tool already enforces this and errors otherwise.
 
-When a rule duplicates a built-in tool's docstring, the verdict is **delete entirely**, not demote. The two are different: demoting moves a *load-bearing* rule to a cheaper tier; deleting removes a rule that was never doing work — the tool enforces the behavior regardless, so the inline copy is pure token cost with zero added reliability. Think of "delete entirely" as the rung below tier 4 on the ladder: **tier 0, the rule that shouldn't exist**.
+When a rule duplicates a built-in tool's docstring, the verdict is **delete entirely**, not demote. The two are different: demoting moves a *load-bearing* rule to a cheaper tier; deleting removes a rule that was never doing work — the tool enforces the behavior regardless, so the inline copy is pure token cost with zero added reliability. This verdict sits *beneath* the whole tier ladder: the question isn't "which tier?" but "should this be stored at all?"
 
 Detecting these mechanically is the job of a `check-tool-docstring-overlap` lint — see [issue #18](https://github.com/Jin-HoMLee/claude-personas/issues/18).
 
 ## Choose tier before promoting
 
-Before copying a rule into "Always in effect", run this triage:
+Before copying a rule into "Always in effect", run this triage (first match wins):
+
+0. **Already enforced by a built-in tool?** Does the rule merely restate a built-in tool's docstring (see [Delete entirely](#delete-entirely--the-rule-may-not-need-to-exist) above)?
+   - Yes → **delete it**, don't promote *or* demote. The tool already enforces it.
 
 1. **Hookable?** Does the rule have a discrete trigger — a specific Bash command, a specific file edit, a specific gh CLI call?
    - Yes → **tier 4 (hook)**, not inline. The harness enforces it deterministically; Claude can't drift past it; cost is zero tokens. See [`examples/hooks/`](../hooks/) for starter configs.
