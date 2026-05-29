@@ -122,7 +122,7 @@ Yes. Create a new folder in your memory repo (e.g. `mlops/`), add a `MEMORY.md` 
 Three layers that are easy to conflate:
 
 - **Auto-memory** — Claude Code captures notes automatically as you work. Machine-local, append-mostly, and (by design) noisy.
-- **Dreaming** — Anthropic's memory-*consolidation* capability (launched May 2026 as a research preview on the Managed Agents API): it reads a memory store and produces a cleaned one — duplicates merged, stale or contradicted entries replaced, new patterns surfaced.
+- **Dreaming** — Anthropic's memory-*consolidation* capability (currently a research preview on the Managed Agents API): it reads a memory store and produces a cleaned one — duplicates merged, stale or contradicted entries replaced, new patterns surfaced.
 - **claude-personas** — the *curated, hand-edited, version-controlled* layer. You decide which rules to keep, how to phrase them, and — the part neither of the above touches — **which visibility tier each rule belongs in**: always-loaded, reference, skill, or hook (the four primitives; see [`CONVENTIONS.md`](CONVENTIONS.md)).
 
 These are complementary, not competing: consolidation keeps whatever's in your store clean, but it doesn't decide what belongs there in the first place — that's what choosing a tier does. Auto-memory is automatic-but-noisy; this is more work, more intentional, and shareable across the roles on your team.

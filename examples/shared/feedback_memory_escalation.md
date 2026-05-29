@@ -13,7 +13,7 @@ type: feedback
 
 **Why:** Rules behind links require an explicit file read to fire. Inline rules in MEMORY.md are auto-loaded every session with no reads required. **But** always-loaded rules cost tokens every turn even when irrelevant, and compliance degrades past ~14 rules per session (see [`CONVENTIONS.md`](../../CONVENTIONS.md)). Without a tier-down step, the escalation pattern becomes a one-way ratchet: every miss promotes a rule inline, "Always in effect" grows unboundedly, and the rules that genuinely need to fire on every turn get drowned out by ones that should have been hooks or skills.
 
-**How to apply:** After every correction, search first — don't just create a new memory. If the rule already exists somewhere, promote it to the **right tier**, not automatically to inline.
+**How to apply:** After every correction, search first — don't just create a new memory. If the rule already exists somewhere, promote it to the **right tier**, not automatically to inline — or delete it outright if a built-in tool already enforces it (see below).
 
 ## Delete entirely — the rule may not need to exist
 
