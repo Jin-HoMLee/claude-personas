@@ -118,8 +118,14 @@ No. Skip roles you don't use. Each `init-clone.sh` call is independent. The role
 **Q: Can I add custom roles?**
 Yes. Create a new folder in your memory repo (e.g. `mlops/`), add a `MEMORY.md` + `shared -> ../shared` symlink, then `init-clone.sh mlops`.
 
-**Q: How is this different from auto-memory?**
-Auto-memory captures everything automatically. This is curated and hand-edited — you decide what rules to keep and how to phrase them. Different tradeoff: more work, more intentional.
+**Q: How is this different from auto-memory (and Dreaming)?**
+Three layers that are easy to conflate:
+
+- **Auto-memory** — Claude Code captures notes automatically as you work. Machine-local, append-mostly, and (by design) noisy.
+- **Dreaming** — Anthropic's memory-*consolidation* capability (currently a research preview on the Managed Agents API): it reads a memory store and produces a cleaned one — duplicates merged, stale or contradicted entries replaced, new patterns surfaced.
+- **claude-personas** — the *curated, hand-edited, version-controlled* layer. You decide which rules to keep, how to phrase them, and — the part neither of the above touches — **which visibility tier each rule belongs in**: always-loaded, reference, skill, or hook (the four primitives; see [`CONVENTIONS.md`](CONVENTIONS.md)).
+
+These are complementary, not competing: consolidation keeps whatever's in your store clean, but it doesn't decide what belongs there in the first place — that's what choosing a tier does. Auto-memory is automatic-but-noisy; this is more work, more intentional, and shareable across the roles on your team.
 
 **Q: Disk cost?**
 Each project clone is a full `git clone` — for most projects, ~few hundred MB. Today's machines have terabytes; disk is no longer a concern for the typical solo developer.

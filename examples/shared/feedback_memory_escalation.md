@@ -13,11 +13,26 @@ type: feedback
 
 **Why:** Rules behind links require an explicit file read to fire. Inline rules in MEMORY.md are auto-loaded every session with no reads required. **But** always-loaded rules cost tokens every turn even when irrelevant, and compliance degrades past ~14 rules per session (see [`CONVENTIONS.md`](../../CONVENTIONS.md)). Without a tier-down step, the escalation pattern becomes a one-way ratchet: every miss promotes a rule inline, "Always in effect" grows unboundedly, and the rules that genuinely need to fire on every turn get drowned out by ones that should have been hooks or skills.
 
-**How to apply:** After every correction, search first — don't just create a new memory. If the rule already exists somewhere, promote it to the **right tier**, not automatically to inline.
+**How to apply:** After every correction, search first — don't just create a new memory. If the rule already exists somewhere, promote it to the **right tier**, not automatically to inline — or delete it outright if a built-in tool already enforces it (see below).
+
+## Delete entirely — the rule may not need to exist
+
+Before choosing a tier, check the cheapest verdict of all: **does this rule just restate what a built-in tool already enforces?** Claude Code's built-in tools carry their own docstrings, and some "rules" are verbatim echoes of them:
+
+- "Use `AskUserQuestion` for 2–4 choices; mark the default `(Recommended)`" — the tool's own docstring already says this.
+- "Keep one `TodoWrite` item `in_progress` at a time" — same.
+- "Read a file before editing it" — the `Edit` tool already enforces this and errors otherwise.
+
+When a rule duplicates a built-in tool's docstring, the verdict is **delete entirely**, not demote. The two are different: demoting moves a *load-bearing* rule to a cheaper tier; deleting removes a rule that was never doing work — the tool enforces the behavior regardless, so the inline copy is pure token cost with zero added reliability. This verdict sits *beneath* the whole tier ladder: the question isn't "which tier?" but "should this be stored at all?"
+
+Detecting these mechanically is the job of a `check-tool-docstring-overlap` lint — see [issue #18](https://github.com/Jin-HoMLee/claude-personas/issues/18).
 
 ## Choose tier before promoting
 
-Before copying a rule into "Always in effect", run this triage:
+Before copying a rule into "Always in effect", run this triage (first match wins):
+
+0. **Already enforced by a built-in tool?** Does the rule merely restate a built-in tool's docstring (see [Delete entirely](#delete-entirely--the-rule-may-not-need-to-exist) above)?
+   - Yes → **delete it**, don't promote *or* demote. The tool already enforces it.
 
 1. **Hookable?** Does the rule have a discrete trigger — a specific Bash command, a specific file edit, a specific gh CLI call?
    - Yes → **tier 4 (hook)**, not inline. The harness enforces it deterministically; Claude can't drift past it; cost is zero tokens. See [`examples/hooks/`](../hooks/) for starter configs.

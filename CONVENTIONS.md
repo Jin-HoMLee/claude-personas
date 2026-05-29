@@ -52,6 +52,8 @@ These are **observed inflection points, not hard limits**. Your session may diff
 
 Growing a memory directory organically over weeks naturally hits the first cliff before you've built enough material to need a four-tier structure. When you do hit it: audit, demote where possible, then re-grow.
 
+> **Enforcement (planned):** a `scripts/check-budget.sh` lint that fails CI when a `MEMORY.md` crosses these thresholds — plus a companion `check-tool-docstring-overlap` check that flags the "delete entirely" verdict — is tracked in [issue #18](https://github.com/Jin-HoMLee/claude-personas/issues/18).
+
 ### Tier 1 — Always in effect
 
 Inline rules in `MEMORY.md`. Auto-loaded every session, no file read needed.
@@ -79,6 +81,8 @@ Trigger-phrase-invoked rules. The user (or Claude on their own initiative) types
 **Use for:** session-mode workflows (morning routine, end-of-day handoff), multi-step procedures with branching ("triage these PRs", "write a code review"), and recurring rituals that benefit from a checklist rather than always-loaded context.
 
 Skills give **free invocation telemetry**: you can grep JSONL to see when each fired, which makes audit cheap. See [Claude Code's skill docs](https://docs.claude.com/en/docs/claude-code/skills) for the registration format.
+
+> A runnable starter skill under `examples/skills/` (the morning-routine ritual) is tracked in [issue #17](https://github.com/Jin-HoMLee/claude-personas/issues/17).
 
 ### Tier 4 — Hooks (harness-deterministic)
 
