@@ -117,6 +117,21 @@ if [[ -e "$TARGET" && "$FORCE" -ne 1 ]]; then
   exit 1
 fi
 
+# Track whether THIS run created the clone — governs rollback on a later
+# failure. A pre-existing clone (reused via --force) must never be deleted.
+CREATED_CLONE=0
+
+# Roll back a clone WE created this run (spec error table: "rollback by
+# removing the target clone if we created it this run"). No-op for a clone
+# reused via --force, since CREATED_CLONE stays 0 there. The -n/-d guards are
+# defensive belt-and-suspenders on top of that invariant.
+rollback_fresh_clone() {
+  if [[ "$CREATED_CLONE" -eq 1 && -n "$TARGET" && -d "$TARGET" ]]; then
+    rm -rf "$TARGET"
+    echo "✓ Rolled back freshly-created clone at $TARGET" >&2
+  fi
+}
+
 if [[ -e "$TARGET" && "$FORCE" -eq 1 ]]; then
   # Must be a clean git checkout of the same project URL
   if [[ ! -d "$TARGET/.git" ]]; then
@@ -133,11 +148,18 @@ else
   # Clone fresh
   echo "Cloning $PROJECT_URL → $TARGET"
   git clone "$PROJECT_URL" "$TARGET"
+  CREATED_CLONE=1
 fi
 
 # Wire memory symlink under .claude/. On --force, also clean up any legacy
 # root-level memory/ symlink and stale /memory/ .gitignore line from v3.0.
-mkdir -p "$TARGET/.claude"
+# A failure anywhere in this post-clone wiring window must roll back a clone
+# we created this run — not only an ln -s failure.
+if ! mkdir -p "$TARGET/.claude"; then
+  echo "Error: failed to create $TARGET/.claude" >&2
+  rollback_fresh_clone
+  exit 1
+fi
 MEMORY_LINK="$TARGET/.claude/memory"
 
 # Migrate v3.0 layout: legacy root symlink → back up under .claude/
@@ -155,11 +177,18 @@ if [[ -e "$MEMORY_LINK" || -L "$MEMORY_LINK" ]]; then
     echo "✓ Backed up existing .claude/memory → $BACKUP"
   else
     echo "Error: $MEMORY_LINK already exists. Use --force to back up." >&2
+    # Reachable only on a fresh clone (FORCE=0 + existing target exits earlier),
+    # so this leaves an unwired clone too — roll it back. --force re-run re-clones.
+    rollback_fresh_clone
     exit 1
   fi
 fi
 
-ln -s "../../$MEMORY_REPO_NAME/$ROLE" "$MEMORY_LINK"
+if ! ln -s "../../$MEMORY_REPO_NAME/$ROLE" "$MEMORY_LINK"; then
+  echo "Error: failed to create memory symlink $MEMORY_LINK" >&2
+  rollback_fresh_clone
+  exit 1
+fi
 echo "✓ Symlinked $MEMORY_LINK → ../../$MEMORY_REPO_NAME/$ROLE"
 
 # Update .gitignore: add /.claude/memory/, remove legacy /memory/ if present

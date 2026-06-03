@@ -369,4 +369,142 @@ assert_not_exists "$tmp15/myapp/.gitignore.tmp" ".gitignore.tmp cleaned up"
 
 cleanup_clone_test_fixture "$tmp15"
 
+# --- rollback: fresh clone removed if ln -s fails (issue #7) ---
+echo "=== test_init_clone rollback on ln -s failure (fresh clone) ==="
+tmp16="$(mktemp -d)"
+make_clone_test_fixture "$tmp16"
+mv "$tmp16/memory-repo" "$tmp16/claude-personas-myapp"
+
+# Inject an ln failure via a PATH shim. This simulates the race/permission
+# failure the spec's error-table row guards against. NOTE: the issue body's
+# suggested injection — pre-creating the symlink target as a file — would trip
+# the pre-existing -e guard (MEMORY_LINK already exists) and exit BEFORE
+# reaching ln -s, so a PATH shim is the correct way to exercise that line.
+shimbin16="$tmp16/shim-bin"
+mkdir -p "$shimbin16"
+printf '#!/usr/bin/env bash\necho "ln: simulated failure (test shim)" >&2\nexit 1\n' > "$shimbin16/ln"
+chmod +x "$shimbin16/ln"
+
+if ( cd "$tmp16/claude-personas-myapp" && \
+     PATH="$shimbin16:$PATH" bash "$INIT_CLONE" developer --project-url "$tmp16/project-repo.git" ) 2>/dev/null; then
+  echo "  FAIL: should have exited nonzero when ln -s failed"
+  exit 1
+else
+  echo "  PASS: exited nonzero when ln -s failed"
+fi
+
+# The freshly-created clone must be rolled back (spec: "rollback by removing
+# the target clone if we created it this run").
+assert_not_exists "$tmp16/myapp" "fresh clone rolled back after ln -s failure"
+
+cleanup_clone_test_fixture "$tmp16"
+
+# --- rollback safety: --force must NOT delete a pre-existing clone (issue #7) ---
+echo "=== test_init_clone rollback safety: --force preserves existing clone on ln -s failure ==="
+tmp17="$(mktemp -d)"
+make_clone_test_fixture "$tmp17"
+mv "$tmp17/memory-repo" "$tmp17/claude-personas-myapp"
+
+# First, create the clone normally (real ln).
+( cd "$tmp17/claude-personas-myapp" && \
+  bash "$INIT_CLONE" developer --project-url "$tmp17/project-repo.git" )
+assert_exists "$tmp17/myapp/.git" "precondition: clone created in first run"
+
+# Re-run with --force but inject an ln failure. Because the clone was NOT
+# created this run, rollback must NOT remove it.
+shimbin17="$tmp17/shim-bin"
+mkdir -p "$shimbin17"
+printf '#!/usr/bin/env bash\necho "ln: simulated failure (test shim)" >&2\nexit 1\n' > "$shimbin17/ln"
+chmod +x "$shimbin17/ln"
+
+if ( cd "$tmp17/claude-personas-myapp" && \
+     PATH="$shimbin17:$PATH" bash "$INIT_CLONE" developer --force --project-url "$tmp17/project-repo.git" ) 2>/dev/null; then
+  echo "  FAIL: --force should have exited nonzero when ln -s failed"
+  exit 1
+else
+  echo "  PASS: --force exited nonzero when ln -s failed"
+fi
+
+# The user's pre-existing clone must be preserved (we did not create it this run).
+assert_exists "$tmp17/myapp" "pre-existing clone preserved on --force ln -s failure"
+assert_exists "$tmp17/myapp/.git" "pre-existing clone's .git preserved"
+
+cleanup_clone_test_fixture "$tmp17"
+
+# --- rollback: fresh clone removed if mkdir of .claude fails (issue #7) ---
+# The post-clone wiring window is more than just `ln -s`: `mkdir -p .claude`
+# runs first and can also fail under `set -e`, leaving an unwired clone. Guard
+# the whole window, not only the symlink.
+echo "=== test_init_clone rollback on mkdir failure (fresh clone) ==="
+tmp18="$(mktemp -d)"
+make_clone_test_fixture "$tmp18"
+mv "$tmp18/memory-repo" "$tmp18/claude-personas-myapp"
+
+# Inject a failure when the script creates the .claude wiring dir, AFTER the
+# clone succeeds. The shim fails ONLY for a path ending in /.claude and
+# delegates everything else to the real mkdir, so git clone (which does not
+# shell out to /bin/mkdir for local clones anyway) and any other setup still
+# work — guaranteeing the clone is created before the failure (no false green).
+shimbin18="$tmp18/shim-bin"
+mkdir -p "$shimbin18"
+cat > "$shimbin18/mkdir" <<'SHIM'
+#!/usr/bin/env bash
+for a in "$@"; do
+  case "$a" in
+    */.claude) echo "mkdir: simulated failure (test shim)" >&2; exit 1 ;;
+  esac
+done
+exec /bin/mkdir "$@"
+SHIM
+chmod +x "$shimbin18/mkdir"
+
+if ( cd "$tmp18/claude-personas-myapp" && \
+     PATH="$shimbin18:$PATH" bash "$INIT_CLONE" developer --project-url "$tmp18/project-repo.git" ) 2>/dev/null; then
+  echo "  FAIL: should have exited nonzero when mkdir of .claude failed"
+  exit 1
+else
+  echo "  PASS: exited nonzero when mkdir of .claude failed"
+fi
+
+# Rolled back even though it was the mkdir (not the ln -s) that failed.
+assert_not_exists "$tmp18/myapp" "fresh clone rolled back after mkdir failure"
+
+cleanup_clone_test_fixture "$tmp18"
+
+# --- rollback: fresh clone removed if the CLONED repo already ships
+# .claude/memory, hitting the "already exists" exit before ln -s (issue #7) ---
+# This exit is reachable only on a fresh clone (with FORCE=0, an existing
+# target would have exited earlier), so it must also roll back. Found by the
+# @claude review on PR #22; no PATH shim needed — the collision is real.
+echo "=== test_init_clone rollback when cloned repo ships .claude/memory (fresh clone) ==="
+tmp19="$(mktemp -d)"
+make_clone_test_fixture "$tmp19"
+mv "$tmp19/memory-repo" "$tmp19/claude-personas-myapp"
+
+# Make the PROJECT repo ship a committed .claude/memory (uncommon but legal).
+seed19="$(mktemp -d)"
+git clone --quiet "$tmp19/project-repo.git" "$seed19"
+mkdir -p "$seed19/.claude"
+echo "pre-existing" > "$seed19/.claude/memory"
+( cd "$seed19" && \
+  git -c user.email=t@x -c user.name=T add -A && \
+  git -c user.email=t@x -c user.name=T commit --quiet -m "ship .claude/memory" && \
+  git push --quiet origin HEAD )
+rm -rf "$seed19"
+
+# Fresh, non--force run: clone succeeds, mkdir .claude succeeds (it exists from
+# the clone), then MEMORY_LINK already exists → script errors. The
+# freshly-created clone must still be rolled back.
+if ( cd "$tmp19/claude-personas-myapp" && \
+     bash "$INIT_CLONE" developer --project-url "$tmp19/project-repo.git" ) 2>/dev/null; then
+  echo "  FAIL: should have exited nonzero when cloned repo already has .claude/memory"
+  exit 1
+else
+  echo "  PASS: exited nonzero when cloned repo already has .claude/memory"
+fi
+
+assert_not_exists "$tmp19/myapp" "fresh clone rolled back when .claude/memory pre-exists in the clone"
+
+cleanup_clone_test_fixture "$tmp19"
+
 print_summary
