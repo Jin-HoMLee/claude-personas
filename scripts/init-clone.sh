@@ -177,6 +177,9 @@ if [[ -e "$MEMORY_LINK" || -L "$MEMORY_LINK" ]]; then
     echo "✓ Backed up existing .claude/memory → $BACKUP"
   else
     echo "Error: $MEMORY_LINK already exists. Use --force to back up." >&2
+    # Reachable only on a fresh clone (FORCE=0 + existing target exits earlier),
+    # so this leaves an unwired clone too — roll it back. --force re-run re-clones.
+    rollback_fresh_clone
     exit 1
   fi
 fi

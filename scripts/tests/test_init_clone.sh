@@ -471,4 +471,40 @@ assert_not_exists "$tmp18/myapp" "fresh clone rolled back after mkdir failure"
 
 cleanup_clone_test_fixture "$tmp18"
 
+# --- rollback: fresh clone removed if the CLONED repo already ships
+# .claude/memory, hitting the "already exists" exit before ln -s (issue #7) ---
+# This exit is reachable only on a fresh clone (with FORCE=0, an existing
+# target would have exited earlier), so it must also roll back. Found by the
+# @claude review on PR #22; no PATH shim needed — the collision is real.
+echo "=== test_init_clone rollback when cloned repo ships .claude/memory (fresh clone) ==="
+tmp19="$(mktemp -d)"
+make_clone_test_fixture "$tmp19"
+mv "$tmp19/memory-repo" "$tmp19/claude-personas-myapp"
+
+# Make the PROJECT repo ship a committed .claude/memory (uncommon but legal).
+seed19="$(mktemp -d)"
+git clone --quiet "$tmp19/project-repo.git" "$seed19"
+mkdir -p "$seed19/.claude"
+echo "pre-existing" > "$seed19/.claude/memory"
+( cd "$seed19" && \
+  git -c user.email=t@x -c user.name=T add -A && \
+  git -c user.email=t@x -c user.name=T commit --quiet -m "ship .claude/memory" && \
+  git push --quiet origin HEAD )
+rm -rf "$seed19"
+
+# Fresh, non--force run: clone succeeds, mkdir .claude succeeds (it exists from
+# the clone), then MEMORY_LINK already exists → script errors. The
+# freshly-created clone must still be rolled back.
+if ( cd "$tmp19/claude-personas-myapp" && \
+     bash "$INIT_CLONE" developer --project-url "$tmp19/project-repo.git" ) 2>/dev/null; then
+  echo "  FAIL: should have exited nonzero when cloned repo already has .claude/memory"
+  exit 1
+else
+  echo "  PASS: exited nonzero when cloned repo already has .claude/memory"
+fi
+
+assert_not_exists "$tmp19/myapp" "fresh clone rolled back when .claude/memory pre-exists in the clone"
+
+cleanup_clone_test_fixture "$tmp19"
+
 print_summary
