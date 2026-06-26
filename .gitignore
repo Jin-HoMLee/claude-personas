@@ -3,3 +3,7 @@ posts/
 
 # Per-user config for init-clone.sh (project URL is per-clone-user)
 .claude-personas/project.txt
+
+# Python bytecode cache from scripts/ tests
+__pycache__/
+*.pyc

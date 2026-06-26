@@ -29,7 +29,8 @@ jobs:
 
       - name: scripts are executable
         run: |
-          for s in scripts/init-clone.sh scripts/list-roles.sh scripts/tests/run_all.sh; do
+          for s in scripts/init-clone.sh scripts/list-roles.sh scripts/memory_cliff.py \
+                   scripts/tests/run_all.sh scripts/tests/test_memory_cliff.sh; do
             if [ ! -x "$s" ]; then
               echo "FAIL: $s is not executable"
               exit 1
@@ -46,6 +47,13 @@ jobs:
             fi
             echo "OK: $role/MEMORY.md exists"
           done
+
+      - name: tier-1 size budgets (memory_cliff)
+        run: |
+          # Fails CI if any role's always-loaded load (role + shared) crosses the
+          # documented cliff (14 rules / 200 lines / 4000 tokens). See CONVENTIONS.md
+          # and issue #18.
+          python3 scripts/memory_cliff.py
 
       - name: run tests
         run: bash scripts/tests/run_all.sh
