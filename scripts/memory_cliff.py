@@ -31,12 +31,16 @@ RULE_CLIFF = 14
 LINE_CLIFF = 200
 TOKEN_CLIFF = 4000
 
-# An always-loaded H2 section is any H2 whose title contains the word "Always"
-# (word-boundaried). This matches the template's "## Tier 1 - Always in effect"
-# AND instance-style sibling loaders like "## Always run at session start", while
-# NOT matching "## Alwaysish ...". The lazy "## Tier 2 - Reference" / "## Reference"
-# sections (and role index sections like "## Role: PM") never contain "Always".
-_ALWAYS_RE = re.compile(r"\bAlways\b")
+# An always-loaded H2 section is any H2 whose title contains "Always" as a whole
+# word immediately followed by whitespace or end-of-line. This matches the template's
+# "## Tier 1 - Always in effect" and instance-style sibling loaders like "## Always
+# run at session start", while NOT matching:
+#   - "## Alwaysish ..."                  (no word boundary after "Always")
+#   - "## Notes on Always-in-effect ..."  (hyphen, not whitespace - a prose mention,
+#     not a section header; same for "## Overview of Always-loaded memory")
+# The lazy "## Tier 2 - Reference" / "## Reference" sections (and role index sections
+# like "## Role: PM") never contain "Always".
+_ALWAYS_RE = re.compile(r"\bAlways(?=\s|$)")
 
 
 # --------------------------------------------------------------------------- #
@@ -89,13 +93,35 @@ def strip_html_comments(text: str) -> str:
     return re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
 
 
+def strip_code_fences(lines: list[str]) -> list[str]:
+    """Drop lines inside ``` ``` ``` / ``~~~`` fenced code blocks so a rule-format
+    example shown in a fence (CONVENTIONS.md does exactly this; a user's MEMORY.md
+    may too) doesn't count as a live rule. The opening fence's marker must reappear to
+    close, so a ``` ``` ``` block isn't closed by ``~~~``. An unterminated fence (its
+    closer fell past the section's ``## `` boundary) swallows the rest of the section -
+    conservative, never an over-count. Fence lines still count toward line/token cost."""
+    out: list[str] = []
+    fence: str | None = None   # active fence marker ("```" or "~~~"), or None
+    for line in lines:
+        stripped = line.lstrip()
+        if fence is None:
+            if stripped.startswith("```") or stripped.startswith("~~~"):
+                fence = stripped[:3]
+            else:
+                out.append(line)
+        elif stripped.startswith(fence):
+            fence = None       # close; drop the closing fence line too
+    return out
+
+
 def count_rules(section_lines: list[str]) -> int:
     """Count top-level rule bullets - lines starting ``- **`` (dash, space, two
     asterisks), matching the drift-annotation rule format in CONVENTIONS.md
-    (``- **My rule:** ... <!-- src: ... -->``). Commented-out bullets are dropped
-    first (strip_html_comments); indented sub-bullets (space- or tab-led) and plain
-    ``- `` index bullets (e.g. ``- [Shared index](...)``) are excluded."""
-    live = strip_html_comments("\n".join(section_lines)).splitlines()
+    (``- **My rule:** ... <!-- src: ... -->``). Commented-out bullets (strip_html_comments)
+    and fenced-code-block bullets (strip_code_fences) are dropped first; indented
+    sub-bullets (space- or tab-led) and plain ``- `` index bullets (e.g.
+    ``- [Shared index](...)``) are excluded."""
+    live = strip_code_fences(strip_html_comments("\n".join(section_lines)).splitlines())
     return sum(1 for line in live if line.startswith("- **"))
 
 
@@ -145,7 +171,9 @@ class Corpus:
 def _is_role_dir(root: str, name: str) -> bool:
     """A role dir holds BOTH a MEMORY.md file AND a `shared` symlink. The two-part
     test excludes the shared dir itself (MEMORY.md but no symlink) and non-memory
-    dirs like docs/ scripts/ (neither marker)."""
+    dirs like docs/ scripts/ (neither marker). ``islink`` is True even for a dangling
+    `shared` target - fine here, it's only a role-dir marker; the shared MEMORY.md is
+    read via ``corpus.shared_dir``, never through this per-role symlink."""
     d = os.path.join(root, name)
     return os.path.isfile(os.path.join(d, "MEMORY.md")) and os.path.islink(
         os.path.join(d, "shared")
@@ -252,7 +280,9 @@ def load_baseline(path: str) -> dict:
 def compare_to_baseline(per_role: list[RoleLoad], baseline: dict) -> list[str]:
     """Return one 'role / axis / base->cur' string per axis that strictly EXCEEDS
     baseline. Equal or lower passes. A role/axis absent from the baseline is itself
-    a failure (fail loud, never silently pass an unmeasured axis)."""
+    a failure (fail loud, never silently pass an unmeasured axis). A role present in
+    the baseline but absent from ``per_role`` (deleted from disk after baselining) is
+    intentionally a silent pass - the ratchet bounds growth, not presence."""
     regressions = []
     for rl in per_role:
         base = baseline.get(rl.role)

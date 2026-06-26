@@ -11,7 +11,11 @@ import memory_cliff as mc  # noqa: E402
 
 # The template's canonical tier-1 header (see CONVENTIONS.md). The counter must
 # detect this form, not just the bare "## Always in effect" the source instance used.
+# The live files use an em-dash (U+2014); TIER1_EMDASH mirrors the on-disk format
+# exactly so at least one test exercises the real bytes (the matcher only keys on
+# "Always", so both forms must work).
 TIER1 = "## Tier 1 - Always in effect"
+TIER1_EMDASH = "## Tier 1 — Always in effect"
 TEMPLATE_ROLES = ("pm", "scientist", "developer", "designer")
 
 
@@ -58,6 +62,43 @@ class TestExtractSection(unittest.TestCase):
         sec = mc.extract_section(text)
         self.assertEqual(sec[0], TIER1)
         self.assertEqual(mc.count_rules(sec), 2)
+
+    def test_template_tier1_header_emdash_matched(self):
+        # The on-disk files use an em-dash; it must parse identically to the hyphen.
+        text = TIER1_EMDASH + "\n- **A:** x\n- **B:** y\n"
+        sec = mc.extract_section(text)
+        self.assertEqual(sec[0], TIER1_EMDASH)
+        self.assertEqual(mc.count_rules(sec), 2)
+
+    def test_compound_noun_always_header_not_captured(self):
+        # A prose/compound-noun header that merely MENTIONS "Always" (hyphenated, not
+        # a space-separated section header) must not be treated as an always-section.
+        for header in (
+            "## Notes on Always-in-effect rules",
+            "## Overview of Always-loaded memory",
+            "## Why Always-loaded rules matter",
+        ):
+            with self.subTest(header=header):
+                self.assertEqual(mc.extract_section(header + "\n- **A:** x\n"), [])
+
+    def test_fenced_bullet_not_counted(self):
+        # A rule-format example shown inside a fenced code block is not a live rule.
+        text = (
+            TIER1 + "\nExample usage:\n"
+            "```\n- **Not a rule:** just an example\n```\n"
+            "- **Actual rule:** do X.\n"
+        )
+        sec = mc.extract_section(text)
+        self.assertEqual(mc.count_rules(sec), 1)
+
+    def test_tilde_fence_not_closed_by_backtick_fence(self):
+        # A ~~~ fence is only closed by ~~~ (not by ```), so its content stays dropped.
+        text = (
+            TIER1 + "\n"
+            "~~~\n- **In tilde fence:** x\n```\n- **Still in fence:** y\n~~~\n"
+            "- **Live:** z\n"
+        )
+        self.assertEqual(mc.count_rules(mc.extract_section(text)), 1)
 
     def test_header_with_suffix_to_eof(self):
         text = (
@@ -420,6 +461,16 @@ class TestBaselineUnit(unittest.TestCase):
     def test_compare_role_absent_from_baseline_flagged(self):
         per_role = [mc.RoleLoad("newrole", 1, 1, 1)]
         self.assertTrue(mc.compare_to_baseline(per_role, {}))
+
+    def test_compare_role_deleted_from_disk_is_silent_pass(self):
+        # A role in the baseline but absent from per_role (removed from disk after
+        # baselining) is intentionally not a regression - the ratchet bounds growth.
+        per_role = [mc.RoleLoad("pm", 14, 200, 4000)]
+        base = {
+            "pm": {"rules": 14, "always_lines": 200, "tokens": 4000},
+            "designer": {"rules": 5, "always_lines": 50, "tokens": 1000},
+        }
+        self.assertEqual(mc.compare_to_baseline(per_role, base), [])
 
     def test_load_baseline_missing_raises_oserror(self):
         with self.assertRaises(OSError):
