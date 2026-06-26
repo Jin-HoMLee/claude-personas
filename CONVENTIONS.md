@@ -52,7 +52,7 @@ These are **observed inflection points, not hard limits**. Your session may diff
 
 Growing a memory directory organically over weeks naturally hits the first cliff before you've built enough material to need a four-tier structure. When you do hit it: audit, demote where possible, then re-grow.
 
-> **Enforcement (planned):** a `scripts/check-budget.sh` lint that fails CI when a `MEMORY.md` crosses these thresholds — plus a companion `check-tool-docstring-overlap` check that flags the "delete entirely" verdict — is tracked in [issue #18](https://github.com/Jin-HoMLee/claude-personas/issues/18).
+> **Enforcement:** [`scripts/memory_cliff.py`](scripts/memory_cliff.py) lints each role's effective always-loaded load (role + shared) against these thresholds and exits non-zero past any of them; it runs in CI (`validate.yml`). Run it locally with `python3 scripts/memory_cliff.py`, or snapshot a baseline and ratchet against regressions with `--write-baseline` / `--baseline`. The companion `check-tool-docstring-overlap` check (flagging the "delete entirely" verdict) is still planned - see [issue #18](https://github.com/Jin-HoMLee/claude-personas/issues/18).
 
 ### Tier 1 — Always in effect
 
