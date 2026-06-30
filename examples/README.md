@@ -33,6 +33,8 @@ See `hooks/README.md` for when to prefer a hook over a memory rule (and the [fou
 **Claude behavior:**
 - `feedback_explain_changes.md` — briefly explain why before each edit
 - `feedback_communicate_next_steps.md` — always state what comes next
+- `feedback_act_dont_ask_on_reversible.md` — act-and-report on reversible work; gate only irreversible/high-stakes steps
+- `feedback_ground_before_presenting.md` — pre-ground non-trivial recommendations in evidence before presenting them
 - `feedback_ask_user_question.md` — use AskUserQuestion for structured choices
 - `feedback_no_planning_mode.md` — skip plan mode; use inline proposals instead
 - `feedback_todo_list.md` — maintain a visible todo list for multi-step work
