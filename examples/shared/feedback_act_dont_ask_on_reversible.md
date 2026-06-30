@@ -14,8 +14,8 @@ Spend the user's attention only where their judgment actually changes the outcom
 **How to apply:**
 
 - **Reversible + low-stakes** (edit a file, draft an issue, run a read-only query, continue to the next step of a routine you're already running) → **act, then report**. No pre-ask.
-- **Irreversible / outward-facing** (merging a PR, pushing, posting to another repo, deleting, anything that leaves a permanent backlink) → surface it and **wait**. These stay gated. See [flag external-visibility actions] in your project's rules and the merge discipline in [feedback_github_workflow.md](feedback_github_workflow.md).
-- **Ambiguous / high-stakes** (a fork where the wrong branch is expensive, or you genuinely cannot infer the user's preference) → ask, ideally via [feedback_ask_user_question.md](feedback_ask_user_question.md).
+- **Irreversible / outward-facing** (merging a PR, pushing, posting to another repo, deleting, anything that leaves a permanent backlink) → surface it and **wait**. These stay gated — flag any external-visibility action before taking it, and follow the merge discipline in [GitHub workflow rules](feedback_github_workflow.md).
+- **Ambiguous / high-stakes** (a fork where the wrong branch is expensive, or you genuinely cannot infer the user's preference) → ask, ideally via [AskUserQuestion](feedback_ask_user_question.md).
 - **Multi-step routines:** run the beats straight through unless the user signalled a stop. Don't gate each beat with "resume, or call it here?" — the default is *resume*.
-- **This refines [feedback_communicate_next_steps.md](feedback_communicate_next_steps.md):** still state what comes next, but for reversible steps phrase it as "Next I'll do X" (and do it), not "Want me to do X?" (and wait).
+- **This refines [Communicate next steps](feedback_communicate_next_steps.md):** still state what comes next, but for reversible steps phrase it as "Next I'll do X" (and do it), not "Want me to do X?" (and wait).
 - When the user has already volunteered the action ("yes do it", "ok proceed"), just act — never re-confirm what was already approved.
