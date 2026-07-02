@@ -5,6 +5,9 @@
 **Tracking:** [claude-personas#28](https://github.com/Jin-HoMLee/claude-personas/issues/28), sub-project #6 of epic [claude-personas#27](https://github.com/Jin-HoMLee/claude-personas/issues/27)
 **Sequenced after:** sub-project #1 ([cerebrum#75](https://github.com/Jin-HoMLee/cerebrum/issues/75), substrate proven on cerebrum at project scope)
 
+Naming note: this doc says **agent-personas** when speaking of the framework's end state; the rename from claude-personas is itself sub-project #4 and has not happened yet.
+Bare `#N` references are claude-personas issues / sub-projects under epic #27.
+
 ## Problem
 
 The splice endeavor accumulated a large body of hard-won knowledge and tooling that is trapped in its repos and invisible to every other project:
@@ -14,7 +17,7 @@ The splice endeavor accumulated a large body of hard-won knowledge and tooling t
 - Tooling absent from the template: `memory_corpus.py`, `memory_engram.py`, `memory_xref.py`, git hooks (`commit-msg`, `pre-commit` + tests), the `personas-memory` plugin (3 skills), 7 Python guard hooks and a `coordination.md` command in the splice code clones.
 - Domain knowledge (splice biology, pipeline specifics) - explicitly not portable.
 
-Goal: the portable part becomes available to all repos and projects, on Claude Code, Codex, and OpenCode, without breaking governance boundaries (MM is sole committer of the splice memory repo).
+Goal: the portable part becomes available to all repos and projects, on Claude Code, Codex, and OpenCode, without breaking governance boundaries (the splice project's dedicated **Memory Manager (MM)** is sole committer of the splice memory repo).
 
 ## Architecture: two decoupled modules + a toolbox
 
@@ -25,7 +28,7 @@ agent-personas makes the split explicit.
    - Storage format: one fact per Markdown file, YAML frontmatter (`name`, `description`, `type`), `[[links]]`, filename prefixes.
    - The index: `MEMORY.md`, always loaded, one line per file; the `description` hooks drive selection.
    - Loading tiers: always-loaded index, lazy per-file read, git history as deep provenance.
-   - Mounting: `.agents/` payload + thin per-vendor adapters (spec #1).
+   - Mounting: `.agents/` payload + thin per-vendor adapters (spec #1; whether `.agents/` also supersedes the 2026-05-17 memory-under-`.claude` convention for the template's own role clones is decided in specs #1/#2, not here).
    - Write + lifecycle convention: valid frontmatter, index line added, dedup-check first, delete-when-wrong.
    The substrate is usable roleless (cerebrum is the existence proof) and instantiable at any scope.
 2. **Roles module** - identity prompts + the clones topology, layered on top of substrate mounts.
@@ -33,7 +36,7 @@ agent-personas makes the split explicit.
    Roles consume memory; they are not made of it.
 3. **Toolbox** - `sync`/`doctor`, memory scripts, hooks, skills - serving both modules.
 
-This matches the field's split (standalone memory layers such as Zep/Mem0/TiMem vs agent frameworks such as CrewAI/AutoGen/native subagents), while keeping our wedge: the *binding* - file-based, git-provenance, role-scoped, human-auditable memory.
+This matches the field's split (standalone memory layers such as Zep/Mem0/TiMem vs agent frameworks such as CrewAI/AutoGen/native subagents; per the adversarially-verified field map in cerebrum's `reference_agentic_memory_landscape_2026-06-30`), while keeping our wedge: the *binding* - file-based, git-provenance, role-scoped, human-auditable memory.
 Someone can adopt the substrate module alone and never create a role; that is a legitimate, complete use of agent-personas.
 
 ## Memory tier hierarchy
@@ -45,7 +48,7 @@ Converged terminology (verified 2026-07-02 against Claude Code docs, Codex AGENT
 | Role memory | agent-scoped (`agent_id`) | Role dirs inside a project instance |
 | Project memory | CC "project memory", Codex/OpenCode project rules | One instance per *endeavor* (embedded or separate repo) |
 | User memory | CC "user memory", Codex/OpenCode global rules, Mem0 `user_id` | One private instance per human: `Jin-HoMLee/user-memory` |
-| Org memory | CC managed policy, `org_id` | **Reserved.** Team-shared policy tier; not built (solo lab) |
+| Org memory | CC managed policy; org-scoped tags (`org_id`/`app_id`) in the 2026 multi-scope memory-layer guides (not a single vendor's API) | **Reserved.** Team-shared policy tier; not built (solo lab) |
 
 Precedence on conflict: **role > project > user** (more specific wins).
 "User memory" is named by its *scope*, not its consumer: every tier is agent-consumed; they differ only in whose context they carry.
@@ -79,7 +82,7 @@ Project memory has two legitimate forms; same substrate either way:
 
 | Form | Example | When |
 |---|---|---|
-| Embedded: `.agents/memory/` inside the code repo | cerebrum, marginalia, claude-tools | Single repo, single role, no separate governance (default for small projects) |
+| Embedded: `.agents/memory/` inside the code repo | cerebrum (first adopter, migration tracked in cerebrum#75; today still `.claude/memory/`); marginalia + claude-tools are planned targets | Single repo, single role, no separate governance (default for small projects) |
 | Separate `<endeavor>-memory` repo | splice | Multi-repo endeavor, multiple role clones, or own governance (MM) |
 
 Graduating from embedded to separate is a supported toolbox migration (splice already made this move; cerebrum ran the all-in-one counterfactual and unbundled it 2026-05-13 when governance diverged).
@@ -121,7 +124,7 @@ Graduating from embedded to separate is a supported toolbox migration (splice al
 - Org-memory tier (no second human; reserved slot only).
 - The rename itself (sub-project #4) and the MCP write path (#5).
 - Any commit into the splice memory repo (MM is sole committer).
-- Retrieval/vector layers (the retrieval-vs-hand-index experiment showed the index's job is summary + provenance, not recall).
+- Retrieval/vector layers (the retrieval-vs-hand-index experiment, [cerebrum#65](https://github.com/Jin-HoMLee/cerebrum/issues/65), showed the index's job is summary + provenance, not recall).
 
 ## Decision log
 
@@ -132,5 +135,5 @@ Graduating from embedded to separate is a supported toolbox migration (splice al
 | Tier names role/project/user (+org reserved) | "organization memory" as top tier; `jin-ho-memory` | Field convergence (CC/Codex/OpenCode/Mem0); org memory means team-shared policy, the opposite of personal; name the tier by scope |
 | Repo per boundary, not per tier | One monorepo for all memory | Sharing/governance/concurrency/lifecycle forces; cerebrum-as-monorepo already failed this in practice (2026-05-13 unbundling) |
 | Embedded and separate project-memory forms both legitimate | Always require a `*-memory` repo | Small projects should not pay the multi-repo tax; graduation is a supported migration |
-| Adapt-not-copy migration with provenance lines | Bulk copy of `shared/` | Porting rule: verbatim copies silently no-op; provenance is the product wedge |
+| Adapt-not-copy migration with provenance lines | Bulk copy of `shared/` | Porting rule (Content migration step 2): instance-to-target ports must be rewritten to target conventions - verbatim copies silently no-op; provenance is the product wedge |
 | Splice dedup deferred to MM | Delete splice copies during migration | MM is sole committer; governance boundary is load-bearing |
