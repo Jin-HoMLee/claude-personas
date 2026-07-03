@@ -25,7 +25,7 @@ Five deliverables, all landing in this repo:
 2. A generalized, vendor-neutral `load-persona-memory` skill (absorbs the role-resolution algorithm of splice PR 93; the splice instance stays untouched).
 3. `examples/substrate/` with the embedded-topology adapter set as copy-and-adapt templates.
 4. README section plus a per-vendor caveats doc.
-5. Live-test results for the three open behavior questions (listed under Verification).
+5. Live-test results for the four open behavior questions (listed under Verification).
 
 ## Non-goals
 
@@ -53,10 +53,18 @@ Existing committed `.gitignore` lines from v3.1 instances keep working; the scri
 
 ### Claude Code adapter
 
-A hop symlink: `.claude/memory -> ../.agents/memory`.
-Claude Code follows the transitive chain (proven on cerebrum, where the chain is one hop longer).
-v3.1 clones migrate by re-running `init-clone.sh --force`, which rewires the direct symlink into the two-hop form using the script's existing backup semantics.
-Documented fallback for symlink-hostile setups (e.g. Windows without developer mode): `autoMemoryDirectory` in `.claude/settings.local.json`, now an officially documented setting (absolute paths only, any settings scope).
+Two pieces, not one.
+
+In-repo: a hop symlink `.claude/memory -> ../.agents/memory`.
+This is what the model's file-relative reads resolve through, and it keeps the clone self-describing.
+
+External: Claude Code's auto-memory loader reads `~/.claude/projects/<slug>/memory`, not the in-repo path.
+Self-review of this spec against the live splice clones found that they load role memory through external symlinks created in the v2 era, which `init-clone.sh` never creates; a fresh v3.1 install has no such symlink and likely gets an empty real directory there instead (silent divergence, the exact failure cerebrum's `sync.sh` guards against).
+So the template's CC wiring must own the external hop too: `init-clone.sh` creates `~/.claude/projects/<slug>/memory -> <clone>/.claude/memory` (or repairs a wrong one), same as cerebrum's `sync.sh` does for the embedded case.
+Live test 4 (below) decides whether current Claude Code has since gained native in-repo `.claude/memory` loading; if it has, the external hop is dropped and only doctored for older versions.
+Documented alternative for symlink-hostile setups (e.g. Windows without developer mode): `autoMemoryDirectory` in `.claude/settings.local.json`, now an officially documented setting (absolute paths only, any settings scope).
+
+v3.1 clones migrate by re-running `init-clone.sh --force`, which rewires the direct symlink into the two-hop form using the script's existing backup semantics, and creates or repairs the external hop.
 
 ### Codex adapter
 
@@ -76,7 +84,9 @@ Both variants ship documented either way.
 ### init-clone.sh changes
 
 - Creates the `.agents/memory` mount plus the `.claude/memory` hop (was: single direct symlink).
+- Creates or repairs the external `~/.claude/projects/<slug>/memory` symlink (subject to live test 4; refuses to touch a real directory with content, reporting it for hand-reconciliation instead).
 - Generates `.codex/hooks.json`; prints the one-time trust steps (repo trust plus `/hooks` review) instead of pretending they are scriptable.
+- Prints the one-time OpenCode step: the global `instructions` entry to add (or writes the per-clone fallback file, if the live test selected that default).
 - Writes `.git/info/exclude` entries for everything it creates.
 - `--force` migrates v3.1-shaped clones (existing backup and rollback contract unchanged).
 - Failure handling keeps the fresh-clone rollback contract, and per-vendor wiring failures are independent: a refused symlink or missing `jq` reports and continues, so one vendor's problem does not kill the other two (cerebrum `sync.sh`'s report-and-continue behavior).
@@ -122,6 +132,7 @@ One per-vendor caveats section collecting, with dates:
 - OpenCode snapshot/undo cannot cover files behind a symlink (anomalyco/opencode#31984, open; trigger is exactly the `.claude/x -> .agents/x` pattern); git covers recovery.
 - OpenCode repo moved orgs: `sst/opencode` -> `anomalyco/opencode`.
 - OpenCode glob-through-symlink behavior for `instructions` (live-test result recorded here).
+- Latent v3.1 gap (found during spec self-review): `init-clone.sh` never created the external `~/.claude/projects/<slug>/memory` symlink the CC auto-memory loader reads, and `list-roles.sh` does not audit it; existing instances work on v2-era leftovers or manual wiring. Fixed by this sub-project; live test 4 records whether current CC still needs it.
 
 ## Verification (three-tool, by running, on a throwaway)
 
@@ -140,6 +151,7 @@ Named live tests whose results feed back into this design:
 1. OpenCode glob-through-symlink on a relative global `instructions` entry (decides the OpenCode default wiring).
 2. Codex `additionalContext` ceiling (replaces the stale ~2.4k figure in cerebrum's docs and memory).
 3. Codex per-hook re-trust flow (documents the real onboarding friction).
+4. Claude Code fresh-clone auto-load with ONLY the in-repo `.claude/memory` symlink, no external hop (decides whether the external symlink is still load-bearing; found during spec self-review - the v3.1 template never creates it, and live splice clones ride v2-era leftovers).
 
 ## Decision log
 
