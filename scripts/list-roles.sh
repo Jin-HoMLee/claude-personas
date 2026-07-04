@@ -38,8 +38,9 @@ broken=0
 missing=0
 
 for role in "${ROLES[@]}"; do
-  # Two candidate paths: no-suffix and suffix
-  candidates=("$PARENT_DIR/$PROJECT_NAME" "$PARENT_DIR/$PROJECT_NAME-$role")
+  # Candidate paths: the memory repo itself (Memory Manager self-mount,
+  # .agents/memory -> ../<role>), then the no-suffix and suffix clones.
+  candidates=("$MEMORY_REPO" "$PARENT_DIR/$PROJECT_NAME" "$PARENT_DIR/$PROJECT_NAME-$role")
   found_clone=""
   for cand in "${candidates[@]}"; do
     if [[ ! -d "$cand/.git" ]]; then continue; fi

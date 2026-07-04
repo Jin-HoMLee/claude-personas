@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # init-clone.sh — create an independent project-repo clone for a role and wire
 # the .claude/memory/ symlink to the sibling claude-personas memory repo.
+# With --self, wire the memory repo ITSELF as the Memory Manager's workspace
+# (untracked self-mount, no clone).
 #
 # Run from inside your memory repo (claude-personas-<app>/).
 
@@ -13,9 +15,16 @@ MEMORY_REPO_NAME="$( basename "$MEMORY_REPO" )"
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") <role> [--project-url <url>] [--target <path>] [--main] [--force]
+Usage: $(basename "$0") <role> [--project-url <url>] [--target <path>] [--main] [--force] [--opencode-per-clone]
+       $(basename "$0") --self [--force] [--opencode-per-clone]
 
   role            Role folder in the memory repo (developer, pm, designer, scientist, ...)
+  --self          Wire THIS memory repo as the Memory Manager's workspace:
+                  an untracked .agents/memory -> ../memory_manager self-mount
+                  (plus the .claude/memory hop and vendor adapters). No clone is
+                  created; --project-url/--target/--main do not apply. Role
+                  identity stays per-workspace: cloning the memory repo does
+                  not make anyone the MM.
   --project-url   Project git URL to clone. Falls back to .claude-personas/project.txt, then prompts.
   --target        Explicit target path for the clone. Overrides suffix rules.
   --main          Force this role to claim the no-suffix path \$PARENT/<project-name>/.
@@ -37,6 +46,7 @@ PROJECT_URL=""
 TARGET=""
 MAIN=0
 FORCE=0
+SELF=0
 OPENCODE_PER_CLONE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -45,17 +55,46 @@ while [[ $# -gt 0 ]]; do
     --target) TARGET="$2"; shift 2 ;;
     --main) MAIN=1; shift ;;
     --force) FORCE=1; shift ;;
+    --self) SELF=1; shift ;;
     --opencode-per-clone) OPENCODE_PER_CLONE=1; shift ;;
     -*) echo "Error: unknown flag $1" >&2; usage >&2; exit 1 ;;
     *) if [[ -z "$ROLE" ]]; then ROLE="$1"; shift; else echo "Error: unexpected arg $1" >&2; exit 1; fi ;;
   esac
 done
 
-if [[ -z "$ROLE" ]]; then usage >&2; exit 1; fi
+if [[ "$SELF" -eq 1 ]]; then
+  # --self always wires memory_manager; a redundant role arg is tolerated,
+  # anything else is a contradiction.
+  if [[ -n "$ROLE" && "$ROLE" != "memory_manager" ]]; then
+    echo "Error: --self always wires the memory_manager role; got role '$ROLE'." >&2
+    exit 1
+  fi
+  if [[ -n "$PROJECT_URL" || -n "$TARGET" || "$MAIN" -eq 1 ]]; then
+    echo "Error: --self wires this memory repo in place; --project-url/--target/--main do not apply." >&2
+    exit 1
+  fi
+  ROLE="memory_manager"
+elif [[ -z "$ROLE" ]]; then
+  usage >&2; exit 1
+elif [[ "$ROLE" == "memory_manager" ]]; then
+  # The MM's workspace IS the memory repo; a project clone wired to
+  # memory_manager/ would recreate the shape-inference confusion (#37/#39).
+  echo "Error: the Memory Manager's workspace is the memory repo itself, not a project clone." >&2
+  echo "Run '$(basename "$0") --self' from inside the memory repo instead." >&2
+  exit 1
+fi
 
 # Validate role
 ROLE_DIR="$MEMORY_REPO/$ROLE"
 if [[ ! -d "$ROLE_DIR" || ! -f "$ROLE_DIR/MEMORY.md" ]]; then
+  if [[ "$SELF" -eq 1 ]]; then
+    echo "Error: no memory_manager/ role directory with MEMORY.md in $MEMORY_REPO." >&2
+    echo "A Memory Manager is a real role dir; create it first:" >&2
+    echo "  mkdir memory_manager" >&2
+    echo "  printf '# Memory Index - memory_manager\\n' > memory_manager/MEMORY.md" >&2
+    echo "  ln -s ../shared memory_manager/shared" >&2
+    exit 1
+  fi
   echo "Error: role '$ROLE' not found in $MEMORY_REPO/" >&2
   echo "Available roles:" >&2
   for d in "$MEMORY_REPO"/*/; do
@@ -67,9 +106,21 @@ if [[ ! -d "$ROLE_DIR" || ! -f "$ROLE_DIR/MEMORY.md" ]]; then
   exit 1
 fi
 
-# Resolve project URL
 CONFIG_DIR="$MEMORY_REPO/.claude-personas"
 PROJECT_TXT="$CONFIG_DIR/project.txt"
+
+if [[ "$SELF" -eq 1 ]]; then
+  # --self: the workspace being wired IS the memory repo. Nothing to clone,
+  # no project URL, no suffix rules. Untracked-ness needs .git/info/exclude.
+  TARGET="$MEMORY_REPO"
+  if [[ ! -d "$TARGET/.git" ]]; then
+    echo "Error: $TARGET has no .git/ directory; cannot wire untracked mounts via .git/info/exclude." >&2
+    exit 1
+  fi
+fi
+
+if [[ "$SELF" -ne 1 ]]; then
+# Resolve project URL
 if [[ -z "$PROJECT_URL" && -f "$PROJECT_TXT" ]]; then
   PROJECT_URL="$(cat "$PROJECT_TXT")"
 fi
@@ -124,6 +175,7 @@ if [[ -e "$TARGET" && "$FORCE" -ne 1 ]]; then
   echo "Error: target '$TARGET' already exists. Use --force or --target to override." >&2
   exit 1
 fi
+fi # end clone-mode-only: URL/suffix/target resolution
 
 # Track whether THIS run created the clone — governs rollback on a later
 # failure. A pre-existing clone (reused via --force) must never be deleted.
@@ -134,13 +186,18 @@ CREATED_CLONE=0
 # reused via --force, since CREATED_CLONE stays 0 there. The -n/-d guards are
 # defensive belt-and-suspenders on top of that invariant.
 rollback_fresh_clone() {
+  # --self never clones: TARGET is the user's memory repo and must never be
+  # removed, whatever CREATED_CLONE says.
+  if [[ "$SELF" -eq 1 ]]; then return 0; fi
   if [[ "$CREATED_CLONE" -eq 1 && -n "$TARGET" && -d "$TARGET" ]]; then
     rm -rf "$TARGET"
     echo "✓ Rolled back freshly-created clone at $TARGET" >&2
   fi
 }
 
-if [[ -e "$TARGET" && "$FORCE" -eq 1 ]]; then
+if [[ "$SELF" -eq 1 ]]; then
+  : # --self: no clone to create or verify; wiring targets the memory repo itself.
+elif [[ -e "$TARGET" && "$FORCE" -eq 1 ]]; then
   # Must be a clean git checkout of the same project URL
   if [[ ! -d "$TARGET/.git" ]]; then
     echo "Error: '$TARGET' exists but is not a git repo. Refusing --force." >&2
@@ -192,8 +249,9 @@ AGENTS_LINK="$TARGET/.agents/memory"
 MEMORY_LINK="$TARGET/.claude/memory"
 
 # Migrate v3.0 layout: legacy root symlink -> back up under .claude/
+# (clone mode only: in the memory repo a root memory/ path is user content)
 LEGACY_LINK="$TARGET/memory"
-if [[ "$FORCE" -eq 1 && ( -L "$LEGACY_LINK" || -e "$LEGACY_LINK" ) ]]; then
+if [[ "$SELF" -ne 1 && "$FORCE" -eq 1 && ( -L "$LEGACY_LINK" || -e "$LEGACY_LINK" ) ]]; then
   LEGACY_BACKUP="$TARGET/.claude/memory.legacy-backup-$(date +%Y%m%d-%H%M%S)"
   mv "$LEGACY_LINK" "$LEGACY_BACKUP"
   echo "✓ Migrated legacy root memory/ → $LEGACY_BACKUP"
@@ -215,12 +273,19 @@ for link in "$AGENTS_LINK" "$MEMORY_LINK"; do
   fi
 done
 
-if ! ln -s "../../$MEMORY_REPO_NAME/$ROLE" "$AGENTS_LINK"; then
+# Relative symlink targets resolve against .agents/, so the self-mount is
+# ../memory_manager (one level up = the memory repo root), not ./memory_manager.
+if [[ "$SELF" -eq 1 ]]; then
+  MOUNT_TARGET="../$ROLE"
+else
+  MOUNT_TARGET="../../$MEMORY_REPO_NAME/$ROLE"
+fi
+if ! ln -s "$MOUNT_TARGET" "$AGENTS_LINK"; then
   echo "Error: failed to create memory mount $AGENTS_LINK" >&2
   rollback_fresh_clone
   exit 1
 fi
-echo "✓ Symlinked .agents/memory → ../../$MEMORY_REPO_NAME/$ROLE"
+echo "✓ Symlinked .agents/memory → $MOUNT_TARGET"
 
 if ! ln -s "../.agents/memory" "$MEMORY_LINK"; then
   echo "Error: failed to create Claude Code hop $MEMORY_LINK" >&2
@@ -245,11 +310,13 @@ if [[ "$FORCE" -eq 1 && -f "$GITIGNORE" ]] && grep -qE '^/?memory/?$' "$GITIGNOR
   echo "✓ Removed legacy /memory/ from $GITIGNORE"
 fi
 
-# Persist project URL
-mkdir -p "$CONFIG_DIR"
-if [[ ! -f "$PROJECT_TXT" ]]; then
-  echo "$PROJECT_URL" > "$PROJECT_TXT"
-  echo "✓ Saved project URL to $PROJECT_TXT"
+# Persist project URL (clone mode only; --self has none)
+if [[ "$SELF" -ne 1 ]]; then
+  mkdir -p "$CONFIG_DIR"
+  if [[ ! -f "$PROJECT_TXT" ]]; then
+    echo "$PROJECT_URL" > "$PROJECT_TXT"
+    echo "✓ Saved project URL to $PROJECT_TXT"
+  fi
 fi
 
 # --- Claude Code external hop -------------------------------------------------
@@ -418,4 +485,8 @@ if [[ "$VENDOR_WARNINGS" -gt 0 ]]; then
   echo "Done with $VENDOR_WARNINGS vendor warning(s) - see WARN lines above. Core mount is wired."
   exit 2
 fi
-echo "Done. Open $TARGET in Claude Code → role memory loads via .claude/memory → .agents/memory."
+if [[ "$SELF" -eq 1 ]]; then
+  echo "Done. This memory repo is wired as the memory_manager workspace (untracked self-mount)."
+else
+  echo "Done. Open $TARGET in Claude Code → role memory loads via .claude/memory → .agents/memory."
+fi

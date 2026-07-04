@@ -875,4 +875,179 @@ assert_exists "$tmp30/home/.claude/projects/$mig_slug/memory" "external hop crea
 
 cleanup_clone_test_fixture "$tmp30"
 
+# --- --self: wire the memory repo itself as the Memory Manager workspace (issue #39) ---
+# The MM's identity is DECLARED like every role's: an untracked self-mount
+# .agents/memory -> ../memory_manager (relative to .agents/, so it resolves to
+# the repo's own memory_manager/ dir), never inferred from repo shape.
+echo "=== test_init_clone --self happy path (MM self-mount) ==="
+tmp31="$(mktemp -d)"
+make_clone_test_fixture "$tmp31"
+mkdir -p "$tmp31/home"
+mv "$tmp31/memory-repo" "$tmp31/claude-personas-myapp"
+
+# Add a real memory_manager role dir (MM is a role like any other) and the
+# inject script, committed so the git-clean assertion below is meaningful.
+mkdir -p "$tmp31/claude-personas-myapp/memory_manager"
+printf "# Memory Index - memory_manager\n" > "$tmp31/claude-personas-myapp/memory_manager/MEMORY.md"
+( cd "$tmp31/claude-personas-myapp/memory_manager" && ln -s ../shared shared )
+mkdir -p "$tmp31/claude-personas-myapp/scripts"
+cp "$(cd "$SCRIPT_DIR/.." && pwd)/inject-role-index.sh" "$tmp31/claude-personas-myapp/scripts/"
+chmod +x "$tmp31/claude-personas-myapp/scripts/inject-role-index.sh"
+( cd "$tmp31/claude-personas-myapp" && \
+  git -c user.email=t@x -c user.name=T add -A && \
+  git -c user.email=t@x -c user.name=T commit --quiet -m "add memory_manager role" )
+
+( cd "$tmp31/claude-personas-myapp" && \
+  HOME="$tmp31/home" bash "$INIT_CLONE" --self )
+status=$?
+assert_equal "0" "$status" "--self exits 0 on full wiring"
+
+memrepo31="$tmp31/claude-personas-myapp"
+assert_symlink "$memrepo31/.agents/memory" "../memory_manager" "self-mount points at the repo's own memory_manager/"
+assert_symlink "$memrepo31/.claude/memory" "../.agents/memory" "Claude Code hop wired in the memory repo"
+assert_exists "$memrepo31/.claude/memory/MEMORY.md" "MEMORY.md resolves through the self-mount chain"
+
+# Untracked-ness: the wired memory repo must be git-clean.
+if [ -z "$( cd "$memrepo31" && git status --porcelain )" ]; then
+  echo "  PASS: wired memory repo is git-clean (exclude entries work)"
+else
+  echo "  FAIL: wired memory repo is dirty:"; ( cd "$memrepo31" && git status --porcelain )
+  exit 1
+fi
+for pat in "/.agents/memory" "/.claude/memory" "/.codex/hooks.json"; do
+  if grep -qxF "$pat" "$memrepo31/.git/info/exclude"; then
+    echo "  PASS: $pat in .git/info/exclude"
+  else
+    echo "  FAIL: $pat missing from .git/info/exclude"
+    exit 1
+  fi
+done
+
+# External CC hop points at the MEMORY REPO's .claude/memory.
+memrepo31_abs="$(cd "$memrepo31" && pwd -P)"
+slug31="$(compute_hash "$memrepo31_abs")"
+ext31="$tmp31/home/.claude/projects/$slug31/memory"
+assert_symlink "$ext31" "$memrepo31_abs/.claude/memory" "external hop points at the memory repo's .claude/memory"
+assert_exists "$ext31/MEMORY.md" "MEMORY.md resolves through the external hop"
+
+# Codex adapter targets the memory_manager role dir.
+hooks31="$memrepo31/.codex/hooks.json"
+assert_exists "$hooks31" ".codex/hooks.json generated in the memory repo"
+if jq -e . "$hooks31" >/dev/null 2>&1; then
+  echo "  PASS: hooks.json is valid JSON"
+else
+  echo "  FAIL: hooks.json is not valid JSON"; exit 1
+fi
+memrepo31_pwd="$(cd "$memrepo31" && pwd)"
+cmd31="$(jq -r '.hooks.SessionStart[0].hooks[0].command' "$hooks31")"
+assert_equal "'$memrepo31_pwd/scripts/inject-role-index.sh' '$memrepo31_pwd/memory_manager'" "$cmd31" "hook command injects the memory_manager index"
+
+# No clone-mode side effects: nothing cloned, no project.txt invented.
+assert_not_exists "$tmp31/myapp" "no clone created by --self"
+assert_not_exists "$tmp31/myapp-memory_manager" "no suffixed clone created by --self"
+assert_not_exists "$memrepo31/.claude-personas/project.txt" "no project.txt created by --self"
+
+cleanup_clone_test_fixture "$tmp31"
+
+# --- --self without a memory_manager/ role dir must fail, wiring nothing ---
+echo "=== test_init_clone --self requires memory_manager role dir ==="
+tmp32="$(mktemp -d)"
+make_clone_test_fixture "$tmp32"
+mkdir -p "$tmp32/home"
+mv "$tmp32/memory-repo" "$tmp32/claude-personas-myapp"
+# NOTE: fixture has developer/pm/scientist/designer but NO memory_manager.
+
+if ( cd "$tmp32/claude-personas-myapp" && \
+     HOME="$tmp32/home" bash "$INIT_CLONE" --self ) 2>/dev/null; then
+  echo "  FAIL: --self should exit nonzero without memory_manager/"
+  exit 1
+else
+  echo "  PASS: --self rejected without memory_manager/ role dir"
+fi
+assert_not_exists "$tmp32/claude-personas-myapp/.agents/memory" "no self-mount created on refusal"
+assert_exists "$tmp32/claude-personas-myapp/.git" "memory repo untouched on refusal"
+
+cleanup_clone_test_fixture "$tmp32"
+
+# --- --self flag/role incompatibilities; bare memory_manager role arg redirects to --self ---
+echo "=== test_init_clone --self incompatibilities ==="
+tmp33="$(mktemp -d)"
+make_clone_test_fixture "$tmp33"
+mkdir -p "$tmp33/home"
+mv "$tmp33/memory-repo" "$tmp33/claude-personas-myapp"
+mkdir -p "$tmp33/claude-personas-myapp/memory_manager"
+printf "# Memory Index - memory_manager\n" > "$tmp33/claude-personas-myapp/memory_manager/MEMORY.md"
+
+for bad in "--self --project-url $tmp33/project-repo.git" \
+           "--self --target $tmp33/elsewhere" \
+           "--self --main" \
+           "--self developer"; do
+  if ( cd "$tmp33/claude-personas-myapp" && \
+       HOME="$tmp33/home" bash "$INIT_CLONE" $bad ) 2>/dev/null; then
+    echo "  FAIL: should have rejected: $bad"
+    exit 1
+  else
+    echo "  PASS: rejected: $bad"
+  fi
+done
+
+# A project clone wired as memory_manager makes no sense - the MM's workspace
+# IS the memory repo. The role arg without --self must error and point there.
+if ( cd "$tmp33/claude-personas-myapp" && \
+     HOME="$tmp33/home" bash "$INIT_CLONE" memory_manager --project-url "$tmp33/project-repo.git" ) 2>"$tmp33/stderr.log"; then
+  echo "  FAIL: bare memory_manager role arg should be rejected"
+  exit 1
+else
+  echo "  PASS: bare memory_manager role arg rejected"
+fi
+if grep -q -- "--self" "$tmp33/stderr.log"; then
+  echo "  PASS: rejection message points at --self"
+else
+  echo "  FAIL: rejection message does not mention --self"
+  exit 1
+fi
+assert_not_exists "$tmp33/claude-personas-myapp/.agents/memory" "no self-mount from rejected invocations"
+assert_not_exists "$tmp33/myapp" "no clone from rejected invocations"
+assert_not_exists "$tmp33/myapp-memory_manager" "no suffixed clone from rejected invocations"
+
+cleanup_clone_test_fixture "$tmp33"
+
+# --- --self re-run: refuse without --force, back up and re-wire with it ---
+echo "=== test_init_clone --self re-run / --force ==="
+tmp34="$(mktemp -d)"
+make_clone_test_fixture "$tmp34"
+mkdir -p "$tmp34/home"
+mv "$tmp34/memory-repo" "$tmp34/claude-personas-myapp"
+mkdir -p "$tmp34/claude-personas-myapp/memory_manager"
+printf "# Memory Index - memory_manager\n" > "$tmp34/claude-personas-myapp/memory_manager/MEMORY.md"
+( cd "$tmp34/claude-personas-myapp" && \
+  git -c user.email=t@x -c user.name=T add -A && \
+  git -c user.email=t@x -c user.name=T commit --quiet -m "add memory_manager role" )
+
+( cd "$tmp34/claude-personas-myapp" && \
+  HOME="$tmp34/home" bash "$INIT_CLONE" --self ) >/dev/null 2>&1 || [ $? -eq 2 ]
+
+if ( cd "$tmp34/claude-personas-myapp" && \
+     HOME="$tmp34/home" bash "$INIT_CLONE" --self ) >/dev/null 2>&1; then
+  echo "  FAIL: --self re-run without --force should refuse (mounts exist)"
+  exit 1
+else
+  echo "  PASS: --self re-run without --force refused"
+fi
+
+( cd "$tmp34/claude-personas-myapp" && \
+  HOME="$tmp34/home" bash "$INIT_CLONE" --self --force ) >/dev/null 2>&1 || [ $? -eq 2 ]
+
+memrepo34="$tmp34/claude-personas-myapp"
+assert_symlink "$memrepo34/.agents/memory" "../memory_manager" "self-mount re-wired by --self --force"
+assert_symlink "$memrepo34/.claude/memory" "../.agents/memory" "hop re-wired by --self --force"
+ab34="$(find "$memrepo34/.agents" -maxdepth 1 -name "memory.backup-*" | wc -l | tr -d ' ')"
+assert_equal "1" "$ab34" "exactly one .agents backup created"
+cb34="$(find "$memrepo34/.claude" -maxdepth 1 -name "memory.backup-*" | wc -l | tr -d ' ')"
+assert_equal "1" "$cb34" "exactly one .claude backup created"
+ex34="$(grep -cxF '/.agents/memory' "$memrepo34/.git/info/exclude" || true)"
+assert_equal "1" "$ex34" "exactly one /.agents/memory exclude line after re-runs"
+
+cleanup_clone_test_fixture "$tmp34"
+
 print_summary

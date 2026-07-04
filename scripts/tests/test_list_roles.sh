@@ -116,4 +116,44 @@ fi
 
 cleanup_clone_test_fixture "$tmp4"
 
+# --- Memory Manager self-mount audited like any other role (issue #39) ---
+echo "=== test_list_roles memory_manager self-mount detected ==="
+tmp5="$(mktemp -d)"
+make_clone_test_fixture "$tmp5"
+mkdir -p "$tmp5/home"
+mv "$tmp5/memory-repo" "$tmp5/claude-personas-myapp"
+
+# Add the memory_manager role dir and wire the memory repo itself via --self.
+mkdir -p "$tmp5/claude-personas-myapp/memory_manager"
+printf "# Memory Index - memory_manager\n" > "$tmp5/claude-personas-myapp/memory_manager/MEMORY.md"
+( cd "$tmp5/claude-personas-myapp/memory_manager" && ln -s ../shared shared )
+( cd "$tmp5/claude-personas-myapp" && \
+  git -c user.email=t@x -c user.name=T add -A && \
+  git -c user.email=t@x -c user.name=T commit --quiet -m "add memory_manager role" )
+( cd "$tmp5/claude-personas-myapp" && \
+  HOME="$tmp5/home" bash "$INIT_CLONE" --self ) >/dev/null 2>&1 || [ $? -eq 2 ]
+
+# Wire a normal role too: the self-mount candidate must not shadow clone audits.
+( cd "$tmp5/claude-personas-myapp" && \
+  HOME="$tmp5/home" bash "$INIT_CLONE" developer --project-url "$tmp5/project-repo.git" ) >/dev/null 2>&1 || [ $? -eq 2 ]
+
+output="$( cd "$tmp5/claude-personas-myapp" && bash "$LIST_ROLES" 2>&1 || true )"
+
+if echo "$output" | grep -q "memory_manager.*OK"; then
+  echo "  PASS: memory_manager self-mount reported OK"
+else
+  echo "  FAIL: memory_manager self-mount not reported OK"
+  echo "$output"
+  exit 1
+fi
+if echo "$output" | grep -q "developer.*OK"; then
+  echo "  PASS: developer clone still reported OK alongside self-mount"
+else
+  echo "  FAIL: developer clone not reported OK alongside self-mount"
+  echo "$output"
+  exit 1
+fi
+
+cleanup_clone_test_fixture "$tmp5"
+
 print_summary
