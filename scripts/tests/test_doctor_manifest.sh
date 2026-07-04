@@ -45,16 +45,37 @@ for topo in role-clones embedded user-tier; do
       echo "# dev" > "$tmp/dev/MEMORY.md"
       echo "# shared" > "$tmp/shared/MEMORY.md"
       ;;
-    embedded|user-tier)
+    embedded)
       mkdir -p "$tmp/.agents/memory"
       echo "# index" > "$tmp/.agents/memory/MEMORY.md"
       ;;
+    user-tier)
+      mkdir -p "$tmp/.agents/memory"
+      echo "# index" > "$tmp/.agents/memory/MEMORY.md"
+      echo "# AGENTS" > "$tmp/AGENTS.md"
+      ;;
   esac
 
-  run_doctor --check --root "$tmp"
+  topo_home=""
+  if [ "$topo" = "user-tier" ]; then
+    # user-tier's real check catalog (Task 3) touches $HOME-relative paths
+    # (the canonical home hop + gated per-tool adapters). Give it an
+    # isolated, empty HOME and wire it once in fix mode before the generic
+    # re-check below, so this loop keeps testing --init/payload sanity
+    # instead of incidentally reading the real machine's HOME. (embedded /
+    # role-clones stay inert stubs until their own external-hop checks land
+    # in Tasks 4-8 - the same isolation will be needed there too.)
+    topo_home="$(mktemp -d)"
+    HOME="$topo_home" bash "$DOCTOR" --root "$tmp" > /dev/null 2>&1
+    DOCTOR_STDOUT="$(HOME="$topo_home" bash "$DOCTOR" --check --root "$tmp" 2>/dev/null)"
+    DOCTOR_EXIT=$?
+  else
+    run_doctor --check --root "$tmp"
+  fi
   assert_equal "0" "$DOCTOR_EXIT" "--check on fresh $topo starter proceeds past manifest stage"
   assert_contains "$DOCTOR_STDOUT" "OK:" "--check on fresh $topo starter prints OK:"
   rm -rf "$tmp"
+  [ -n "$topo_home" ] && rm -rf "$topo_home"
 done
 
 echo "=== test_doctor_manifest: --init refuses to overwrite an existing manifest ==="
@@ -135,6 +156,10 @@ assert_equal "2" "$DOCTOR_EXIT" "spaces around = is invalid: exit 2"
 rm -rf "$tmp"
 
 echo "=== test_doctor_manifest: # comments and blank lines are ignored ==="
+# topology=embedded, not user-tier: this is a generic manifest-parsing test
+# with no isolated HOME, and Task 3 wired real $HOME-touching checks onto
+# user-tier - embedded stays an inert stub until Task 4, so it can't leak
+# into the real machine's HOME here.
 tmp="$(mktemp -d)"
 mkdir -p "$tmp/.agents/memory"
 echo "# index" > "$tmp/.agents/memory/MEMORY.md"
@@ -143,7 +168,7 @@ cat > "$tmp/.agents/manifest" <<'EOF'
 
 manifest_version=1
 
-topology=user-tier
+topology=embedded
 memory_layout=flat
 # trailing comment
 EOF
@@ -197,11 +222,14 @@ rm -rf "$tmp"
 # --- Task 2: shared check core (need_link, check_payload, check_hook_scripts, require_jq) ---
 
 echo "=== test_doctor_manifest: check_payload - flat layout missing MEMORY.md is DRIFT + exit 1 ==="
+# topology=embedded, not user-tier: same reasoning as the comments/blanks
+# test above - keep this generic check_payload test off Task 3's real
+# $HOME-touching user-tier catalog.
 tmp="$(mktemp -d)"
 mkdir -p "$tmp/.agents"
 cat > "$tmp/.agents/manifest" <<'EOF'
 manifest_version=1
-topology=user-tier
+topology=embedded
 memory_layout=flat
 EOF
 run_doctor --check --root "$tmp"
@@ -215,7 +243,7 @@ mkdir -p "$tmp/.agents/memory"
 echo "# index" > "$tmp/.agents/memory/MEMORY.md"
 cat > "$tmp/.agents/manifest" <<'EOF'
 manifest_version=1
-topology=user-tier
+topology=embedded
 memory_layout=flat
 EOF
 run_doctor --check --root "$tmp"

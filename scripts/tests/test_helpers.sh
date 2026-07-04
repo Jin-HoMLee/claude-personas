@@ -198,3 +198,30 @@ cleanup_clone_test_fixture() {
   local base="$1"
   rm -rf "$base"
 }
+
+# --- doctor.sh user-tier fixture ---
+
+# Create a user-tier doctor fixture: a repo dir with AGENTS.md, a flat memory
+# index, and a valid user-tier manifest declaring all three adapters, plus an
+# empty sibling dir for tests to point HOME at. Every $HOME-relative doctor
+# check then stays inside $1/home - never touches the real home.
+# Layout produced at $1:
+#   $1/user-repo/AGENTS.md
+#   $1/user-repo/.agents/memory/MEMORY.md
+#   $1/user-repo/.agents/manifest   (manifest_version=1, topology=user-tier,
+#                                    memory_layout=flat, all 3 adapters)
+#   $1/home/                        (empty; the fixture $HOME)
+make_user_tier_fixture() {
+  local base="$1"
+  mkdir -p "$base/user-repo/.agents/memory" "$base/home"
+  echo "# AGENTS" > "$base/user-repo/AGENTS.md"
+  echo "# Memory Index" > "$base/user-repo/.agents/memory/MEMORY.md"
+  cat > "$base/user-repo/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=user-tier
+memory_layout=flat
+adapter=claude-code
+adapter=codex
+adapter=opencode
+EOF
+}

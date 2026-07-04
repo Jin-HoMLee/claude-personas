@@ -17,12 +17,13 @@
 #
 # Never uses `set -e`: one refusal must not hide others.
 #
-# ADAPTERS / SKILLS_MOUNT / OPENCODE_MODE are produced globals not consumed
-# in this file yet: they are read by topology_*_checks once the per-topology
-# catalogs land in Tasks 3-8 (see the per-assignment shellcheck disables at
+# SKILLS_MOUNT / OPENCODE_MODE are produced globals not consumed in this file
+# yet: they are read by topology_*_checks once the embedded/role-clones
+# catalogs land in Tasks 4-8 (see the per-assignment shellcheck disables at
 # each of those globals below). CHECK / MEMORY_LAYOUT / CLAUDE_HOOKS /
 # CODEX_HOOKS are consumed by this file's shared check core (need_link,
-# check_payload, check_hook_scripts).
+# check_payload, check_hook_scripts). ADAPTERS is consumed by
+# topology_user_tier_checks (Task 3).
 set -u
 
 # --- constants: the manifest key vocabulary (the validation whitelist) ---
@@ -401,7 +402,6 @@ validate_manifest_semantics
 TOPOLOGY="$(manifest_get topology)"
 MEMORY_LAYOUT="$(manifest_get memory_layout)"
 
-# shellcheck disable=SC2034 # consumed by topology_*_checks (Tasks 3-8)
 ADAPTERS=()
 while IFS= read -r _v; do
   [ -n "$_v" ] && ADAPTERS+=("$_v")
@@ -417,11 +417,11 @@ while IFS= read -r _v; do
   [ -n "$_v" ] && CODEX_HOOKS+=("$_v")
 done < <(manifest_get_all codex_hook)
 
-# shellcheck disable=SC2034 # consumed by topology_*_checks (Tasks 3-8)
+# shellcheck disable=SC2034 # consumed by topology_*_checks (Tasks 4-8)
 SKILLS_MOUNT="$(manifest_get skills_mount)"
 [ -n "$SKILLS_MOUNT" ] || SKILLS_MOUNT="false"
 
-# shellcheck disable=SC2034 # consumed by topology_*_checks (Tasks 3-8)
+# shellcheck disable=SC2034 # consumed by topology_*_checks (Tasks 4-8)
 OPENCODE_MODE="$(manifest_get opencode)"
 [ -n "$OPENCODE_MODE" ] || OPENCODE_MODE="global"
 
@@ -436,18 +436,15 @@ report_drift() {
   DRIFT_COUNT=$((DRIFT_COUNT + 1))
 }
 
-# shellcheck disable=SC2329 # called by need_link, which topology_*_checks wire in from Task 3
 report_fixed() {
   echo "FIXED: $1"
 }
 
-# shellcheck disable=SC2329 # called by need_link, which topology_*_checks wire in from Task 3
 report_error() {
   echo "ERROR: $1"
   DRIFT_COUNT=$((DRIFT_COUNT + 1))
 }
 
-# shellcheck disable=SC2329 # this task's shared machinery; topology_*_checks call it from Task 3
 need_link() {
   # need_link <path> <target> <label>
   #
@@ -556,7 +553,32 @@ topology_embedded_checks() {
 }
 
 topology_user_tier_checks() {
-  :
+  # Extra payload sanity beyond check_payload's memory-index check: the
+  # tier's other core artifact, the home-hop source file itself.
+  [ -f "$ROOT/AGENTS.md" ] || report_drift "AGENTS.md missing"
+
+  # Canonical home hop: unconditional, not gated on any adapter declaration.
+  need_link "$HOME/AGENTS.md" "$ROOT/AGENTS.md" "~/AGENTS.md"
+
+  # Per-tool global adapters, each gated on its adapter= declaration.
+  # bash 3.2's `set -u` treats an empty array as unbound on expansion, so
+  # the length check comes first (same guard as check_hook_scripts' loops).
+  local a
+  if [ "${#ADAPTERS[@]}" -gt 0 ]; then
+    for a in "${ADAPTERS[@]}"; do
+      case "$a" in
+        claude-code)
+          need_link "$HOME/.claude/CLAUDE.md" "$HOME/AGENTS.md" "~/.claude/CLAUDE.md"
+          ;;
+        codex)
+          need_link "$HOME/.codex/AGENTS.md" "$HOME/AGENTS.md" "~/.codex/AGENTS.md"
+          ;;
+        opencode)
+          need_link "$HOME/.config/opencode/AGENTS.md" "$HOME/AGENTS.md" "~/.config/opencode/AGENTS.md"
+          ;;
+      esac
+    done
+  fi
 }
 
 # Shared floor for every topology, run before the topology-specific catalog.
