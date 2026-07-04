@@ -109,8 +109,9 @@ For each role, the script:
    - Otherwise, target is `<parent>/<project-name>-<role>/`.
    - Falls through to suffixed path if the no-suffix path is taken.
 4. `git clone <url> <target>`.
-5. Creates the `.claude/memory/` symlink in the new clone pointing into `<memory-repo>/<role>`.
-6. Adds `.claude/memory/` to the clone's `.gitignore` (idempotent).
+5. Creates the two-hop memory mount in the new clone: `.agents/memory -> ../../<memory-repo>/<role>`, then `.claude/memory -> ../.agents/memory`.
+6. Marks both symlinks untracked via the clone's `.git/info/exclude` (idempotent), not `.gitignore`.
+   See the Multi-vendor wiring section below for the external Claude Code hop, Codex, and OpenCode wiring.
 7. On first run, persists the project URL to `.claude-personas/project.txt`.
 
 **Audit:** run `./scripts/list-roles.sh` from inside your memory repo to see which clones exist, which are wired correctly, and which need fixing.
@@ -122,7 +123,7 @@ For each role, the script:
 What it creates per clone (all untracked via `.git/info/exclude` - your project repo never needs a commit to host a wired clone):
 
 - `.agents/memory -> ../../<memory-repo>/<role>` - the vendor-neutral mount and the single role signal.
-- `.claude/memory -> .agents/memory` - the Claude Code hop, plus an external `~/.claude/projects/<slug>/memory` symlink that Claude Code's auto-memory loader actually reads.
+- `.claude/memory -> ../.agents/memory` - the Claude Code hop, plus an external `~/.claude/projects/<slug>/memory` symlink that Claude Code's auto-memory loader actually reads.
 - `.codex/hooks.json` - a generated SessionStart hook that injects the role + shared indices via the memory repo's `scripts/inject-role-index.sh`.
 
 One-time steps per machine that the script cannot perform (it prints them):

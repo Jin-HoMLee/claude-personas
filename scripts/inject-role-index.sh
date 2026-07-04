@@ -38,6 +38,12 @@ append_bounded() {
   total="$(grep -c '' "$f")"
   chunk="$(awk -v cap="$remaining" '{n += length($0) + 1; if (n > cap) exit} {print}' "$f")"
   kept="$(printf '%s\n' "$chunk" | wc -l | tr -d ' ')"
+  # awk emits nothing when even the FIRST line overflows the remaining cap
+  # (its exit fires before the print rule); `printf '%s\n' "" | wc -l` still
+  # reports 1 for that empty chunk, so without this guard kept(1) < total(1)
+  # is false and the [TRUNCATED ...] trailer silently does not fire despite
+  # the whole line being dropped.
+  [ -z "$chunk" ] && kept=0
   payload="$payload$chunk
 "
   [ "$kept" -lt "$total" ] && truncated=1

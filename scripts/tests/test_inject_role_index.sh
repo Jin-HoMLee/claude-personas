@@ -65,6 +65,27 @@ case "$ctx3" in *TRUNCATED*) echo "  PASS: trailer present when newline-less las
 case "$ctx3" in *"line 150"*) echo "  FAIL: cut line unexpectedly present in payload"; TESTS_FAILED=$((TESTS_FAILED+1));; *) echo "  PASS: cut line really absent from payload";; esac
 rm -rf "$tmp3"
 
+echo "=== test_inject_role_index single line longer than the cap still flags truncation ==="
+# Regression: when the role's ENTIRE MEMORY.md is one line longer than the
+# remaining cap, awk's `exit` fires before ever printing that line, so
+# chunk="" - but `printf '%s\n' "" | wc -l` reports 1 (not 0), so kept(1) <
+# total(1) is false and the [TRUNCATED ...] trailer silently does not fire
+# despite the whole line being dropped. Fixed by treating an empty chunk as
+# kept=0 before the comparison.
+tmp5="$(mktemp -d)"
+mkdir -p "$tmp5/memory-repo/developer" "$tmp5/memory-repo/shared"
+# One line, ~12000 chars, no trailing newline, no other lines - far over the
+# 9000-char cap (minus the "# Role memory index\n" header).
+long_line="$(printf 'x%.0s' $(seq 1 5900))MIDDLE_MARKER_CANARY$(printf 'x%.0s' $(seq 1 5900))"
+printf '%s' "$long_line" > "$tmp5/memory-repo/developer/MEMORY.md"
+printf "# Shared index\n" > "$tmp5/memory-repo/shared/MEMORY.md"
+( cd "$tmp5/memory-repo/developer" && ln -s ../shared shared )
+
+ctx5="$(bash "$INJECT" "$tmp5/memory-repo/developer" | jq -r '.hookSpecificOutput.additionalContext')"
+case "$ctx5" in *TRUNCATED*) echo "  PASS: trailer present when the single over-cap line is dropped";; *) echo "  FAIL: trailer missing (single-line cut not detected)"; TESTS_FAILED=$((TESTS_FAILED+1));; esac
+case "$ctx5" in *MIDDLE_MARKER_CANARY*) echo "  FAIL: dropped line's content leaked into payload"; TESTS_FAILED=$((TESTS_FAILED+1));; *) echo "  PASS: dropped line's content really absent from payload";; esac
+rm -rf "$tmp5"
+
 echo "=== test_inject_role_index missing jq degrades gracefully ==="
 tmp4="$(mktemp -d)"
 mkdir -p "$tmp4/memory-repo/developer" "$tmp4/memory-repo/shared" "$tmp4/shim"

@@ -19,7 +19,9 @@ Usage: $(basename "$0") <role> [--project-url <url>] [--target <path>] [--main] 
   --project-url   Project git URL to clone. Falls back to .claude-personas/project.txt, then prompts.
   --target        Explicit target path for the clone. Overrides suffix rules.
   --main          Force this role to claim the no-suffix path \$PARENT/<project-name>/.
-  --force         Re-wire .claude/memory/ in an existing clean clone (must be same project URL).
+  --force         Re-wire the full vendor mount (two-hop memory mount, external Claude Code hop,
+                        .codex/hooks.json, opencode.json fallback) in an existing clean clone
+                        (must be same project URL).
   --opencode-per-clone  Write a per-clone opencode.json (absolute path) instead of
                         relying on the one-time global ~/.config/opencode/opencode.json
                         instructions entry. Use when OpenCode cannot glob through the
