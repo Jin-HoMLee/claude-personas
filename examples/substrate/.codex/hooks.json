@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'<ABSOLUTE-REPO-PATH>/.agents/hooks/inject-memory-index.sh'",
+            "timeout": 10,
+            "statusMessage": "Injecting memory index…"
+          }
+        ]
+      }
+    ]
+  }
+}

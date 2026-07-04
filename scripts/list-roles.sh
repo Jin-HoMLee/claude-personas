@@ -43,15 +43,23 @@ for role in "${ROLES[@]}"; do
   found_clone=""
   for cand in "${candidates[@]}"; do
     if [[ ! -d "$cand/.git" ]]; then continue; fi
-    if [[ ! -L "$cand/.claude/memory" ]]; then continue; fi
-    target="$(readlink "$cand/.claude/memory")"
+    # Prefer the vendor-neutral mount (two-hop layout); fall back to the
+    # v3.1 direct .claude/memory symlink.
+    link=""
+    if [[ -L "$cand/.agents/memory" ]]; then
+      link="$cand/.agents/memory"
+    elif [[ -L "$cand/.claude/memory" ]]; then
+      link="$cand/.claude/memory"
+    else
+      continue
+    fi
+    target="$(readlink "$link")"
     # Match if symlink target ends with /<role> (handles both healthy and broken symlinks)
     if [[ "$target" == *"/$role" || "$target" == "$role" ]]; then
       found_clone="$cand"
       break
     fi
     # Also claim the role-suffix clone even if symlink points elsewhere (broken re-wire)
-    # by checking the directory suffix matches -<role>
     if [[ "$cand" == *"-$role" ]]; then
       found_clone="$cand"
       break

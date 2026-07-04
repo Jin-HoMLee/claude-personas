@@ -19,7 +19,13 @@ Usage: $(basename "$0") <role> [--project-url <url>] [--target <path>] [--main] 
   --project-url   Project git URL to clone. Falls back to .claude-personas/project.txt, then prompts.
   --target        Explicit target path for the clone. Overrides suffix rules.
   --main          Force this role to claim the no-suffix path \$PARENT/<project-name>/.
-  --force         Re-wire .claude/memory/ in an existing clean clone (must be same project URL).
+  --force         Re-wire the full vendor mount (two-hop memory mount, external Claude Code hop,
+                        .codex/hooks.json, opencode.json fallback) in an existing clean clone
+                        (must be same project URL).
+  --opencode-per-clone  Write a per-clone opencode.json (absolute path) instead of
+                        relying on the one-time global ~/.config/opencode/opencode.json
+                        instructions entry. Use when OpenCode cannot glob through the
+                        .agents/memory symlink (see docs/vendor-caveats.md).
 
 Run from inside your memory repo (claude-personas-<app>/).
 EOF
@@ -31,6 +37,7 @@ PROJECT_URL=""
 TARGET=""
 MAIN=0
 FORCE=0
+OPENCODE_PER_CLONE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
@@ -38,6 +45,7 @@ while [[ $# -gt 0 ]]; do
     --target) TARGET="$2"; shift 2 ;;
     --main) MAIN=1; shift ;;
     --force) FORCE=1; shift ;;
+    --opencode-per-clone) OPENCODE_PER_CLONE=1; shift ;;
     -*) echo "Error: unknown flag $1" >&2; usage >&2; exit 1 ;;
     *) if [[ -z "$ROLE" ]]; then ROLE="$1"; shift; else echo "Error: unexpected arg $1" >&2; exit 1; fi ;;
   esac
@@ -151,18 +159,39 @@ else
   CREATED_CLONE=1
 fi
 
-# Wire memory symlink under .claude/. On --force, also clean up any legacy
-# root-level memory/ symlink and stale /memory/ .gitignore line from v3.0.
-# A failure anywhere in this post-clone wiring window must roll back a clone
-# we created this run — not only an ln -s failure.
-if ! mkdir -p "$TARGET/.claude"; then
-  echo "Error: failed to create $TARGET/.claude" >&2
+# --- Helpers for wiring ------------------------------------------------------
+
+# Idempotently append a line to the clone's .git/info/exclude (per-clone
+# untracked-ness that never dirties the project repo - spec decision log).
+EXCLUDE_FILE="$TARGET/.git/info/exclude"
+add_exclude() {
+  mkdir -p "$(dirname "$EXCLUDE_FILE")"
+  touch "$EXCLUDE_FILE"
+  grep -qxF "$1" "$EXCLUDE_FILE" 2>/dev/null || printf '%s\n' "$1" >> "$EXCLUDE_FILE"
+}
+
+# Per-vendor failures report and continue - one vendor's problem must not
+# kill the other two (spec: init-clone.sh changes, last bullet).
+VENDOR_WARNINGS=0
+vendor_warn() {
+  echo "WARN: $*" >&2
+  VENDOR_WARNINGS=$((VENDOR_WARNINGS + 1))
+}
+
+# --- Core mount (vendor-neutral, rollback-protected) --------------------------
+# .agents/memory -> ../../<memory-repo>/<role>   (the single role signal)
+# .claude/memory -> ../.agents/memory            (Claude Code in-repo hop)
+# A failure anywhere in this window must roll back a clone we created this run.
+
+if ! mkdir -p "$TARGET/.agents" "$TARGET/.claude"; then
+  echo "Error: failed to create $TARGET/.agents or $TARGET/.claude" >&2
   rollback_fresh_clone
   exit 1
 fi
+AGENTS_LINK="$TARGET/.agents/memory"
 MEMORY_LINK="$TARGET/.claude/memory"
 
-# Migrate v3.0 layout: legacy root symlink → back up under .claude/
+# Migrate v3.0 layout: legacy root symlink -> back up under .claude/
 LEGACY_LINK="$TARGET/memory"
 if [[ "$FORCE" -eq 1 && ( -L "$LEGACY_LINK" || -e "$LEGACY_LINK" ) ]]; then
   LEGACY_BACKUP="$TARGET/.claude/memory.legacy-backup-$(date +%Y%m%d-%H%M%S)"
@@ -170,44 +199,50 @@ if [[ "$FORCE" -eq 1 && ( -L "$LEGACY_LINK" || -e "$LEGACY_LINK" ) ]]; then
   echo "✓ Migrated legacy root memory/ → $LEGACY_BACKUP"
 fi
 
-if [[ -e "$MEMORY_LINK" || -L "$MEMORY_LINK" ]]; then
-  if [[ "$FORCE" -eq 1 ]]; then
-    BACKUP="$TARGET/.claude/memory.backup-$(date +%Y%m%d-%H%M%S)"
-    mv "$MEMORY_LINK" "$BACKUP"
-    echo "✓ Backed up existing .claude/memory → $BACKUP"
-  else
-    echo "Error: $MEMORY_LINK already exists. Use --force to back up." >&2
-    # Reachable only on a fresh clone (FORCE=0 + existing target exits earlier),
-    # so this leaves an unwired clone too — roll it back. --force re-run re-clones.
-    rollback_fresh_clone
-    exit 1
+# Back up whatever sits at either mount point (v3.1 direct symlink on a
+# --force migration, or artifacts from a prior run).
+for link in "$AGENTS_LINK" "$MEMORY_LINK"; do
+  if [[ -e "$link" || -L "$link" ]]; then
+    if [[ "$FORCE" -eq 1 ]]; then
+      BACKUP="$link.backup-$(date +%Y%m%d-%H%M%S)"
+      mv "$link" "$BACKUP"
+      echo "✓ Backed up existing ${link#"$TARGET"/} → ${BACKUP#"$TARGET"/}"
+    else
+      echo "Error: $link already exists. Use --force to back up." >&2
+      rollback_fresh_clone
+      exit 1
+    fi
   fi
-fi
+done
 
-if ! ln -s "../../$MEMORY_REPO_NAME/$ROLE" "$MEMORY_LINK"; then
-  echo "Error: failed to create memory symlink $MEMORY_LINK" >&2
+if ! ln -s "../../$MEMORY_REPO_NAME/$ROLE" "$AGENTS_LINK"; then
+  echo "Error: failed to create memory mount $AGENTS_LINK" >&2
   rollback_fresh_clone
   exit 1
 fi
-echo "✓ Symlinked $MEMORY_LINK → ../../$MEMORY_REPO_NAME/$ROLE"
+echo "✓ Symlinked .agents/memory → ../../$MEMORY_REPO_NAME/$ROLE"
 
-# Update .gitignore: add /.claude/memory/, remove legacy /memory/ if present
+if ! ln -s "../.agents/memory" "$MEMORY_LINK"; then
+  echo "Error: failed to create Claude Code hop $MEMORY_LINK" >&2
+  rollback_fresh_clone
+  exit 1
+fi
+echo "✓ Symlinked .claude/memory → ../.agents/memory"
+
+# Untracked-ness via exclude, NOT .gitignore. Existing committed v3.1
+# .gitignore lines keep working; we just stop adding new ones. NOTE the
+# entries have no trailing slash: a trailing slash matches only real
+# directories, and these paths are symlinks.
+add_exclude "# claude-personas vendor wiring (per-clone, untracked)"
+add_exclude "/.agents/memory"
+add_exclude "/.claude/memory"
+
+# Remove legacy /memory/ line on --force (v3.0 -> v3.1 migration) - unchanged.
 GITIGNORE="$TARGET/.gitignore"
-touch "$GITIGNORE"
-
-# Remove legacy /memory/ line on --force (v3.0 → v3.1 migration)
-if [[ "$FORCE" -eq 1 ]] && grep -qE '^/?memory/?$' "$GITIGNORE"; then
-  # Portable in-place edit: write to temp, swap. grep -v exits 1 when output
-  # is empty (e.g. .gitignore was only the legacy line); || true keeps us
-  # going so the mv still runs and replaces the file with empty content.
+if [[ "$FORCE" -eq 1 && -f "$GITIGNORE" ]] && grep -qE '^/?memory/?$' "$GITIGNORE"; then
   grep -vE '^/?memory/?$' "$GITIGNORE" > "$GITIGNORE.tmp" || true
   mv "$GITIGNORE.tmp" "$GITIGNORE"
   echo "✓ Removed legacy /memory/ from $GITIGNORE"
-fi
-
-if ! grep -qE '^/?\.claude/memory/?$' "$GITIGNORE"; then
-  printf "\n# claude-personas role-memory symlink\n/.claude/memory/\n" >> "$GITIGNORE"
-  echo "✓ Added /.claude/memory/ to $GITIGNORE"
 fi
 
 # Persist project URL
@@ -217,5 +252,170 @@ if [[ ! -f "$PROJECT_TXT" ]]; then
   echo "✓ Saved project URL to $PROJECT_TXT"
 fi
 
+# --- Claude Code external hop -------------------------------------------------
+# CC's auto-memory loader reads ~/.claude/projects/<slug>/memory, NOT the
+# in-repo path (latent v3.1 gap found in spec self-review). <slug> is CC's
+# own derivation of the clone's absolute physical path: '/' and '.' each
+# become '-' (live test 4 in docs/vendor-caveats.md re-verifies this).
+# Report-and-continue: a refusal here must not kill Codex/OpenCode wiring.
+wire_cc_external_hop() {
+  local clone_abs slug proj_dir ext expected
+  clone_abs="$(cd "$TARGET" && pwd -P)" || { vendor_warn "Claude Code: cannot resolve clone path"; return 0; }
+  slug="$(printf '%s' "$clone_abs" | tr '/.' '-')"
+  proj_dir="$HOME/.claude/projects"
+  ext="$proj_dir/$slug/memory"
+  expected="$clone_abs/.claude/memory"
+
+  if [[ -L "$ext" ]]; then
+    if [[ "$(readlink "$ext")" == "$expected" ]]; then
+      echo "✓ External Claude Code hop already wired: $ext"
+    elif ln -sfn "$expected" "$ext"; then
+      echo "✓ Repaired external Claude Code hop: $ext → $expected"
+    else
+      vendor_warn "Claude Code: could not repair external hop $ext"
+    fi
+  elif [[ -d "$ext" ]]; then
+    if [[ -z "$(ls -A "$ext")" ]] && rmdir "$ext" 2>/dev/null && ln -s "$expected" "$ext"; then
+      echo "✓ Replaced empty directory with external Claude Code hop: $ext"
+    else
+      vendor_warn "Claude Code: $ext is a real directory with content - refusing to touch; reconcile by hand (auto-memory may have been written there), then re-run with --force"
+    fi
+  elif [[ -e "$ext" ]]; then
+    vendor_warn "Claude Code: $ext exists and is neither symlink nor directory - refusing to touch"
+  else
+    if mkdir -p "$proj_dir/$slug" && ln -s "$expected" "$ext"; then
+      echo "✓ Symlinked external Claude Code hop: $ext → $expected"
+    else
+      vendor_warn "Claude Code: could not create external hop $ext"
+    fi
+  fi
+  return 0
+}
+
+wire_cc_external_hop
+
+# --- Codex adapter -------------------------------------------------------------
+# Per-clone generated hooks.json with ABSOLUTE paths (cerebrum pattern); the
+# inject script ships in the memory repo so all of that project's clones share
+# one copy. Trust is two-layer and NOT scriptable: repo trust + per-hook
+# /hooks review, re-triggered whenever the generated file changes.
+CODEX_WIRED=0
+wire_codex_adapter() {
+  local inject="$MEMORY_REPO/scripts/inject-role-index.sh"
+  local hooks="$TARGET/.codex/hooks.json"
+  # Refuse-and-warn: $inject and $ROLE_DIR are embedded verbatim in the JSON
+  # below with no escaper (jq dependency deliberately avoided) - a quote or
+  # backslash would silently produce invalid JSON, and a single quote would
+  # additionally break the single-quoted shell command string.
+  case "$inject$ROLE_DIR" in (*[\"\\\']*)
+    vendor_warn "Codex: memory-repo path contains a quote or backslash - cannot embed safely in hooks.json; skipping"
+    return 0 ;;
+  esac
+  if [[ ! -x "$inject" ]]; then
+    vendor_warn "Codex: $inject missing or not executable (update the memory repo from the template) - .codex/hooks.json not generated"
+    return 0
+  fi
+  if [[ -e "$hooks" && "$FORCE" -ne 1 ]]; then
+    vendor_warn "Codex: $hooks already exists - re-run with --force to back up and regenerate"
+    return 0
+  fi
+  if [[ -e "$hooks" ]]; then
+    mv "$hooks" "$hooks.backup-$(date +%Y%m%d-%H%M%S)"
+    echo "✓ Backed up existing .codex/hooks.json"
+  fi
+  if ! mkdir -p "$TARGET/.codex"; then
+    vendor_warn "Codex: cannot create $TARGET/.codex"
+    return 0
+  fi
+  if ! cat > "$hooks" <<EOF
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'$inject' '$ROLE_DIR'",
+            "timeout": 10,
+            "statusMessage": "Injecting role memory index…"
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+  then
+    vendor_warn "Codex: could not write $hooks"
+    return 0
+  fi
+  add_exclude "/.codex/hooks.json"
+  echo "✓ Generated .codex/hooks.json (role: $ROLE)"
+  CODEX_WIRED=1
+  return 0
+}
+
+wire_codex_adapter
+
+if [[ "$CODEX_WIRED" -eq 1 ]]; then
+  echo ""
+  echo "Codex one-time steps (not scriptable):"
+  echo "  1. Open Codex in $TARGET and accept the repo trust prompt."
+  echo "  2. Run /hooks in Codex and approve the generated SessionStart hook."
+  echo "     (Re-approval is required whenever .codex/hooks.json changes.)"
+fi
+
+# --- OpenCode adapter ----------------------------------------------------------
+# Preferred wiring is GLOBAL and one-time (spec decision log): a relative
+# "instructions" entry resolves against each session's project dir, so a
+# single entry serves every wired clone. Gated on OpenCode's symlink-glob
+# behavior (live test 1) - the per-clone absolute-path file is the fallback.
+OPENCODE_GLOBAL_NOTE=0
+wire_opencode_adapter() {
+  if [[ "$OPENCODE_PER_CLONE" -ne 1 ]]; then
+    OPENCODE_GLOBAL_NOTE=1
+    return 0
+  fi
+  local oc="$TARGET/opencode.json" clone_abs
+  clone_abs="$(cd "$TARGET" && pwd -P)" || { vendor_warn "OpenCode: cannot resolve clone path"; return 0; }
+  # Refuse-and-warn: $clone_abs is embedded verbatim in the JSON below with
+  # no escaper (jq dependency deliberately avoided) - a quote or backslash
+  # would silently produce invalid JSON.
+  case "$clone_abs" in (*[\"\\]*)
+    vendor_warn "OpenCode: clone path contains a quote or backslash - cannot embed safely in opencode.json; skipping"
+    return 0 ;;
+  esac
+  if [[ -e "$oc" && "$FORCE" -ne 1 ]]; then
+    vendor_warn "OpenCode: $oc already exists - re-run with --force to back up and regenerate"
+    return 0
+  fi
+  if [[ -e "$oc" ]]; then
+    mv "$oc" "$oc.backup-$(date +%Y%m%d-%H%M%S)"
+    echo "✓ Backed up existing opencode.json"
+  fi
+  if ! printf '{\n  "$schema": "https://opencode.ai/config.json",\n  "instructions": ["%s"]\n}\n' "$clone_abs/.agents/memory/MEMORY.md" > "$oc"; then
+    vendor_warn "OpenCode: could not write $oc"
+    return 0
+  fi
+  add_exclude "/opencode.json"
+  echo "✓ Wrote per-clone opencode.json (absolute instructions path)"
+  return 0
+}
+
+wire_opencode_adapter
+
+if [[ "$OPENCODE_GLOBAL_NOTE" -eq 1 ]]; then
+  echo ""
+  echo "OpenCode one-time step (per machine, serves every wired clone):"
+  echo "  Add \".agents/memory/MEMORY.md\" to the \"instructions\" array in"
+  echo "  ~/.config/opencode/opencode.json"
+  echo "  (If OpenCode does not load it through the symlink, re-run with"
+  echo "   --opencode-per-clone; see docs/vendor-caveats.md.)"
+fi
+
 echo ""
-echo "Done. Open $TARGET in Claude Code → .claude/memory/MEMORY.md auto-loads."
+if [[ "$VENDOR_WARNINGS" -gt 0 ]]; then
+  echo "Done with $VENDOR_WARNINGS vendor warning(s) - see WARN lines above. Core mount is wired."
+  exit 2
+fi
+echo "Done. Open $TARGET in Claude Code → role memory loads via .claude/memory → .agents/memory."

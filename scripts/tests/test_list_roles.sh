@@ -10,13 +10,14 @@ echo "=== test_list_roles v3 layout ==="
 
 tmp="$(mktemp -d)"
 make_clone_test_fixture "$tmp"
+mkdir -p "$tmp/home"
 mv "$tmp/memory-repo" "$tmp/claude-personas-myapp"
 
 # Wire 2 roles
 ( cd "$tmp/claude-personas-myapp" && \
-  bash "$INIT_CLONE" developer --project-url "$tmp/project-repo.git" )
+  HOME="$tmp/home" bash "$INIT_CLONE" developer --project-url "$tmp/project-repo.git" )
 ( cd "$tmp/claude-personas-myapp" && \
-  bash "$INIT_CLONE" pm --project-url "$tmp/project-repo.git" )
+  HOME="$tmp/home" bash "$INIT_CLONE" pm --project-url "$tmp/project-repo.git" )
 
 # Break the pm memory symlink (simulate drift)
 rm "$tmp/myapp-pm/.claude/memory"
@@ -58,11 +59,12 @@ cleanup_clone_test_fixture "$tmp"
 echo "=== test_list_roles reports dirty git state ==="
 tmp2="$(mktemp -d)"
 make_clone_test_fixture "$tmp2"
+mkdir -p "$tmp2/home"
 mv "$tmp2/memory-repo" "$tmp2/claude-personas-myapp"
 
 # Wire developer; then dirty the clone by modifying a tracked file
 ( cd "$tmp2/claude-personas-myapp" && \
-  bash "$INIT_CLONE" developer --project-url "$tmp2/project-repo.git" )
+  HOME="$tmp2/home" bash "$INIT_CLONE" developer --project-url "$tmp2/project-repo.git" )
 echo "modification" >> "$tmp2/myapp/README.md"
 
 output="$( cd "$tmp2/claude-personas-myapp" && bash "$LIST_ROLES" 2>&1 || true )"
@@ -91,5 +93,27 @@ else
 fi
 
 cleanup_clone_test_fixture "$tmp3"
+
+# --- v3.1 direct-symlink clone still detected (fallback branch) ---
+echo "=== test_list_roles v3.1 direct-symlink clone still detected ==="
+tmp4="$(mktemp -d)"
+make_clone_test_fixture "$tmp4"
+mv "$tmp4/memory-repo" "$tmp4/claude-personas-myapp"
+
+# Hand-plant a v3.1-shaped clone: direct .claude/memory symlink, NO .agents/memory.
+git clone --quiet "$tmp4/project-repo.git" "$tmp4/myapp"
+mkdir -p "$tmp4/myapp/.claude"
+ln -s "../../claude-personas-myapp/developer" "$tmp4/myapp/.claude/memory"
+
+output="$( cd "$tmp4/claude-personas-myapp" && bash "$LIST_ROLES" 2>&1 || true )"
+if echo "$output" | grep -q "developer.*OK"; then
+  echo "  PASS: v3.1 developer clone reported OK via fallback"
+else
+  echo "  FAIL: v3.1 developer clone not detected"
+  echo "$output"
+  exit 1
+fi
+
+cleanup_clone_test_fixture "$tmp4"
 
 print_summary
