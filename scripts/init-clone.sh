@@ -301,6 +301,14 @@ CODEX_WIRED=0
 wire_codex_adapter() {
   local inject="$MEMORY_REPO/scripts/inject-role-index.sh"
   local hooks="$TARGET/.codex/hooks.json"
+  # Refuse-and-warn: $inject and $ROLE_DIR are embedded verbatim in the JSON
+  # below with no escaper (jq dependency deliberately avoided) - a quote or
+  # backslash would silently produce invalid JSON, and a single quote would
+  # additionally break the single-quoted shell command string.
+  case "$inject$ROLE_DIR" in (*[\"\\\']*)
+    vendor_warn "Codex: memory-repo path contains a quote or backslash - cannot embed safely in hooks.json; skipping"
+    return 0 ;;
+  esac
   if [[ ! -x "$inject" ]]; then
     vendor_warn "Codex: $inject missing or not executable (update the memory repo from the template) - .codex/hooks.json not generated"
     return 0
@@ -368,6 +376,13 @@ wire_opencode_adapter() {
   fi
   local oc="$TARGET/opencode.json" clone_abs
   clone_abs="$(cd "$TARGET" && pwd -P)" || { vendor_warn "OpenCode: cannot resolve clone path"; return 0; }
+  # Refuse-and-warn: $clone_abs is embedded verbatim in the JSON below with
+  # no escaper (jq dependency deliberately avoided) - a quote or backslash
+  # would silently produce invalid JSON.
+  case "$clone_abs" in (*[\"\\]*)
+    vendor_warn "OpenCode: clone path contains a quote or backslash - cannot embed safely in opencode.json; skipping"
+    return 0 ;;
+  esac
   if [[ -e "$oc" && "$FORCE" -ne 1 ]]; then
     vendor_warn "OpenCode: $oc already exists - re-run with --force to back up and regenerate"
     return 0

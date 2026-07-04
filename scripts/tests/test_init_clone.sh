@@ -803,4 +803,41 @@ fi
 
 cleanup_clone_test_fixture "$tmp28"
 
+# --- JSON writers refuse quote/backslash paths (refuse-and-warn, no escaper) ---
+# Both JSON writers embed paths verbatim: Codex embeds the MEMORY REPO's
+# inject-script + role-dir paths, OpenCode embeds the CLONE's absolute path.
+# A weird --target alone would never reach the Codex guard (its embedded
+# strings come from the memory repo, not the clone), so the WHOLE fixture
+# lives under a quote-bearing parent - that makes both guards fire.
+echo "=== test_init_clone JSON writers refuse quote/backslash paths ==="
+tmp29="$(mktemp -d)"
+weird29="$tmp29/we\"ird"
+mkdir -p "$weird29"
+make_clone_test_fixture "$weird29"
+mv "$weird29/memory-repo" "$weird29/claude-personas-myapp"
+mkdir -p "$weird29/home"
+# Codex adapter is otherwise wireable: inject script present in the memory repo.
+mkdir -p "$weird29/claude-personas-myapp/scripts"
+cp "$(cd "$SCRIPT_DIR/.." && pwd)/inject-role-index.sh" "$weird29/claude-personas-myapp/scripts/"
+chmod +x "$weird29/claude-personas-myapp/scripts/inject-role-index.sh"
+
+weird_clone29="$weird29/we\"ird-clone"
+( cd "$weird29/claude-personas-myapp" && \
+  HOME="$weird29/home" bash "$INIT_CLONE" developer --opencode-per-clone \
+    --target "$weird_clone29" --project-url "$weird29/project-repo.git" ) \
+  >"$tmp29/stdout.log" 2>"$tmp29/stderr.log"
+status=$?
+assert_equal "2" "$status" "exits 2 when JSON writers refuse quote-bearing paths"
+if grep -q "WARN:.*quote or backslash" "$tmp29/stderr.log"; then
+  echo "  PASS: WARN mentions quote/backslash"
+else
+  echo "  FAIL: no quote/backslash WARN"; exit 1
+fi
+assert_not_exists "$weird_clone29/.codex/hooks.json" "no hooks.json written for quote-bearing memory-repo path"
+assert_not_exists "$weird_clone29/opencode.json" "no opencode.json written for quote-bearing clone path"
+# Symlinks don't care about quotes: the core mount must still be wired.
+assert_symlink "$weird_clone29/.agents/memory" "../../claude-personas-myapp/developer" "core mount wired despite quote-bearing paths"
+
+cleanup_clone_test_fixture "$tmp29"
+
 print_summary
