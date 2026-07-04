@@ -515,11 +515,13 @@ predicted_slug="$(compute_hash "$(cd "$tmp21" && pwd -P)/myapp")"
 mkdir -p "$tmp21/home/.claude/projects/$predicted_slug/memory"
 echo "user data" > "$tmp21/home/.claude/projects/$predicted_slug/memory/user_note.md"
 
-set +e
+# NOTE: the file runs set -uo pipefail WITHOUT -e, so a failing subshell does
+# not abort - capture the status directly (never toggle errexit here: `set -e`
+# after the capture would enable it for the REST of the file and swallow
+# later failures).
 ( cd "$tmp21/claude-personas-myapp" && \
   HOME="$tmp21/home" bash "$INIT_CLONE" developer --project-url "$tmp21/project-repo.git" ) 2>"$tmp21/stderr.log"
 status=$?
-set -e 2>/dev/null || true
 assert_equal "2" "$status" "exits 2 when a vendor warning fired"
 if grep -q "WARN:" "$tmp21/stderr.log"; then
   echo "  PASS: WARN emitted for real dir with content"
@@ -674,11 +676,9 @@ mv "$tmp24/memory-repo" "$tmp24/claude-personas-myapp"
 mkdir -p "$tmp24/home"
 # NOTE: no scripts/inject-role-index.sh in this fixture memory repo.
 
-set +e
 ( cd "$tmp24/claude-personas-myapp" && \
   HOME="$tmp24/home" bash "$INIT_CLONE" developer --project-url "$tmp24/project-repo.git" ) 2>"$tmp24/stderr.log"
 status=$?
-set -e 2>/dev/null || true
 assert_equal "2" "$status" "exits 2 on Codex warning"
 if grep -q "WARN: Codex" "$tmp24/stderr.log"; then
   echo "  PASS: Codex WARN emitted"
@@ -705,10 +705,8 @@ chmod +x "$tmp25/claude-personas-myapp/scripts/inject-role-index.sh"
 # Simulate a user-customized hooks.json.
 echo '{"hooks":{}}' > "$tmp25/myapp/.codex/hooks.json"
 
-set +e
 ( cd "$tmp25/claude-personas-myapp" && \
-  HOME="$tmp25/home" bash "$INIT_CLONE" developer --project-url "$tmp25/project-repo.git" ) >/dev/null 2>&1
-set -e 2>/dev/null || true
+  HOME="$tmp25/home" bash "$INIT_CLONE" developer --project-url "$tmp25/project-repo.git" ) >/dev/null 2>&1 || true
 assert_equal '{"hooks":{}}' "$(cat "$tmp25/myapp/.codex/hooks.json")" "non---force run preserved custom hooks.json"
 
 ( cd "$tmp25/claude-personas-myapp" && \
