@@ -286,6 +286,69 @@ wire_cc_external_hop() {
 
 wire_cc_external_hop
 
+# --- Codex adapter -------------------------------------------------------------
+# Per-clone generated hooks.json with ABSOLUTE paths (cerebrum pattern); the
+# inject script ships in the memory repo so all of that project's clones share
+# one copy. Trust is two-layer and NOT scriptable: repo trust + per-hook
+# /hooks review, re-triggered whenever the generated file changes.
+CODEX_WIRED=0
+wire_codex_adapter() {
+  local inject="$MEMORY_REPO/scripts/inject-role-index.sh"
+  local hooks="$TARGET/.codex/hooks.json"
+  if [[ ! -x "$inject" ]]; then
+    vendor_warn "Codex: $inject missing or not executable (update the memory repo from the template) - .codex/hooks.json not generated"
+    return 0
+  fi
+  if [[ -e "$hooks" && "$FORCE" -ne 1 ]]; then
+    vendor_warn "Codex: $hooks already exists - re-run with --force to back up and regenerate"
+    return 0
+  fi
+  if [[ -e "$hooks" ]]; then
+    mv "$hooks" "$hooks.backup-$(date +%Y%m%d-%H%M%S)"
+    echo "✓ Backed up existing .codex/hooks.json"
+  fi
+  if ! mkdir -p "$TARGET/.codex"; then
+    vendor_warn "Codex: cannot create $TARGET/.codex"
+    return 0
+  fi
+  if ! cat > "$hooks" <<EOF
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'$inject' '$ROLE_DIR'",
+            "timeout": 10,
+            "statusMessage": "Injecting role memory index…"
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+  then
+    vendor_warn "Codex: could not write $hooks"
+    return 0
+  fi
+  add_exclude "/.codex/hooks.json"
+  echo "✓ Generated .codex/hooks.json (role: $ROLE)"
+  CODEX_WIRED=1
+  return 0
+}
+
+wire_codex_adapter
+
+if [[ "$CODEX_WIRED" -eq 1 ]]; then
+  echo ""
+  echo "Codex one-time steps (not scriptable):"
+  echo "  1. Open Codex in $TARGET and accept the repo trust prompt."
+  echo "  2. Run /hooks in Codex and approve the generated SessionStart hook."
+  echo "     (Re-approval is required whenever .codex/hooks.json changes.)"
+fi
+
 echo ""
 if [[ "$VENDOR_WARNINGS" -gt 0 ]]; then
   echo "Done with $VENDOR_WARNINGS vendor warning(s) - see WARN lines above. Core mount is wired."

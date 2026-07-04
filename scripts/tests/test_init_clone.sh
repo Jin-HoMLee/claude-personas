@@ -227,7 +227,7 @@ mv "$tmp9/memory-repo" "$tmp9/claude-personas-myapp"
 mkdir "$tmp9/myapp"  # block the no-suffix path
 
 if ( cd "$tmp9/claude-personas-myapp" && \
-     HOME="$tmp9/home" bash "$INIT_CLONE" developer --project-url "$tmp9/project-repo.git" ) 2>/dev/null; then
+     HOME="$tmp9/home" bash "$INIT_CLONE" developer --project-url "$tmp9/project-repo.git" ) 2>/dev/null || [ $? -eq 2 ]; then
   # Should have fallen through to suffixed path since no-suffix is taken
   assert_exists "$tmp9/myapp-developer" "developer fell through to suffix when no-suffix taken"
 else
@@ -625,5 +625,91 @@ clone_abs22="$(cd "$tmp22/myapp" && pwd -P)"
 assert_symlink "$tmp22/home/.claude/projects/$predicted_slug22/memory" "$clone_abs22/.claude/memory" "wrong external symlink repaired"
 
 cleanup_clone_test_fixture "$tmp22"
+
+# --- Codex adapter: generated per-clone hooks.json (spec: Codex adapter) ---
+echo "=== test_init_clone Codex hooks.json generation ==="
+tmp23="$(mktemp -d)"
+make_clone_test_fixture "$tmp23"
+mv "$tmp23/memory-repo" "$tmp23/claude-personas-myapp"
+mkdir -p "$tmp23/home"
+# The inject script ships in the memory repo's scripts/ (template convention).
+mkdir -p "$tmp23/claude-personas-myapp/scripts"
+cp "$(cd "$SCRIPT_DIR/.." && pwd)/inject-role-index.sh" "$tmp23/claude-personas-myapp/scripts/"
+chmod +x "$tmp23/claude-personas-myapp/scripts/inject-role-index.sh"
+
+( cd "$tmp23/claude-personas-myapp" && \
+  HOME="$tmp23/home" bash "$INIT_CLONE" developer --project-url "$tmp23/project-repo.git" )
+
+hooks="$tmp23/myapp/.codex/hooks.json"
+assert_exists "$hooks" ".codex/hooks.json generated"
+if jq -e . "$hooks" >/dev/null 2>&1; then
+  echo "  PASS: hooks.json is valid JSON"
+else
+  echo "  FAIL: hooks.json is not valid JSON"; exit 1
+fi
+cmd="$(jq -r '.hooks.SessionStart[0].hooks[0].command' "$hooks")"
+# NOTE: pwd (not pwd -P) - matches how init-clone.sh derives MEMORY_REPO
+# (plain `pwd` at script top). Using -P here would diverge on macOS, where
+# $TMPDIR (/var/folders/...) is itself a symlink to /private/var/folders/...;
+# the two forms are equally valid, OS-resolved paths, not a functional bug.
+memrepo_abs="$(cd "$tmp23/claude-personas-myapp" && pwd)"
+assert_equal "'$memrepo_abs/scripts/inject-role-index.sh' '$memrepo_abs/developer'" "$cmd" "hook command calls inject script with the role dir"
+if grep -qxF "/.codex/hooks.json" "$tmp23/myapp/.git/info/exclude"; then
+  echo "  PASS: /.codex/hooks.json in exclude"
+else
+  echo "  FAIL: /.codex/hooks.json missing from exclude"; exit 1
+fi
+
+cleanup_clone_test_fixture "$tmp23"
+
+# --- Codex adapter: missing inject script warns but does not kill other wiring ---
+echo "=== test_init_clone Codex warns when inject script missing ==="
+tmp24="$(mktemp -d)"
+make_clone_test_fixture "$tmp24"
+mv "$tmp24/memory-repo" "$tmp24/claude-personas-myapp"
+mkdir -p "$tmp24/home"
+# NOTE: no scripts/inject-role-index.sh in this fixture memory repo.
+
+( cd "$tmp24/claude-personas-myapp" && \
+  HOME="$tmp24/home" bash "$INIT_CLONE" developer --project-url "$tmp24/project-repo.git" ) 2>"$tmp24/stderr.log"
+status=$?
+assert_equal "2" "$status" "exits 2 on Codex warning"
+if grep -q "WARN: Codex" "$tmp24/stderr.log"; then
+  echo "  PASS: Codex WARN emitted"
+else
+  echo "  FAIL: no Codex WARN"; exit 1
+fi
+assert_not_exists "$tmp24/myapp/.codex/hooks.json" "hooks.json not generated without inject script"
+assert_symlink "$tmp24/myapp/.agents/memory" "../../claude-personas-myapp/developer" "core mount still wired"
+
+cleanup_clone_test_fixture "$tmp24"
+
+# --- Codex adapter: pre-existing hooks.json is preserved without --force, regenerated with it ---
+echo "=== test_init_clone Codex hooks.json overwrite policy ==="
+tmp25="$(mktemp -d)"
+make_clone_test_fixture "$tmp25"
+mv "$tmp25/memory-repo" "$tmp25/claude-personas-myapp"
+mkdir -p "$tmp25/home"
+mkdir -p "$tmp25/claude-personas-myapp/scripts"
+cp "$(cd "$SCRIPT_DIR/.." && pwd)/inject-role-index.sh" "$tmp25/claude-personas-myapp/scripts/"
+chmod +x "$tmp25/claude-personas-myapp/scripts/inject-role-index.sh"
+
+( cd "$tmp25/claude-personas-myapp" && \
+  HOME="$tmp25/home" bash "$INIT_CLONE" developer --project-url "$tmp25/project-repo.git" )
+# Simulate a user-customized hooks.json.
+echo '{"hooks":{}}' > "$tmp25/myapp/.codex/hooks.json"
+
+( cd "$tmp25/claude-personas-myapp" && \
+  HOME="$tmp25/home" bash "$INIT_CLONE" developer --project-url "$tmp25/project-repo.git" ) >/dev/null 2>&1 || true
+assert_equal '{"hooks":{}}' "$(cat "$tmp25/myapp/.codex/hooks.json")" "non---force run preserved custom hooks.json"
+
+( cd "$tmp25/claude-personas-myapp" && \
+  HOME="$tmp25/home" bash "$INIT_CLONE" developer --force --project-url "$tmp25/project-repo.git" )
+cmd25="$(jq -r '.hooks.SessionStart[0].hooks[0].command' "$tmp25/myapp/.codex/hooks.json")"
+case "$cmd25" in *inject-role-index.sh*) echo "  PASS: --force regenerated hooks.json";; *) echo "  FAIL: --force did not regenerate"; exit 1;; esac
+backup25="$(find "$tmp25/myapp/.codex" -maxdepth 1 -name "hooks.json.backup-*" | wc -l | tr -d ' ')"
+assert_equal "1" "$backup25" "custom hooks.json backed up on --force"
+
+cleanup_clone_test_fixture "$tmp25"
 
 print_summary
