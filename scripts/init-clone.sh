@@ -244,6 +244,48 @@ if [[ ! -f "$PROJECT_TXT" ]]; then
   echo "✓ Saved project URL to $PROJECT_TXT"
 fi
 
+# --- Claude Code external hop -------------------------------------------------
+# CC's auto-memory loader reads ~/.claude/projects/<slug>/memory, NOT the
+# in-repo path (latent v3.1 gap found in spec self-review). <slug> is CC's
+# own derivation of the clone's absolute physical path: '/' and '.' each
+# become '-' (live test 4 in docs/vendor-caveats.md re-verifies this).
+# Report-and-continue: a refusal here must not kill Codex/OpenCode wiring.
+wire_cc_external_hop() {
+  local clone_abs slug proj_dir ext expected
+  clone_abs="$(cd "$TARGET" && pwd -P)" || { vendor_warn "Claude Code: cannot resolve clone path"; return 0; }
+  slug="$(printf '%s' "$clone_abs" | tr '/.' '-')"
+  proj_dir="$HOME/.claude/projects"
+  ext="$proj_dir/$slug/memory"
+  expected="$clone_abs/.claude/memory"
+
+  if [[ -L "$ext" ]]; then
+    if [[ "$(readlink "$ext")" == "$expected" ]]; then
+      echo "✓ External Claude Code hop already wired: $ext"
+    elif ln -sfn "$expected" "$ext"; then
+      echo "✓ Repaired external Claude Code hop: $ext → $expected"
+    else
+      vendor_warn "Claude Code: could not repair external hop $ext"
+    fi
+  elif [[ -d "$ext" ]]; then
+    if [[ -z "$(ls -A "$ext")" ]] && rmdir "$ext" 2>/dev/null && ln -s "$expected" "$ext"; then
+      echo "✓ Replaced empty directory with external Claude Code hop: $ext"
+    else
+      vendor_warn "Claude Code: $ext is a real directory with content - refusing to touch; reconcile by hand (auto-memory may have been written there), then re-run with --force"
+    fi
+  elif [[ -e "$ext" ]]; then
+    vendor_warn "Claude Code: $ext exists and is neither symlink nor directory - refusing to touch"
+  else
+    if mkdir -p "$proj_dir/$slug" && ln -s "$expected" "$ext"; then
+      echo "✓ Symlinked external Claude Code hop: $ext → $expected"
+    else
+      vendor_warn "Claude Code: could not create external hop $ext"
+    fi
+  fi
+  return 0
+}
+
+wire_cc_external_hop
+
 echo ""
 if [[ "$VENDOR_WARNINGS" -gt 0 ]]; then
   echo "Done with $VENDOR_WARNINGS vendor warning(s) - see WARN lines above. Core mount is wired."

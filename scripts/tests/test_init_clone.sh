@@ -559,4 +559,71 @@ assert_not_exists "$tmp19/myapp" "fresh clone rolled back when .claude/memory pr
 
 cleanup_clone_test_fixture "$tmp19"
 
+# --- external Claude Code hop created under $HOME/.claude/projects (spec: CC adapter) ---
+echo "=== test_init_clone external CC hop ==="
+tmp20="$(mktemp -d)"
+make_clone_test_fixture "$tmp20"
+mv "$tmp20/memory-repo" "$tmp20/claude-personas-myapp"
+mkdir -p "$tmp20/home"
+
+( cd "$tmp20/claude-personas-myapp" && \
+  HOME="$tmp20/home" bash "$INIT_CLONE" developer --project-url "$tmp20/project-repo.git" )
+
+clone_abs="$(cd "$tmp20/myapp" && pwd -P)"
+slug="$(compute_hash "$clone_abs")"
+ext="$tmp20/home/.claude/projects/$slug/memory"
+assert_symlink "$ext" "$clone_abs/.claude/memory" "external hop points at the clone's .claude/memory"
+assert_exists "$ext/MEMORY.md" "MEMORY.md resolves through the external hop"
+
+cleanup_clone_test_fixture "$tmp20"
+
+# --- external hop: real directory with content is refused but script continues ---
+echo "=== test_init_clone external CC hop refuses real dir with content ==="
+tmp21="$(mktemp -d)"
+make_clone_test_fixture "$tmp21"
+mv "$tmp21/memory-repo" "$tmp21/claude-personas-myapp"
+mkdir -p "$tmp21/home"
+
+# Pre-create the slug dir as a REAL directory with content. The slug depends
+# on the clone path, which is deterministic: $tmp21/myapp.
+predicted_slug="$(compute_hash "$(cd "$tmp21" && pwd -P)/myapp")"
+mkdir -p "$tmp21/home/.claude/projects/$predicted_slug/memory"
+echo "user data" > "$tmp21/home/.claude/projects/$predicted_slug/memory/user_note.md"
+
+set +e
+( cd "$tmp21/claude-personas-myapp" && \
+  HOME="$tmp21/home" bash "$INIT_CLONE" developer --project-url "$tmp21/project-repo.git" ) 2>"$tmp21/stderr.log"
+status=$?
+set -e 2>/dev/null || true
+assert_equal "2" "$status" "exits 2 when a vendor warning fired"
+if grep -q "WARN:" "$tmp21/stderr.log"; then
+  echo "  PASS: WARN emitted for real dir with content"
+else
+  echo "  FAIL: no WARN emitted"; exit 1
+fi
+assert_exists "$tmp21/home/.claude/projects/$predicted_slug/memory/user_note.md" "real dir content untouched"
+# Core mount must still be wired despite the vendor warning.
+assert_symlink "$tmp21/myapp/.agents/memory" "../../claude-personas-myapp/developer" "core mount wired despite CC warning"
+
+cleanup_clone_test_fixture "$tmp21"
+
+# --- external hop: wrong existing symlink is repaired ---
+echo "=== test_init_clone external CC hop repairs wrong symlink ==="
+tmp22="$(mktemp -d)"
+make_clone_test_fixture "$tmp22"
+mv "$tmp22/memory-repo" "$tmp22/claude-personas-myapp"
+mkdir -p "$tmp22/home"
+
+predicted_slug22="$(compute_hash "$(cd "$tmp22" && pwd -P)/myapp")"
+mkdir -p "$tmp22/home/.claude/projects/$predicted_slug22"
+ln -s /nonexistent "$tmp22/home/.claude/projects/$predicted_slug22/memory"
+
+( cd "$tmp22/claude-personas-myapp" && \
+  HOME="$tmp22/home" bash "$INIT_CLONE" developer --project-url "$tmp22/project-repo.git" )
+
+clone_abs22="$(cd "$tmp22/myapp" && pwd -P)"
+assert_symlink "$tmp22/home/.claude/projects/$predicted_slug22/memory" "$clone_abs22/.claude/memory" "wrong external symlink repaired"
+
+cleanup_clone_test_fixture "$tmp22"
+
 print_summary
