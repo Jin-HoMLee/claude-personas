@@ -94,4 +94,26 @@ fi
 
 cleanup_clone_test_fixture "$tmp3"
 
+# --- v3.1 direct-symlink clone still detected (fallback branch) ---
+echo "=== test_list_roles v3.1 direct-symlink clone still detected ==="
+tmp4="$(mktemp -d)"
+make_clone_test_fixture "$tmp4"
+mv "$tmp4/memory-repo" "$tmp4/claude-personas-myapp"
+
+# Hand-plant a v3.1-shaped clone: direct .claude/memory symlink, NO .agents/memory.
+git clone --quiet "$tmp4/project-repo.git" "$tmp4/myapp"
+mkdir -p "$tmp4/myapp/.claude"
+ln -s "../../claude-personas-myapp/developer" "$tmp4/myapp/.claude/memory"
+
+output="$( cd "$tmp4/claude-personas-myapp" && bash "$LIST_ROLES" 2>&1 || true )"
+if echo "$output" | grep -q "developer.*OK"; then
+  echo "  PASS: v3.1 developer clone reported OK via fallback"
+else
+  echo "  FAIL: v3.1 developer clone not detected"
+  echo "$output"
+  exit 1
+fi
+
+cleanup_clone_test_fixture "$tmp4"
+
 print_summary
