@@ -253,7 +253,12 @@ MEMORY_LINK="$TARGET/.claude/memory"
 LEGACY_LINK="$TARGET/memory"
 if [[ "$SELF" -ne 1 && "$FORCE" -eq 1 && ( -L "$LEGACY_LINK" || -e "$LEGACY_LINK" ) ]]; then
   LEGACY_BACKUP="$TARGET/.claude/memory.legacy-backup-$(date +%Y%m%d-%H%M%S)"
-  mv "$LEGACY_LINK" "$LEGACY_BACKUP"
+  # Checked mv: bare failure under set -e would skip rollback_fresh_clone.
+  if ! mv "$LEGACY_LINK" "$LEGACY_BACKUP"; then
+    echo "Error: failed to migrate legacy root memory/ → $LEGACY_BACKUP" >&2
+    rollback_fresh_clone
+    exit 1
+  fi
   echo "✓ Migrated legacy root memory/ → $LEGACY_BACKUP"
 fi
 
@@ -312,7 +317,12 @@ add_exclude "/.claude/memory"
 GITIGNORE="$TARGET/.gitignore"
 if [[ "$FORCE" -eq 1 && -f "$GITIGNORE" ]] && grep -qE '^/?memory/?$' "$GITIGNORE"; then
   grep -vE '^/?memory/?$' "$GITIGNORE" > "$GITIGNORE.tmp" || true
-  mv "$GITIGNORE.tmp" "$GITIGNORE"
+  # Checked mv: bare failure under set -e would skip rollback_fresh_clone.
+  if ! mv "$GITIGNORE.tmp" "$GITIGNORE"; then
+    echo "Error: failed to rewrite $GITIGNORE (removing legacy /memory/ line)" >&2
+    rollback_fresh_clone
+    exit 1
+  fi
   echo "✓ Removed legacy /memory/ from $GITIGNORE"
 fi
 

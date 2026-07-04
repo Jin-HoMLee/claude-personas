@@ -1277,4 +1277,85 @@ assert_equal "0" "$cb40" "no spurious .claude backup for the missing hop"
 
 cleanup_clone_test_fixture "$tmp40"
 
+# --- rollback: failed legacy-migration mv rolls back a fresh clone (#41 review) ---
+# Same bug class as the backup-loop mv: bare mv under set -e inside the
+# rollback-protected window. Reachable on a FRESH --force clone when the
+# project ships a root memory path.
+echo "=== test_init_clone rollback on legacy-migration mv failure (fresh clone) ==="
+tmp41="$(mktemp -d)"
+make_clone_test_fixture "$tmp41"
+mkdir -p "$tmp41/home"
+mv "$tmp41/memory-repo" "$tmp41/claude-personas-myapp"
+
+seed41="$(mktemp -d)"
+git clone --quiet "$tmp41/project-repo.git" "$seed41"
+echo "legacy payload" > "$seed41/memory"
+( cd "$seed41" && \
+  git -c user.email=t@x -c user.name=T add -A && \
+  git -c user.email=t@x -c user.name=T commit --quiet -m "ship root memory path" && \
+  git push --quiet origin HEAD )
+rm -rf "$seed41"
+
+# Shim fails ONLY for the exact legacy source path (a suffix pattern like
+# */memory would also catch the .agents/.claude mounts).
+shimbin41="$tmp41/shim-bin"
+mkdir -p "$shimbin41"
+cat > "$shimbin41/mv" <<SHIM
+#!/usr/bin/env bash
+case "\$1" in
+  "$tmp41/myapp/memory") echo "mv: simulated failure (test shim)" >&2; exit 1 ;;
+esac
+exec /bin/mv "\$@"
+SHIM
+chmod +x "$shimbin41/mv"
+
+if ( cd "$tmp41/claude-personas-myapp" && \
+     HOME="$tmp41/home" PATH="$shimbin41:$PATH" bash "$INIT_CLONE" developer --force --project-url "$tmp41/project-repo.git" ) 2>/dev/null; then
+  echo "  FAIL: should have exited nonzero when legacy-migration mv failed"
+  exit 1
+else
+  echo "  PASS: exited nonzero when legacy-migration mv failed"
+fi
+assert_not_exists "$tmp41/myapp" "fresh clone rolled back after legacy-migration mv failure"
+
+cleanup_clone_test_fixture "$tmp41"
+
+# --- rollback: failed .gitignore.tmp rename rolls back a fresh clone (#41 review) ---
+echo "=== test_init_clone rollback on gitignore rewrite mv failure (fresh clone) ==="
+tmp42="$(mktemp -d)"
+make_clone_test_fixture "$tmp42"
+mkdir -p "$tmp42/home"
+mv "$tmp42/memory-repo" "$tmp42/claude-personas-myapp"
+
+seed42="$(mktemp -d)"
+git clone --quiet "$tmp42/project-repo.git" "$seed42"
+printf "/memory/\n" > "$seed42/.gitignore"
+( cd "$seed42" && \
+  git -c user.email=t@x -c user.name=T add -A && \
+  git -c user.email=t@x -c user.name=T commit --quiet -m "ship legacy gitignore line" && \
+  git push --quiet origin HEAD )
+rm -rf "$seed42"
+
+shimbin42="$tmp42/shim-bin"
+mkdir -p "$shimbin42"
+cat > "$shimbin42/mv" <<SHIM
+#!/usr/bin/env bash
+case "\$1" in
+  "$tmp42/myapp/.gitignore.tmp") echo "mv: simulated failure (test shim)" >&2; exit 1 ;;
+esac
+exec /bin/mv "\$@"
+SHIM
+chmod +x "$shimbin42/mv"
+
+if ( cd "$tmp42/claude-personas-myapp" && \
+     HOME="$tmp42/home" PATH="$shimbin42:$PATH" bash "$INIT_CLONE" developer --force --project-url "$tmp42/project-repo.git" ) 2>/dev/null; then
+  echo "  FAIL: should have exited nonzero when gitignore rewrite mv failed"
+  exit 1
+else
+  echo "  PASS: exited nonzero when gitignore rewrite mv failed"
+fi
+assert_not_exists "$tmp42/myapp" "fresh clone rolled back after gitignore rewrite mv failure"
+
+cleanup_clone_test_fixture "$tmp42"
+
 print_summary
