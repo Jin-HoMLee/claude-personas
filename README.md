@@ -115,6 +115,30 @@ For each role, the script:
 
 **Audit:** run `./scripts/list-roles.sh` from inside your memory repo to see which clones exist, which are wired correctly, and which need fixing.
 
+## Multi-vendor wiring (Claude Code, Codex, OpenCode)
+
+`init-clone.sh` wires each role clone for all three tools at once.
+
+What it creates per clone (all untracked via `.git/info/exclude` - your project repo never needs a commit to host a wired clone):
+
+- `.agents/memory -> ../../<memory-repo>/<role>` - the vendor-neutral mount and the single role signal.
+- `.claude/memory -> .agents/memory` - the Claude Code hop, plus an external `~/.claude/projects/<slug>/memory` symlink that Claude Code's auto-memory loader actually reads.
+- `.codex/hooks.json` - a generated SessionStart hook that injects the role + shared indices via the memory repo's `scripts/inject-role-index.sh`.
+
+One-time steps per machine that the script cannot perform (it prints them):
+
+- Codex: open the clone, accept repo trust, then run `/hooks` and approve the generated hook (re-approve whenever the file changes).
+- OpenCode: add `".agents/memory/MEMORY.md"` to the `instructions` array in `~/.config/opencode/opencode.json` - one global entry serves every wired clone. If OpenCode cannot read through the symlink on your setup, re-run `init-clone.sh` with `--opencode-per-clone` (see `docs/vendor-caveats.md`).
+- Skill install (all three tools): symlink the skill once into your user-level skill dirs:
+
+  ```bash
+  ln -s "$(pwd)/skills/load-persona-memory" ~/.agents/skills/load-persona-memory   # Codex + OpenCode
+  ln -s "$(pwd)/skills/load-persona-memory" ~/.claude/skills/load-persona-memory   # Claude Code
+  ```
+
+Sharp edges per vendor (trust layers, symlink bugs, context ceilings) live in [docs/vendor-caveats.md](docs/vendor-caveats.md).
+Embedded-topology projects (memory inside the same repo) should start from [examples/substrate/](examples/substrate/) instead of `init-clone.sh`.
+
 ## Windows
 
 Symlink creation needs Developer Mode on Windows (Settings → Privacy & Security → Developer Mode). If Developer Mode isn't an option in your environment, use WSL.
