@@ -333,4 +333,32 @@ after_final_sum="$(cksum "$ext/note.md")"
 assert_equal "$before_final_sum" "$after_final_sum" "real-dir content stays byte-identical across the final --check"
 rm -rf "$tmp"
 
+echo "=== test_doctor_embedded: external-hop orphan sweep - a dangling sibling slug under this fixture's home is swept the same as a role-clone constellation's; this repo's own live hop untouched ==="
+tmp="$(mktemp -d)"
+make_embedded_fixture "$tmp"
+repo="$tmp/embedded-repo"
+home="$tmp/home"
+root_abs="$(repo_abs "$repo")"
+ext="$(external_hop "$root_abs" "$home")"
+run_doctor "$home" --root "$repo"
+
+dangling_slug="dangling-moved-elsewhere-slug"
+mkdir -p "$home/.claude/projects/$dangling_slug"
+ln -s "$tmp/moved-elsewhere/.claude/memory" "$home/.claude/projects/$dangling_slug/memory"
+
+run_doctor "$home" --check --root "$repo"
+assert_equal "1" "$DOCTOR_EXIT" "dangling sibling slug: --check exit 1"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: orphan external hop $home/.claude/projects/$dangling_slug/memory -> $tmp/moved-elsewhere/.claude/memory (target gone - moved or deleted clone)" "dangling sibling slug named in DRIFT"
+
+run_doctor "$home" --root "$repo"
+assert_equal "0" "$DOCTOR_EXIT" "fix mode removes the dangling sibling slug's symlink: exit 0"
+assert_contains "$DOCTOR_STDOUT" "FIXED: removed orphan external hop $home/.claude/projects/$dangling_slug/memory" "fix mode reports FIXED for the orphan removal"
+assert_not_exists "$home/.claude/projects/$dangling_slug/memory" "the orphan symlink itself is gone"
+assert_exists "$home/.claude/projects/$dangling_slug" "the slug directory is NOT removed, only the symlink inside it"
+assert_symlink "$ext" "$root_abs/.claude/memory" "this repo's own live external hop is untouched by the sweep"
+
+run_doctor "$home" --check --root "$repo"
+assert_equal "0" "$DOCTOR_EXIT" "re-check after orphan removal: exit 0"
+rm -rf "$tmp"
+
 print_summary

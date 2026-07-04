@@ -387,4 +387,67 @@ assert_contains "$DOCTOR_STDOUT" "DRIFT: $PMCLONE_ABS/.agents/memory -> MISSING,
 assert_contains "$DOCTOR_STDOUT" "INFO: role designer - no workspace wired" "unrelated unwired roles unaffected by the memory_manager multi-candidate state"
 rm -rf "$tmp"
 
+echo "=== test_doctor_role_clones: external-hop orphan sweep (h) dangling sibling slug (moved-clone signature) alongside the constellation's own live hops, a real dir, and an unrelated live symlink - --check names ONLY the dangling one, fix removes ONLY it, re-check clean ==="
+tmp="$(mktemp -d)"
+setup_wired_fixture "$tmp"
+
+# The live hops setup_wired_fixture's own init-clone.sh calls already wired
+# for developer and pm - captured before, reasserted untouched after.
+dev_ext="$HOME_DIR/.claude/projects/$(compute_hash "$DEVCLONE_ABS")/memory"
+pm_ext="$HOME_DIR/.claude/projects/$(compute_hash "$PMCLONE_ABS")/memory"
+dev_ext_target_before="$(readlink "$dev_ext")"
+pm_ext_target_before="$(readlink "$pm_ext")"
+
+# (1) A dangling symlink under an unrelated slug - the moved-or-deleted-clone
+# signature: its target is never created, so it can never resolve.
+old_slug="old-moved-clone-slug"
+mkdir -p "$HOME_DIR/.claude/projects/$old_slug"
+ln -s "$tmp/old-moved-clone/.claude/memory" "$HOME_DIR/.claude/projects/$old_slug/memory"
+
+# (3) A real directory (never a symlink) with a file under another slug.
+other_slug="other-real-dir-slug"
+mkdir -p "$HOME_DIR/.claude/projects/$other_slug/memory"
+printf 'real memory content - never touch\n' > "$HOME_DIR/.claude/projects/$other_slug/memory/note.md"
+other_sum_before="$(cksum "$HOME_DIR/.claude/projects/$other_slug/memory/note.md")"
+
+# (4) An unrelated LIVE symlink pointing at a real dir outside the constellation entirely.
+unrelated_target="$tmp/unrelated-real-dir"
+mkdir -p "$unrelated_target"
+unrelated_slug="unrelated-slug"
+mkdir -p "$HOME_DIR/.claude/projects/$unrelated_slug"
+ln -s "$unrelated_target" "$HOME_DIR/.claude/projects/$unrelated_slug/memory"
+
+run_doctor "$HOME_DIR" --check --root "$MEMREPO"
+assert_equal "1" "$DOCTOR_EXIT" "dangling sibling slug present: --check exit 1"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: orphan external hop $HOME_DIR/.claude/projects/$old_slug/memory -> $tmp/old-moved-clone/.claude/memory (target gone - moved or deleted clone)" "dangling sibling slug named in DRIFT"
+orphan_drift_count="$(echo "$DOCTOR_STDOUT" | grep -c "orphan external hop")"
+assert_equal "1" "$orphan_drift_count" "exactly one orphan DRIFT line - live hops, the real dir, and the unrelated live symlink are not named"
+case "$DOCTOR_STDOUT" in
+  *"$other_slug"*) echo "  FAIL: the real directory's slug appeared in orphan-sweep output"; exit 1 ;;
+  *) echo "  PASS: the real directory's slug not named" ;;
+esac
+case "$DOCTOR_STDOUT" in
+  *"$unrelated_slug"*) echo "  FAIL: the unrelated live symlink's slug appeared in orphan-sweep output"; exit 1 ;;
+  *) echo "  PASS: the unrelated live symlink's slug not named" ;;
+esac
+
+run_doctor "$HOME_DIR" --root "$MEMREPO"
+assert_equal "0" "$DOCTOR_EXIT" "fix mode removes the dangling sibling slug's symlink: exit 0"
+assert_contains "$DOCTOR_STDOUT" "FIXED: removed orphan external hop $HOME_DIR/.claude/projects/$old_slug/memory" "fix mode reports FIXED for the orphan removal"
+assert_not_exists "$HOME_DIR/.claude/projects/$old_slug/memory" "the orphan symlink itself is gone"
+assert_exists "$HOME_DIR/.claude/projects/$old_slug" "the slug directory is NOT removed, only the symlink inside it"
+
+dev_ext_target_after="$(readlink "$dev_ext")"
+pm_ext_target_after="$(readlink "$pm_ext")"
+assert_equal "$dev_ext_target_before" "$dev_ext_target_after" "developer's live external hop untouched by the sweep"
+assert_equal "$pm_ext_target_before" "$pm_ext_target_after" "pm's live external hop untouched by the sweep"
+
+other_sum_after="$(cksum "$HOME_DIR/.claude/projects/$other_slug/memory/note.md")"
+assert_equal "$other_sum_before" "$other_sum_after" "the real directory's file stays byte-identical after fix"
+assert_symlink "$HOME_DIR/.claude/projects/$unrelated_slug/memory" "$unrelated_target" "the unrelated live symlink is untouched by the sweep"
+
+run_doctor "$HOME_DIR" --check --root "$MEMREPO"
+assert_equal "0" "$DOCTOR_EXIT" "re-check after orphan removal: exit 0"
+rm -rf "$tmp"
+
 print_summary

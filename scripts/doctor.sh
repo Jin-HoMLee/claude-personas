@@ -886,6 +886,20 @@ topology_role_clones_checks() {
     done
   fi
 
+  # External-hop orphan sweep (Task 8): AFTER every per-workspace hop
+  # check/fix above, so a hop this run just repaired is live by sweep time -
+  # never a self-inflicted orphan report. Gated on claude-code being
+  # declared (the only adapter that creates external hops).
+  local a
+  if [ "${#ADAPTERS[@]}" -gt 0 ]; then
+    for a in "${ADAPTERS[@]}"; do
+      if [ "$a" = "claude-code" ]; then
+        _sweep_orphan_external_hops
+        break
+      fi
+    done
+  fi
+
   # OpenCode global mode: one machine-wide check for the whole run, gated on
   # the opencode adapter being declared at all.
   local a
@@ -961,6 +975,43 @@ _check_external_cc_hop() {
   else
     report_error "could not create $ext"
   fi
+}
+
+_sweep_orphan_external_hops() {
+  # External-hop orphan sweep (Task 8, from #34's hand-off): moving or
+  # deleting a wired clone/embedded instance leaves its old
+  # $HOME/.claude/projects/<old-slug>/memory symlink dangling - a target that
+  # no longer exists serves nobody by definition (spec: "External-hop orphan
+  # sweep" bullet + the safety-argument paragraph after it). Scans EVERY slug
+  # under $HOME/.claude/projects, not just this instance's own - the projects
+  # dir is global - but the only fix action is removing a symlink whose
+  # target is gone, so a live symlink (whatever it points at, possibly
+  # another instance entirely) and a real file or directory are never
+  # touched. The slug directory itself is never removed even when this
+  # empties it out - other Claude Code session data may live there, so the
+  # sweep stays surgical to the memory symlink only.
+  #
+  # Called for BOTH role-clones and embedded topologies, after each
+  # topology's own per-workspace hop checks/fixes, so a hop this run just
+  # repaired is already live by sweep time (no self-inflicted orphan
+  # report in fix mode).
+  local projects_dir="$HOME/.claude/projects" p target
+
+  [ -d "$projects_dir" ] || return 0
+
+  for p in "$projects_dir"/*/memory; do
+    [ -L "$p" ] || continue
+    [ ! -e "$p" ] || continue
+
+    target="$(readlink "$p")"
+    if [ "$CHECK" = 1 ]; then
+      report_drift "orphan external hop $p -> $target (target gone - moved or deleted clone)"
+    elif rm -f "$p" 2>/dev/null; then
+      report_fixed "removed orphan external hop $p"
+    else
+      report_error "could not remove orphan external hop $p"
+    fi
+  done
 }
 
 _embedded_check_external_cc_hop() {
@@ -1079,6 +1130,7 @@ topology_embedded_checks() {
         claude-code)
           _embedded_check_claude_settings_hooks
           _embedded_check_external_cc_hop
+          _sweep_orphan_external_hops
           ;;
         codex)
           _embedded_check_codex_hooks_json
