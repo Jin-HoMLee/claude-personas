@@ -31,7 +31,7 @@ Five deliverables, all landing in this repo:
 
 - No memory-repo layout restructure: role dirs stay at the memory repo root.
 - No generalized `sync`/`doctor` (epic sub-project 3; cerebrum's `sync.sh` says so in its own header).
-- No rename (epic sub-project 4).
+- No rename (epic sub-project 4): this spec deliberately keeps the current `claude-personas-<app>` memory-repo naming throughout; the two-module spec's target `<endeavor>-memory` naming lands with that sub-project.
 - No changes to the splice instance: MM is sole committer there; adoption happens via a handoff issue if MM wants it.
 
 ## Design
@@ -61,6 +61,7 @@ This is what the model's file-relative reads resolve through, and it keeps the c
 External: Claude Code's auto-memory loader reads `~/.claude/projects/<slug>/memory`, not the in-repo path.
 Self-review of this spec against the live splice clones found that they load role memory through external symlinks created in the v2 era, which `init-clone.sh` never creates; a fresh v3.1 install has no such symlink and likely gets an empty real directory there instead (silent divergence, the exact failure cerebrum's `sync.sh` guards against).
 So the template's CC wiring must own the external hop too: `init-clone.sh` creates `~/.claude/projects/<slug>/memory -> <clone>/.claude/memory` (or repairs a wrong one), same as cerebrum's `sync.sh` does for the embedded case.
+`<slug>` is Claude Code's own derivation of the clone's absolute path, which is undocumented; the observed rule is path separators replaced by `-`, leading separator included (`/Users/x/proj` becomes `-Users-x-proj`), but the script's reproduction of it is only correct if verified against a live loader, so live test 4 also records the derivation.
 Live test 4 (below) decides whether current Claude Code has since gained native in-repo `.claude/memory` loading; if it has, the external hop is dropped and only doctored for older versions.
 Documented alternative for symlink-hostile setups (e.g. Windows without developer mode): `autoMemoryDirectory` in `.claude/settings.local.json`, now an officially documented setting (absolute paths only, any settings scope).
 
@@ -104,7 +105,8 @@ Role resolution drops splice's hardcoded mappings and becomes pure convention-wa
 
 1. Read the workspace's `.agents/memory` symlink target (new canonical); target dir name = role, target path = memory repo.
 2. Else read `.claude/memory` the same way (v3.1 legacy).
-3. Else find the sibling memory repo and verify it by comparing the workspace's `origin` remote against `<memory-repo>/.claude-personas/project.txt`, keeping PR 93's URL normalization (scp-like SSH, scheme SSH, and HTTPS forms compare equal).
+3. Else enumerate candidates: every sibling directory of the workspace (same parent dir) containing a `.claude-personas/project.txt` marker.
+   Verify each by comparing the workspace's `origin` remote against that `project.txt`, keeping PR 93's URL normalization (scp-like SSH, scheme SSH, and HTTPS forms compare equal); exactly one match wins, zero or multiple matches fail with a report, never a guess.
 4. If the workspace is itself the memory repo, role = `memory_manager`.
 5. Last resort: clone-naming conventions as implemented by `init-clone.sh` (`main-role.txt` else `developer` for the no-suffix clone; `<project>-<role>` for suffix clones).
 
@@ -121,6 +123,10 @@ Per-tool role of the skill: for Codex and OpenCode it is the lazy-read complemen
 - Root `opencode.json` with the `instructions` entry.
 - `CLAUDE.md -> AGENTS.md` symlink (Claude Code does not read `AGENTS.md` natively; the symlink stays load-bearing).
 - A README explaining the topology choice (embedded vs role-clones) via the boundary test from the two-module spec: does a decision in repo A change what an agent does in repo B?
+
+### README section
+
+The README gains one section covering: the three-vendor wiring at a glance (what `init-clone.sh` creates per clone, and that `.agents/memory` is the vendor-neutral mount), the one-time per-machine steps the script cannot perform (Codex repo trust plus `/hooks` review, the OpenCode global `instructions` entry, the user-level skill install), and a pointer to the caveats doc for the sharp edges.
 
 ### Caveats doc
 
@@ -152,6 +158,7 @@ Named live tests whose results feed back into this design:
 2. Codex `additionalContext` ceiling (replaces the stale ~2.4k figure in cerebrum's docs and memory).
 3. Codex per-hook re-trust flow (documents the real onboarding friction).
 4. Claude Code fresh-clone auto-load with ONLY the in-repo `.claude/memory` symlink, no external hop (decides whether the external symlink is still load-bearing; found during spec self-review - the v3.1 template never creates it, and live splice clones ride v2-era leftovers).
+   Same test also records the `<slug>` derivation the loader actually uses, since the external hop is only correct if `init-clone.sh` reproduces it exactly.
 
 ## Decision log
 
