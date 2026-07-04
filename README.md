@@ -114,7 +114,12 @@ For each role, the script:
    See the Multi-vendor wiring section below for the external Claude Code hop, Codex, and OpenCode wiring.
 7. On first run, persists the project URL to `.claude-personas/project.txt`.
 
-**Audit:** run `./scripts/list-roles.sh` from inside your memory repo to see which clones exist, which are wired correctly, and which need fixing.
+**Memory Manager (optional):** if your project has a Memory Manager, its workspace is the memory repo itself, not a project clone.
+Create a real `memory_manager/` role dir (own `MEMORY.md` + `shared -> ../shared`), then run `./scripts/init-clone.sh --self` from inside the memory repo.
+This wires the same untracked mounts self-referentially - `.agents/memory -> ../memory_manager`, the `.claude/memory` hop, the external Claude Code hop, and the Codex/OpenCode adapters - with no clone created.
+The mount is untracked on purpose: role identity belongs to the workspace instance, so cloning the memory repo does not make anyone the MM.
+
+**Audit:** run `./scripts/list-roles.sh` from inside your memory repo to see which clones exist, which are wired correctly, and which need fixing - the MM self-mount is audited like any other role.
 
 ## Multi-vendor wiring (Claude Code, Codex, OpenCode)
 
