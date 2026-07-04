@@ -17,6 +17,7 @@ Re-verify anything volatile before relying on it; each line carries the date it 
 - The app does not load global `~/.codex/AGENTS.md` (openai/codex#27705, open); the CLI does. (2026-07-03)
 - `additionalContext` ceiling: a ~2.4k-token truncation was observed 2026-07-02 on the cerebrum instance, but matches neither current docs nor current source (hook path uncapped in main; a sibling context path caps at 1k tokens). The inject script self-bounds its payload with a `[TRUNCATED ...]` trailer regardless. Live test 2 below records the current behavior. (2026-07-03)
 - Hook timeouts are in seconds. (2026-07-03)
+- Observed on macOS with codex-cli 0.142.5: `codex exec` (arg or stdin prompt, untrusted repo) returned the prompt text verbatim as the answer while burning ~12k tokens, alongside an unrelated MCP `HTTP 403` transport error - suspected local proxy/model misconfig (`model: gpt-5.5`, `reasoning effort: none`), not a Codex product behavior; re-test live tests 2-3 once resolved. (2026-07-04)
 
 ## OpenCode
 
@@ -32,7 +33,7 @@ Run on a throwaway scratch instance; nothing touches any real project.
 
 | # | Question | Result | Date | Consequence |
 |---|---|---|---|---|
-| 1 | OpenCode glob-through-symlink on a relative global `instructions` entry | pending | - | decides default wiring (global vs `--opencode-per-clone`) |
-| 2 | Codex `additionalContext` ceiling | pending | - | replaces the stale ~2.4k figure |
-| 3 | Codex per-hook re-trust flow | pending | - | documents real onboarding friction |
-| 4 | CC fresh-clone auto-load with ONLY the in-repo `.claude/memory` symlink (no external hop) + slug derivation | pending | - | decides whether the external hop stays load-bearing |
+| 1 | OpenCode glob-through-symlink on a relative global `instructions` entry | PASS (opencode 1.17.13): global relative entry loaded the role index through the `.agents/memory` symlink | 2026-07-04 | global one-time entry stays the default; `--opencode-per-clone` remains the documented fallback |
+| 2 | Codex `additionalContext` ceiling | pending (blocked: interactive trust grant needed; `codex exec` also echoed prompts verbatim on this machine - see Codex section) | - | replaces the stale ~2.4k figure |
+| 3 | Codex per-hook re-trust flow | pending (interactive-only by design; to be recorded at first real trust grant) | - | documents real onboarding friction |
+| 4 | CC fresh-clone auto-load with ONLY the in-repo `.claude/memory` symlink (no external hop) + slug derivation | HOP IS LOAD-BEARING: without it the index did NOT load and CC materialized a real empty `memory/` dir at the slug (the predicted silent divergence); with it the index loaded; slug derivation verified byte-identical to `tr '/.' '-'` on the physical path | 2026-07-04 | `init-clone.sh` keeps creating/repairing the external hop; empty-dir replacement branch also verified live |
