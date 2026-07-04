@@ -712,4 +712,54 @@ assert_equal "1" "$backup25" "custom hooks.json backed up on --force"
 
 cleanup_clone_test_fixture "$tmp25"
 
+# --- Codex adapter: project repo SHIPS a committed .codex/hooks.json -> the
+# function's own "already exists" WARN branch fires on a FRESH clone (no
+# --force). This is the only real-world path to that branch: a plain re-run
+# hits init-clone's earlier generic "target already exists" exit 1 and never
+# reaches wire_codex_adapter (same reachability shape as tmp19's seeded
+# .claude/memory collision). ---
+echo "=== test_init_clone Codex WARN when cloned repo ships .codex/hooks.json ==="
+tmp26="$(mktemp -d)"
+make_clone_test_fixture "$tmp26"
+mv "$tmp26/memory-repo" "$tmp26/claude-personas-myapp"
+mkdir -p "$tmp26/home"
+# Codex adapter is otherwise wireable: inject script present in the memory repo.
+mkdir -p "$tmp26/claude-personas-myapp/scripts"
+cp "$(cd "$SCRIPT_DIR/.." && pwd)/inject-role-index.sh" "$tmp26/claude-personas-myapp/scripts/"
+chmod +x "$tmp26/claude-personas-myapp/scripts/inject-role-index.sh"
+
+# Make the PROJECT repo ship a committed .codex/hooks.json (uncommon but legal).
+seed26="$(mktemp -d)"
+git clone --quiet "$tmp26/project-repo.git" "$seed26"
+mkdir -p "$seed26/.codex"
+echo '{"hooks":{}}' > "$seed26/.codex/hooks.json"
+( cd "$seed26" && \
+  git -c user.email=t@x -c user.name=T add -A && \
+  git -c user.email=t@x -c user.name=T commit --quiet -m "ship .codex/hooks.json" && \
+  git push --quiet origin HEAD )
+rm -rf "$seed26"
+
+# Fresh, non---force run: everything else wires fine, but wire_codex_adapter's
+# own guard must WARN and preserve the shipped file, not regenerate it.
+( cd "$tmp26/claude-personas-myapp" && \
+  HOME="$tmp26/home" bash "$INIT_CLONE" developer --project-url "$tmp26/project-repo.git" ) \
+  >"$tmp26/stdout.log" 2>"$tmp26/stderr.log"
+status=$?
+assert_equal "2" "$status" "exits 2 on Codex already-exists warning"
+if grep -q "WARN: Codex" "$tmp26/stderr.log" && grep -q "already exists" "$tmp26/stderr.log"; then
+  echo "  PASS: Codex already-exists WARN emitted"
+else
+  echo "  FAIL: no Codex already-exists WARN"; exit 1
+fi
+assert_equal '{"hooks":{}}' "$(cat "$tmp26/myapp/.codex/hooks.json")" "shipped hooks.json preserved, not regenerated"
+# Sanity: the success path must NOT have run (would print the Generated line).
+if grep -q "Generated .codex/hooks.json" "$tmp26/stdout.log"; then
+  echo "  FAIL: hooks.json was (re)generated despite pre-existing file"; exit 1
+else
+  echo "  PASS: no 'Generated .codex/hooks.json' line (WARN branch taken)"
+fi
+assert_symlink "$tmp26/myapp/.agents/memory" "../../claude-personas-myapp/developer" "core mount still wired"
+
+cleanup_clone_test_fixture "$tmp26"
+
 print_summary
