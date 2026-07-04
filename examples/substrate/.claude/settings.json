@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "ask": [
+      "Write(.agents/hooks/**)",
+      "Edit(.agents/hooks/**)",
+      "Write(.agents/skills/**)",
+      "Edit(.agents/skills/**)"
+    ]
+  }
+}
