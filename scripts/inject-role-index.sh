@@ -33,7 +33,9 @@ append_bounded() {
   remaining=$(( cap - ${#payload} - ${#hdr} ))
   if [ "$remaining" -le 0 ]; then truncated=1; return 0; fi
   payload="$payload$hdr"
-  total="$(wc -l < "$f" | tr -d ' ')"
+  # grep -c '' counts lines, not newlines: unlike wc -l it does not
+  # undercount a file whose last line lacks a trailing newline.
+  total="$(grep -c '' "$f")"
   chunk="$(awk -v cap="$remaining" '{n += length($0) + 1; if (n > cap) exit} {print}' "$f")"
   kept="$(printf '%s\n' "$chunk" | wc -l | tr -d ' ')"
   payload="$payload$chunk

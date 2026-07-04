@@ -42,6 +42,44 @@ else
 fi
 rm -rf "$tmp2"
 
+echo "=== test_inject_role_index no-trailing-newline last line still flags truncation ==="
+# Regression: `wc -l` counts newline chars, so a file whose last line lacks a
+# trailing newline is undercounted by one; if exactly that last line is cut,
+# total==kept and the [TRUNCATED ...] trailer was silently skipped despite
+# real content loss. Fixed by counting lines with `grep -c ''`.
+tmp3="$(mktemp -d)"
+mkdir -p "$tmp3/memory-repo/developer" "$tmp3/memory-repo/shared"
+# Header "# Role memory index\n" is 20 chars -> awk sees cap 9000-20=8980.
+# 150 lines of exactly 59 chars (60 with \n): awk keeps 149 (n=8940) and cuts
+# line 150 (n=9000 > 8980). The LAST line has NO trailing newline.
+pad="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"  # 50 chars
+{
+  for i in $(seq 1 149); do printf 'line %03d %s\n' "$i" "$pad"; done
+  printf 'line %03d %s' 150 "$pad"
+} > "$tmp3/memory-repo/developer/MEMORY.md"
+printf "# Shared index\n" > "$tmp3/memory-repo/shared/MEMORY.md"
+( cd "$tmp3/memory-repo/developer" && ln -s ../shared shared )
+
+ctx3="$(bash "$INJECT" "$tmp3/memory-repo/developer" | jq -r '.hookSpecificOutput.additionalContext')"
+case "$ctx3" in *TRUNCATED*) echo "  PASS: trailer present when newline-less last line is cut";; *) echo "  FAIL: trailer missing (wc -l undercounts final line)"; TESTS_FAILED=$((TESTS_FAILED+1));; esac
+case "$ctx3" in *"line 150"*) echo "  FAIL: cut line unexpectedly present in payload"; TESTS_FAILED=$((TESTS_FAILED+1));; *) echo "  PASS: cut line really absent from payload";; esac
+rm -rf "$tmp3"
+
+echo "=== test_inject_role_index missing jq degrades gracefully ==="
+tmp4="$(mktemp -d)"
+mkdir -p "$tmp4/memory-repo/developer" "$tmp4/memory-repo/shared" "$tmp4/shim"
+printf "# Role index\n" > "$tmp4/memory-repo/developer/MEMORY.md"
+printf "# Shared index\n" > "$tmp4/memory-repo/shared/MEMORY.md"
+( cd "$tmp4/memory-repo/developer" && ln -s ../shared shared )
+# Shim PATH: real wc/awk/grep/tr symlinked in, but NO jq - so only jq is
+# missing, not every external the script uses.
+for cmd in wc awk grep tr; do ln -s "$(command -v "$cmd")" "$tmp4/shim/$cmd"; done
+rc4=0
+err4="$(PATH="$tmp4/shim" "$BASH" "$INJECT" "$tmp4/memory-repo/developer" 2>&1 >/dev/null)" || rc4=$?
+assert_equal "0" "$rc4" "exits 0 when jq is missing"
+case "$err4" in *jq*) echo "  PASS: stderr mentions jq";; *) echo "  FAIL: stderr does not mention jq: $err4"; TESTS_FAILED=$((TESTS_FAILED+1));; esac
+rm -rf "$tmp4"
+
 echo "=== test_inject_role_index defensive exits ==="
 assert_equal "0" "$( bash "$INJECT" "/nonexistent/role/dir" >/dev/null 2>&1; echo $? )" "exits 0 on missing role dir"
 assert_equal "0" "$( bash "$INJECT" >/dev/null 2>&1; echo $? )" "exits 0 with no argument"
