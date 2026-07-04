@@ -639,6 +639,9 @@ chmod +x "$tmp23/claude-personas-myapp/scripts/inject-role-index.sh"
 
 ( cd "$tmp23/claude-personas-myapp" && \
   HOME="$tmp23/home" bash "$INIT_CLONE" developer --project-url "$tmp23/project-repo.git" )
+status=$?
+# Pins leg 0 of the 0/1/2 exit contract: a fully-wired run exits 0 (#34).
+assert_equal "0" "$status" "clean full wiring exits 0"
 
 hooks="$tmp23/myapp/.codex/hooks.json"
 assert_exists "$hooks" ".codex/hooks.json generated"
@@ -753,7 +756,7 @@ else
 fi
 assert_equal '{"hooks":{}}' "$(cat "$tmp26/myapp/.codex/hooks.json")" "shipped hooks.json preserved, not regenerated"
 # Sanity: the success path must NOT have run (would print the Generated line).
-if grep -q "Generated .codex/hooks.json" "$tmp26/stdout.log"; then
+if grep -qF "Generated .codex/hooks.json" "$tmp26/stdout.log"; then
   echo "  FAIL: hooks.json was (re)generated despite pre-existing file"; exit 1
 else
   echo "  PASS: no 'Generated .codex/hooks.json' line (WARN branch taken)"
@@ -870,8 +873,9 @@ else
 fi
 
 # External hop created for the migrated clone too.
-mig_slug="$(compute_hash "$(cd "$tmp30/myapp" && pwd -P)")"
-assert_exists "$tmp30/home/.claude/projects/$mig_slug/memory" "external hop created on migration"
+clone_abs30="$(cd "$tmp30/myapp" && pwd -P)"
+mig_slug="$(compute_hash "$clone_abs30")"
+assert_symlink "$tmp30/home/.claude/projects/$mig_slug/memory" "$clone_abs30/.claude/memory" "external hop created on migration"
 
 cleanup_clone_test_fixture "$tmp30"
 
@@ -1049,5 +1053,309 @@ ex34="$(grep -cxF '/.agents/memory' "$memrepo34/.git/info/exclude" || true)"
 assert_equal "1" "$ex34" "exactly one /.agents/memory exclude line after re-runs"
 
 cleanup_clone_test_fixture "$tmp34"
+
+# --- rollback: failed backup mv in the core loop must roll back a fresh clone (#34) ---
+# The rollback invariant covers the WHOLE post-clone wiring window; the backup
+# mv ran bare under set -e, exiting without rollback_fresh_clone.
+echo "=== test_init_clone rollback on core backup mv failure (fresh clone) ==="
+tmp35="$(mktemp -d)"
+make_clone_test_fixture "$tmp35"
+mkdir -p "$tmp35/home"
+mv "$tmp35/memory-repo" "$tmp35/claude-personas-myapp"
+
+# Ship a committed .claude/memory in the project so the backup loop fires on a
+# fresh clone under --force (the only fresh-clone path into that mv).
+seed35="$(mktemp -d)"
+git clone --quiet "$tmp35/project-repo.git" "$seed35"
+mkdir -p "$seed35/.claude"
+echo "pre-existing" > "$seed35/.claude/memory"
+( cd "$seed35" && \
+  git -c user.email=t@x -c user.name=T add -A && \
+  git -c user.email=t@x -c user.name=T commit --quiet -m "ship .claude/memory" && \
+  git push --quiet origin HEAD )
+rm -rf "$seed35"
+
+# Shim mv to fail ONLY for the .claude/memory backup; everything else delegates.
+shimbin35="$tmp35/shim-bin"
+mkdir -p "$shimbin35"
+cat > "$shimbin35/mv" <<'SHIM'
+#!/usr/bin/env bash
+case "$1" in
+  */.claude/memory) echo "mv: simulated failure (test shim)" >&2; exit 1 ;;
+esac
+exec /bin/mv "$@"
+SHIM
+chmod +x "$shimbin35/mv"
+
+if ( cd "$tmp35/claude-personas-myapp" && \
+     HOME="$tmp35/home" PATH="$shimbin35:$PATH" bash "$INIT_CLONE" developer --force --project-url "$tmp35/project-repo.git" ) 2>/dev/null; then
+  echo "  FAIL: should have exited nonzero when backup mv failed"
+  exit 1
+else
+  echo "  PASS: exited nonzero when backup mv failed"
+fi
+assert_not_exists "$tmp35/myapp" "fresh clone rolled back after backup mv failure"
+
+cleanup_clone_test_fixture "$tmp35"
+
+# --- Codex backup mv failure must WARN-and-continue, not kill the run (#34) ---
+echo "=== test_init_clone Codex backup mv failure warns and continues ==="
+tmp36="$(mktemp -d)"
+make_clone_test_fixture "$tmp36"
+mkdir -p "$tmp36/home"
+mv "$tmp36/memory-repo" "$tmp36/claude-personas-myapp"
+mkdir -p "$tmp36/claude-personas-myapp/scripts"
+cp "$(cd "$SCRIPT_DIR/.." && pwd)/inject-role-index.sh" "$tmp36/claude-personas-myapp/scripts/"
+chmod +x "$tmp36/claude-personas-myapp/scripts/inject-role-index.sh"
+
+# Ship a committed .codex/hooks.json so the --force backup path fires on a fresh clone.
+seed36="$(mktemp -d)"
+git clone --quiet "$tmp36/project-repo.git" "$seed36"
+mkdir -p "$seed36/.codex"
+echo '{"hooks":{}}' > "$seed36/.codex/hooks.json"
+( cd "$seed36" && \
+  git -c user.email=t@x -c user.name=T add -A && \
+  git -c user.email=t@x -c user.name=T commit --quiet -m "ship .codex/hooks.json" && \
+  git push --quiet origin HEAD )
+rm -rf "$seed36"
+
+shimbin36="$tmp36/shim-bin"
+mkdir -p "$shimbin36"
+cat > "$shimbin36/mv" <<'SHIM'
+#!/usr/bin/env bash
+case "$1" in
+  */.codex/hooks.json) echo "mv: simulated failure (test shim)" >&2; exit 1 ;;
+esac
+exec /bin/mv "$@"
+SHIM
+chmod +x "$shimbin36/mv"
+
+( cd "$tmp36/claude-personas-myapp" && \
+  HOME="$tmp36/home" PATH="$shimbin36:$PATH" bash "$INIT_CLONE" developer --force --project-url "$tmp36/project-repo.git" ) \
+  >"$tmp36/stdout.log" 2>"$tmp36/stderr.log"
+status=$?
+assert_equal "2" "$status" "exits 2 (vendor warning), not 1, on Codex backup mv failure"
+if grep -q "WARN: Codex" "$tmp36/stderr.log"; then
+  echo "  PASS: Codex WARN emitted for failed backup"
+else
+  echo "  FAIL: no Codex WARN for failed backup"; exit 1
+fi
+assert_equal '{"hooks":{}}' "$(cat "$tmp36/myapp/.codex/hooks.json")" "shipped hooks.json left in place on failed backup"
+assert_symlink "$tmp36/myapp/.agents/memory" "../../claude-personas-myapp/developer" "core mount wired despite Codex backup failure"
+# The run must have continued past Codex to the OpenCode step.
+if grep -q "OpenCode one-time step" "$tmp36/stdout.log"; then
+  echo "  PASS: run continued to the OpenCode step"
+else
+  echo "  FAIL: run died before the OpenCode step"; exit 1
+fi
+
+cleanup_clone_test_fixture "$tmp36"
+
+# --- OpenCode backup mv failure must WARN-and-continue too (#34) ---
+echo "=== test_init_clone OpenCode backup mv failure warns and continues ==="
+tmp37="$(mktemp -d)"
+make_clone_test_fixture "$tmp37"
+mkdir -p "$tmp37/home"
+mv "$tmp37/memory-repo" "$tmp37/claude-personas-myapp"
+
+# Ship a committed opencode.json so the --force backup path fires on a fresh clone.
+seed37="$(mktemp -d)"
+git clone --quiet "$tmp37/project-repo.git" "$seed37"
+echo '{"instructions":["custom"]}' > "$seed37/opencode.json"
+( cd "$seed37" && \
+  git -c user.email=t@x -c user.name=T add -A && \
+  git -c user.email=t@x -c user.name=T commit --quiet -m "ship opencode.json" && \
+  git push --quiet origin HEAD )
+rm -rf "$seed37"
+
+shimbin37="$tmp37/shim-bin"
+mkdir -p "$shimbin37"
+cat > "$shimbin37/mv" <<'SHIM'
+#!/usr/bin/env bash
+case "$1" in
+  */opencode.json) echo "mv: simulated failure (test shim)" >&2; exit 1 ;;
+esac
+exec /bin/mv "$@"
+SHIM
+chmod +x "$shimbin37/mv"
+
+( cd "$tmp37/claude-personas-myapp" && \
+  HOME="$tmp37/home" PATH="$shimbin37:$PATH" bash "$INIT_CLONE" developer --opencode-per-clone --force --project-url "$tmp37/project-repo.git" ) \
+  >"$tmp37/stdout.log" 2>"$tmp37/stderr.log"
+status=$?
+assert_equal "2" "$status" "exits 2 (vendor warning), not 1, on OpenCode backup mv failure"
+if grep -q "WARN: OpenCode" "$tmp37/stderr.log"; then
+  echo "  PASS: OpenCode WARN emitted for failed backup"
+else
+  echo "  FAIL: no OpenCode WARN for failed backup"; exit 1
+fi
+assert_equal '{"instructions":["custom"]}' "$(cat "$tmp37/myapp/opencode.json")" "shipped opencode.json left in place on failed backup"
+assert_symlink "$tmp37/myapp/.agents/memory" "../../claude-personas-myapp/developer" "core mount wired despite OpenCode backup failure"
+# The run must have continued to the final Done line.
+if grep -q "Core mount is wired" "$tmp37/stdout.log"; then
+  echo "  PASS: run continued to the final summary"
+else
+  echo "  FAIL: run died before the final summary"; exit 1
+fi
+
+cleanup_clone_test_fixture "$tmp37"
+
+# --- external hop: pre-existing plain FILE at the slug path is refused (#34) ---
+echo "=== test_init_clone external CC hop refuses plain file ==="
+tmp38="$(mktemp -d)"
+make_clone_test_fixture "$tmp38"
+mv "$tmp38/memory-repo" "$tmp38/claude-personas-myapp"
+mkdir -p "$tmp38/home"
+
+predicted_slug38="$(compute_hash "$(cd "$tmp38" && pwd -P)/myapp")"
+mkdir -p "$tmp38/home/.claude/projects/$predicted_slug38"
+echo "not a symlink" > "$tmp38/home/.claude/projects/$predicted_slug38/memory"
+
+( cd "$tmp38/claude-personas-myapp" && \
+  HOME="$tmp38/home" bash "$INIT_CLONE" developer --project-url "$tmp38/project-repo.git" ) 2>"$tmp38/stderr.log"
+status=$?
+assert_equal "2" "$status" "exits 2 when external hop path is a plain file"
+if grep -q "neither symlink nor directory" "$tmp38/stderr.log"; then
+  echo "  PASS: WARN names the refused state"
+else
+  echo "  FAIL: no neither-symlink-nor-directory WARN"; exit 1
+fi
+assert_equal "not a symlink" "$(cat "$tmp38/home/.claude/projects/$predicted_slug38/memory")" "plain file untouched"
+assert_symlink "$tmp38/myapp/.agents/memory" "../../claude-personas-myapp/developer" "core mount wired despite CC refusal"
+
+cleanup_clone_test_fixture "$tmp38"
+
+# --- cloned repo shipping .agents/memory rolls back too (mirror of tmp19, #34) ---
+echo "=== test_init_clone rollback when cloned repo ships .agents/memory (fresh clone) ==="
+tmp39="$(mktemp -d)"
+make_clone_test_fixture "$tmp39"
+mkdir -p "$tmp39/home"
+mv "$tmp39/memory-repo" "$tmp39/claude-personas-myapp"
+
+seed39="$(mktemp -d)"
+git clone --quiet "$tmp39/project-repo.git" "$seed39"
+mkdir -p "$seed39/.agents"
+echo "pre-existing" > "$seed39/.agents/memory"
+( cd "$seed39" && \
+  git -c user.email=t@x -c user.name=T add -A && \
+  git -c user.email=t@x -c user.name=T commit --quiet -m "ship .agents/memory" && \
+  git push --quiet origin HEAD )
+rm -rf "$seed39"
+
+if ( cd "$tmp39/claude-personas-myapp" && \
+     HOME="$tmp39/home" bash "$INIT_CLONE" developer --project-url "$tmp39/project-repo.git" ) 2>/dev/null; then
+  echo "  FAIL: should have exited nonzero when cloned repo already has .agents/memory"
+  exit 1
+else
+  echo "  PASS: exited nonzero when cloned repo already has .agents/memory"
+fi
+assert_not_exists "$tmp39/myapp" "fresh clone rolled back when .agents/memory pre-exists in the clone"
+
+cleanup_clone_test_fixture "$tmp39"
+
+# --- asymmetric partial mount healed by --force (#34) ---
+echo "=== test_init_clone --force heals asymmetric partial mount ==="
+tmp40="$(mktemp -d)"
+make_clone_test_fixture "$tmp40"
+mkdir -p "$tmp40/home"
+mv "$tmp40/memory-repo" "$tmp40/claude-personas-myapp"
+
+( cd "$tmp40/claude-personas-myapp" && \
+  HOME="$tmp40/home" bash "$INIT_CLONE" developer --project-url "$tmp40/project-repo.git" )
+# Remove only the hop, leaving the vendor-neutral mount: asymmetric state.
+rm "$tmp40/myapp/.claude/memory"
+
+( cd "$tmp40/claude-personas-myapp" && \
+  HOME="$tmp40/home" bash "$INIT_CLONE" developer --force --project-url "$tmp40/project-repo.git" )
+
+assert_symlink "$tmp40/myapp/.agents/memory" "../../claude-personas-myapp/developer" "mount re-wired from asymmetric state"
+assert_symlink "$tmp40/myapp/.claude/memory" "../.agents/memory" "missing hop re-created"
+ab40="$(find "$tmp40/myapp/.agents" -maxdepth 1 -name "memory.backup-*" | wc -l | tr -d ' ')"
+assert_equal "1" "$ab40" "surviving mount backed up (one .agents backup)"
+cb40="$(find "$tmp40/myapp/.claude" -maxdepth 1 -name "memory.backup-*" | wc -l | tr -d ' ')"
+assert_equal "0" "$cb40" "no spurious .claude backup for the missing hop"
+
+cleanup_clone_test_fixture "$tmp40"
+
+# --- rollback: failed legacy-migration mv rolls back a fresh clone (#41 review) ---
+# Same bug class as the backup-loop mv: bare mv under set -e inside the
+# rollback-protected window. Reachable on a FRESH --force clone when the
+# project ships a root memory path.
+echo "=== test_init_clone rollback on legacy-migration mv failure (fresh clone) ==="
+tmp41="$(mktemp -d)"
+make_clone_test_fixture "$tmp41"
+mkdir -p "$tmp41/home"
+mv "$tmp41/memory-repo" "$tmp41/claude-personas-myapp"
+
+seed41="$(mktemp -d)"
+git clone --quiet "$tmp41/project-repo.git" "$seed41"
+echo "legacy payload" > "$seed41/memory"
+( cd "$seed41" && \
+  git -c user.email=t@x -c user.name=T add -A && \
+  git -c user.email=t@x -c user.name=T commit --quiet -m "ship root memory path" && \
+  git push --quiet origin HEAD )
+rm -rf "$seed41"
+
+# Shim fails ONLY for the exact legacy source path (a suffix pattern like
+# */memory would also catch the .agents/.claude mounts).
+shimbin41="$tmp41/shim-bin"
+mkdir -p "$shimbin41"
+cat > "$shimbin41/mv" <<SHIM
+#!/usr/bin/env bash
+case "\$1" in
+  "$tmp41/myapp/memory") echo "mv: simulated failure (test shim)" >&2; exit 1 ;;
+esac
+exec /bin/mv "\$@"
+SHIM
+chmod +x "$shimbin41/mv"
+
+if ( cd "$tmp41/claude-personas-myapp" && \
+     HOME="$tmp41/home" PATH="$shimbin41:$PATH" bash "$INIT_CLONE" developer --force --project-url "$tmp41/project-repo.git" ) 2>/dev/null; then
+  echo "  FAIL: should have exited nonzero when legacy-migration mv failed"
+  exit 1
+else
+  echo "  PASS: exited nonzero when legacy-migration mv failed"
+fi
+assert_not_exists "$tmp41/myapp" "fresh clone rolled back after legacy-migration mv failure"
+
+cleanup_clone_test_fixture "$tmp41"
+
+# --- rollback: failed .gitignore.tmp rename rolls back a fresh clone (#41 review) ---
+echo "=== test_init_clone rollback on gitignore rewrite mv failure (fresh clone) ==="
+tmp42="$(mktemp -d)"
+make_clone_test_fixture "$tmp42"
+mkdir -p "$tmp42/home"
+mv "$tmp42/memory-repo" "$tmp42/claude-personas-myapp"
+
+seed42="$(mktemp -d)"
+git clone --quiet "$tmp42/project-repo.git" "$seed42"
+printf "/memory/\n" > "$seed42/.gitignore"
+( cd "$seed42" && \
+  git -c user.email=t@x -c user.name=T add -A && \
+  git -c user.email=t@x -c user.name=T commit --quiet -m "ship legacy gitignore line" && \
+  git push --quiet origin HEAD )
+rm -rf "$seed42"
+
+shimbin42="$tmp42/shim-bin"
+mkdir -p "$shimbin42"
+cat > "$shimbin42/mv" <<SHIM
+#!/usr/bin/env bash
+case "\$1" in
+  "$tmp42/myapp/.gitignore.tmp") echo "mv: simulated failure (test shim)" >&2; exit 1 ;;
+esac
+exec /bin/mv "\$@"
+SHIM
+chmod +x "$shimbin42/mv"
+
+if ( cd "$tmp42/claude-personas-myapp" && \
+     HOME="$tmp42/home" PATH="$shimbin42:$PATH" bash "$INIT_CLONE" developer --force --project-url "$tmp42/project-repo.git" ) 2>/dev/null; then
+  echo "  FAIL: should have exited nonzero when gitignore rewrite mv failed"
+  exit 1
+else
+  echo "  PASS: exited nonzero when gitignore rewrite mv failed"
+fi
+assert_not_exists "$tmp42/myapp" "fresh clone rolled back after gitignore rewrite mv failure"
+
+cleanup_clone_test_fixture "$tmp42"
 
 print_summary

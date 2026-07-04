@@ -253,7 +253,12 @@ MEMORY_LINK="$TARGET/.claude/memory"
 LEGACY_LINK="$TARGET/memory"
 if [[ "$SELF" -ne 1 && "$FORCE" -eq 1 && ( -L "$LEGACY_LINK" || -e "$LEGACY_LINK" ) ]]; then
   LEGACY_BACKUP="$TARGET/.claude/memory.legacy-backup-$(date +%Y%m%d-%H%M%S)"
-  mv "$LEGACY_LINK" "$LEGACY_BACKUP"
+  # Checked mv: bare failure under set -e would skip rollback_fresh_clone.
+  if ! mv "$LEGACY_LINK" "$LEGACY_BACKUP"; then
+    echo "Error: failed to migrate legacy root memory/ → $LEGACY_BACKUP" >&2
+    rollback_fresh_clone
+    exit 1
+  fi
   echo "✓ Migrated legacy root memory/ → $LEGACY_BACKUP"
 fi
 
@@ -263,7 +268,13 @@ for link in "$AGENTS_LINK" "$MEMORY_LINK"; do
   if [[ -e "$link" || -L "$link" ]]; then
     if [[ "$FORCE" -eq 1 ]]; then
       BACKUP="$link.backup-$(date +%Y%m%d-%H%M%S)"
-      mv "$link" "$BACKUP"
+      # Checked mv: a bare failure under set -e would exit without honoring
+      # the rollback invariant for the post-clone wiring window.
+      if ! mv "$link" "$BACKUP"; then
+        echo "Error: failed to back up ${link#"$TARGET"/} → ${BACKUP#"$TARGET"/}" >&2
+        rollback_fresh_clone
+        exit 1
+      fi
       echo "✓ Backed up existing ${link#"$TARGET"/} → ${BACKUP#"$TARGET"/}"
     else
       echo "Error: $link already exists. Use --force to back up." >&2
@@ -306,7 +317,12 @@ add_exclude "/.claude/memory"
 GITIGNORE="$TARGET/.gitignore"
 if [[ "$FORCE" -eq 1 && -f "$GITIGNORE" ]] && grep -qE '^/?memory/?$' "$GITIGNORE"; then
   grep -vE '^/?memory/?$' "$GITIGNORE" > "$GITIGNORE.tmp" || true
-  mv "$GITIGNORE.tmp" "$GITIGNORE"
+  # Checked mv: bare failure under set -e would skip rollback_fresh_clone.
+  if ! mv "$GITIGNORE.tmp" "$GITIGNORE"; then
+    echo "Error: failed to rewrite $GITIGNORE (removing legacy /memory/ line)" >&2
+    rollback_fresh_clone
+    exit 1
+  fi
   echo "✓ Removed legacy /memory/ from $GITIGNORE"
 fi
 
@@ -345,7 +361,7 @@ wire_cc_external_hop() {
     if [[ -z "$(ls -A "$ext")" ]] && rmdir "$ext" 2>/dev/null && ln -s "$expected" "$ext"; then
       echo "✓ Replaced empty directory with external Claude Code hop: $ext"
     else
-      vendor_warn "Claude Code: $ext is a real directory with content - refusing to touch; reconcile by hand (auto-memory may have been written there), then re-run with --force"
+      vendor_warn "Claude Code: $ext is a real directory that could not be replaced (non-empty or unreadable) - refusing to touch; reconcile by hand (auto-memory may have been written there), then re-run with --force"
     fi
   elif [[ -e "$ext" ]]; then
     vendor_warn "Claude Code: $ext exists and is neither symlink nor directory - refusing to touch"
@@ -387,7 +403,12 @@ wire_codex_adapter() {
     return 0
   fi
   if [[ -e "$hooks" ]]; then
-    mv "$hooks" "$hooks.backup-$(date +%Y%m%d-%H%M%S)"
+    # Checked mv: vendor failures must WARN-and-continue (exit-2 contract),
+    # not die via set -e.
+    if ! mv "$hooks" "$hooks.backup-$(date +%Y%m%d-%H%M%S)"; then
+      vendor_warn "Codex: could not back up existing $hooks - leaving it in place"
+      return 0
+    fi
     echo "✓ Backed up existing .codex/hooks.json"
   fi
   if ! mkdir -p "$TARGET/.codex"; then
@@ -457,7 +478,11 @@ wire_opencode_adapter() {
     return 0
   fi
   if [[ -e "$oc" ]]; then
-    mv "$oc" "$oc.backup-$(date +%Y%m%d-%H%M%S)"
+    # Checked mv: same WARN-and-continue contract as the Codex backup.
+    if ! mv "$oc" "$oc.backup-$(date +%Y%m%d-%H%M%S)"; then
+      vendor_warn "OpenCode: could not back up existing $oc - leaving it in place"
+      return 0
+    fi
     echo "✓ Backed up existing opencode.json"
   fi
   if ! printf '{\n  "$schema": "https://opencode.ai/config.json",\n  "instructions": ["%s"]\n}\n' "$clone_abs/.agents/memory/MEMORY.md" > "$oc"; then
