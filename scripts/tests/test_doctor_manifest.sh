@@ -32,6 +32,15 @@ rm -rf "$tmp"
 echo "=== test_doctor_manifest: --init writes a starter that immediately re-parses ==="
 for topo in role-clones embedded user-tier; do
   tmp="$(mktemp -d)"
+  if [ "$topo" = "role-clones" ]; then
+    # Task 5 landed a real role-clones catalog: its first check is the
+    # claude-personas-<project> naming convention on the memory-repo dir
+    # name (do-not-guess), so a bare mktemp dir now DRIFTs before ever
+    # reaching payload sanity. Rename in place to satisfy it.
+    renamed="$(dirname "$tmp")/claude-personas-$(basename "$tmp")"
+    mv "$tmp" "$renamed"
+    tmp="$renamed"
+  fi
   run_doctor --init "$topo" --root "$tmp"
   assert_equal "0" "$DOCTOR_EXIT" "--init $topo exits 0"
   assert_exists "$tmp/.agents/manifest" "--init $topo writes .agents/manifest"
@@ -68,8 +77,9 @@ for topo in role-clones embedded user-tier; do
     # external CC auto-memory hop). Give each an isolated, empty HOME and
     # wire it once in fix mode before the generic re-check below, so this
     # loop keeps testing --init/payload sanity instead of incidentally
-    # reading the real machine's HOME. (role-clones stays an inert stub
-    # until Task 5 - no isolation needed there yet.)
+    # reading the real machine's HOME. (role-clones's Task 5 slice - role
+    # walk + mounts - has no $HOME-relative checks yet; those land with the
+    # vendor wiring in Task 6, so no isolation is needed here yet.)
     topo_home="$(mktemp -d)"
     HOME="$topo_home" bash "$DOCTOR" --root "$tmp" > /dev/null 2>&1
     DOCTOR_STDOUT="$(HOME="$topo_home" bash "$DOCTOR" --check --root "$tmp" 2>/dev/null)"
@@ -164,11 +174,13 @@ echo "=== test_doctor_manifest: # comments and blank lines are ignored ==="
 # topology=role-clones, not embedded/user-tier: this is a generic
 # manifest-parsing test with no isolated HOME. Both user-tier (Task 3) and
 # embedded (Task 4) wired real $HOME-relative / in-repo-link checks onto
-# their topologies now; role-clones stays an inert stub until Task 5, and
-# memory_layout isn't restricted to a specific topology, so it can carry
-# memory_layout=flat here without leaking into the real machine's HOME or
-# tripping embedded's own link checks.
-tmp="$(mktemp -d)"
+# their topologies; role-clones's Task 5 slice (role walk + mounts) has none
+# yet (those land with Task 6's vendor wiring), and memory_layout isn't
+# restricted to a specific topology, so it can carry memory_layout=flat here
+# without leaking into the real machine's HOME or tripping embedded's own
+# link checks. The dir still needs the claude-personas- prefix Task 5's
+# candidate walk requires (do-not-guess naming convention).
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/claude-personas-XXXXXX")"
 mkdir -p "$tmp/.agents/memory"
 echo "# index" > "$tmp/.agents/memory/MEMORY.md"
 cat > "$tmp/.agents/manifest" <<'EOF'
@@ -186,7 +198,7 @@ assert_contains "$DOCTOR_STDOUT" "OK:" "prints OK: with comments/blanks present"
 rm -rf "$tmp"
 
 echo "=== test_doctor_manifest: indented comment lines are ignored too ==="
-tmp="$(mktemp -d)"
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/claude-personas-XXXXXX")"
 mkdir -p "$tmp/.agents/memory"
 echo "# index" > "$tmp/.agents/memory/MEMORY.md"
 cat > "$tmp/.agents/manifest" <<'EOF'
@@ -247,11 +259,12 @@ rm -rf "$tmp"
 
 echo "=== test_doctor_manifest: check_payload - flat layout present is clean ==="
 # topology=role-clones (not embedded): memory_layout isn't restricted to a
-# specific topology, and role-clones stays an inert stub until Task 5 - this
-# keeps the test targeting check_payload's flat-layout branch generically,
-# without incidentally exercising embedded's own in-repo-link/adapter checks
-# (Task 4).
-tmp="$(mktemp -d)"
+# specific topology; this keeps the test targeting check_payload's
+# flat-layout branch generically, without incidentally exercising embedded's
+# own in-repo-link/adapter checks (Task 4). Task 5's own role-clones catalog
+# needs the claude-personas- prefixed dir name (do-not-guess naming
+# convention) and finds zero role dirs here, so it stays a silent no-op.
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/claude-personas-XXXXXX")"
 mkdir -p "$tmp/.agents/memory"
 echo "# index" > "$tmp/.agents/memory/MEMORY.md"
 cat > "$tmp/.agents/manifest" <<'EOF'
@@ -264,7 +277,7 @@ assert_equal "0" "$DOCTOR_EXIT" "flat layout, payload present: exit 0"
 rm -rf "$tmp"
 
 echo "=== test_doctor_manifest: check_payload - roles layout with zero role dirs is DRIFT + exit 1 ==="
-tmp="$(mktemp -d)"
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/claude-personas-XXXXXX")"
 mkdir -p "$tmp/.agents" "$tmp/shared"
 echo "# shared" > "$tmp/shared/MEMORY.md"
 cat > "$tmp/.agents/manifest" <<'EOF'
@@ -278,7 +291,7 @@ assert_contains "$DOCTOR_STDOUT" "DRIFT: roles layout declared but no role dirs 
 rm -rf "$tmp"
 
 echo "=== test_doctor_manifest: check_payload - roles layout missing shared/MEMORY.md is DRIFT + exit 1 ==="
-tmp="$(mktemp -d)"
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/claude-personas-XXXXXX")"
 mkdir -p "$tmp/.agents" "$tmp/dev"
 echo "# dev" > "$tmp/dev/MEMORY.md"
 cat > "$tmp/.agents/manifest" <<'EOF'
@@ -292,7 +305,7 @@ assert_contains "$DOCTOR_STDOUT" "DRIFT: shared/MEMORY.md missing" "stdout names
 rm -rf "$tmp"
 
 echo "=== test_doctor_manifest: check_payload - roles layout excludes 'shared' and 'examples' from role-dir count ==="
-tmp="$(mktemp -d)"
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/claude-personas-XXXXXX")"
 mkdir -p "$tmp/.agents" "$tmp/shared" "$tmp/examples"
 echo "# shared" > "$tmp/shared/MEMORY.md"
 echo "# examples" > "$tmp/examples/MEMORY.md"
@@ -307,7 +320,11 @@ assert_contains "$DOCTOR_STDOUT" "DRIFT: roles layout declared but no role dirs 
 rm -rf "$tmp"
 
 echo "=== test_doctor_manifest: check_payload - roles layout fully present is clean ==="
-tmp="$(mktemp -d)"
+# The lone "dev" role dir has no clone/self-mount claiming it (no .git
+# anywhere in this fixture), so Task 5's role-clones catalog reports it as
+# an informative "no workspace wired" (not DRIFT) - the roles-layout payload
+# check itself is still clean, which is what this test targets.
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/claude-personas-XXXXXX")"
 mkdir -p "$tmp/.agents" "$tmp/dev" "$tmp/shared"
 echo "# dev" > "$tmp/dev/MEMORY.md"
 echo "# shared" > "$tmp/shared/MEMORY.md"

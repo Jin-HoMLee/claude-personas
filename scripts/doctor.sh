@@ -18,11 +18,11 @@
 # Never uses `set -e`: one refusal must not hide others.
 #
 # OPENCODE_MODE is a produced global not consumed in this file yet: it is
-# read once the role-clones catalog lands (Task 5+; see its shellcheck
-# disable below). CHECK / MEMORY_LAYOUT / CLAUDE_HOOKS / CODEX_HOOKS are
-# consumed by this file's shared check core (need_link, check_payload,
-# check_hook_scripts). ADAPTERS and SKILLS_MOUNT are consumed by
-# topology_user_tier_checks (Task 3) and topology_embedded_checks (Task 4).
+# read once the role-clones catalog's vendor wiring half lands (Task 6; see
+# its shellcheck disable below). CHECK / MEMORY_LAYOUT / CLAUDE_HOOKS /
+# CODEX_HOOKS are consumed by this file's shared check core (need_link,
+# check_payload, check_hook_scripts). ADAPTERS and SKILLS_MOUNT are consumed
+# by topology_user_tier_checks (Task 3) and topology_embedded_checks (Task 4).
 set -u
 
 # --- constants: the manifest key vocabulary (the validation whitelist) ---
@@ -419,7 +419,7 @@ done < <(manifest_get_all codex_hook)
 SKILLS_MOUNT="$(manifest_get skills_mount)"
 [ -n "$SKILLS_MOUNT" ] || SKILLS_MOUNT="false"
 
-# shellcheck disable=SC2034 # consumed by topology_role_clones_checks (Task 5+)
+# shellcheck disable=SC2034 # consumed by topology_role_clones_checks (Task 6)
 OPENCODE_MODE="$(manifest_get opencode)"
 [ -n "$OPENCODE_MODE" ] || OPENCODE_MODE="global"
 
@@ -541,8 +541,156 @@ check_hook_scripts() {
 
 # --- topology dispatch (stubs; catalogs land in later tasks) ---
 
+_role_clones_find_workspace() {
+  # _role_clones_find_workspace <root_abs> <parent> <memrepo_name>
+  #                              <project_name-or-empty> <role>
+  #
+  # Candidate walk in list-roles.sh order: the memory repo itself (self-mount
+  # candidate), then the no-suffix clone, then the suffixed clone (the last
+  # two are only tried when project_name is non-empty - the naming-convention
+  # DRIFT already fired once for the whole instance if it's empty). A
+  # candidate claims the role when it has .git AND either its .agents/memory
+  # (or, v3.1 fallback, its .claude/memory) symlink targets end in "/<role>"
+  # or equal "<role>" outright, or - a broken-rewire fallback, matching
+  # list-roles.sh - its own path ends in "-<role>". Stops at the FIRST
+  # claimant (Task 7 makes this exhaustive for the multi-candidate flag).
+  local root_abs="$1" parent="$2" memrepo_name="$3" project_name="$4" role="$5"
+  local candidates cand link target
+
+  candidates=("$root_abs")
+  if [ -n "$project_name" ]; then
+    candidates+=("$parent/$project_name" "$parent/$project_name-$role")
+  fi
+
+  for cand in "${candidates[@]}"; do
+    [ -d "$cand/.git" ] || continue
+
+    link=""
+    if [ -L "$cand/.agents/memory" ]; then
+      link="$cand/.agents/memory"
+    elif [ -L "$cand/.claude/memory" ]; then
+      link="$cand/.claude/memory"
+    else
+      continue
+    fi
+
+    target="$(readlink "$link")"
+    case "$target" in
+      *"/$role"|"$role")
+        printf '%s\n' "$cand"
+        return 0
+        ;;
+    esac
+
+    case "$cand" in
+      *"-$role")
+        printf '%s\n' "$cand"
+        return 0
+        ;;
+    esac
+  done
+
+  return 1
+}
+
+_role_clones_check_exclude() {
+  # _role_clones_check_exclude <workspace> <line>...
+  # .git/info/exclude carries the init-clone-owned lines, append-only:
+  # missing is DRIFT in --check, appended (never a rewrite) in fix mode.
+  local workspace="$1"
+  shift
+  local exclude="$workspace/.git/info/exclude" line
+
+  for line in "$@"; do
+    if [ -f "$exclude" ] && grep -qxF -- "$line" "$exclude" 2>/dev/null; then
+      continue
+    fi
+
+    if [ "$CHECK" = 1 ]; then
+      report_drift "$exclude missing '$line'"
+    elif mkdir -p "$(dirname "$exclude")" 2>/dev/null && touch "$exclude" 2>/dev/null && printf '%s\n' "$line" >> "$exclude" 2>/dev/null; then
+      report_fixed "$exclude appended '$line'"
+    else
+      report_error "could not append '$line' to $exclude"
+    fi
+  done
+}
+
+_role_clones_check_role() {
+  # _role_clones_check_role <root_abs> <parent> <memrepo_name>
+  #                          <project_name-or-empty> <role>
+  local root_abs="$1" parent="$2" memrepo_name="$3" project_name="$4" role="$5"
+  local workspace expected_mount lines
+
+  workspace="$(_role_clones_find_workspace "$root_abs" "$parent" "$memrepo_name" "$project_name" "$role")"
+  if [ -z "$workspace" ]; then
+    echo "INFO: role $role - no workspace wired"
+    return 0
+  fi
+
+  # Self-mount (workspace IS the memory repo) resolves ../<role> against
+  # .agents/; a clone resolves ../../<memrepo>/<role> the same way - matching
+  # init-clone.sh's MOUNT_TARGET for --self vs. clone mode exactly.
+  if [ "$workspace" = "$root_abs" ]; then
+    expected_mount="../$role"
+  else
+    expected_mount="../../$memrepo_name/$role"
+  fi
+
+  need_link "$workspace/.agents/memory" "$expected_mount" "$workspace/.agents/memory"
+  need_link "$workspace/.claude/memory" "../.agents/memory" "$workspace/.claude/memory"
+
+  lines=("/.agents/memory" "/.claude/memory")
+  if [ -f "$workspace/.codex/hooks.json" ]; then
+    lines+=("/.codex/hooks.json")
+  fi
+  if [ -f "$workspace/opencode.json" ]; then
+    lines+=("/opencode.json")
+  fi
+  _role_clones_check_exclude "$workspace" "${lines[@]}"
+}
+
 topology_role_clones_checks() {
-  :
+  # Role-clone constellation, doctored FROM the memory repo. This task's
+  # slice: role discovery + the candidate walk + per-workspace mount/exclude
+  # checks. Vendor wiring (external CC hop, codex hooks.json, opencode) is
+  # Task 6; the multi-candidate flag is Task 7; the orphan sweep is Task 8.
+  local root_abs parent memrepo_name project_name
+
+  root_abs="$(cd "$ROOT" && pwd -P)"
+  parent="$(dirname "$root_abs")"
+  memrepo_name="$(basename "$root_abs")"
+
+  case "$memrepo_name" in
+    claude-personas-*)
+      project_name="${memrepo_name#claude-personas-}"
+      ;;
+    *)
+      report_drift "memory repo dir name '$memrepo_name' does not start with 'claude-personas-' - cannot derive the project name for the clone candidate walk (rename the memory repo to claude-personas-<project>, matching list-roles.sh's naming convention)"
+      project_name=""
+      ;;
+  esac
+
+  # Role discovery: same rule as check_payload / list-roles.sh / init-clone.sh
+  # - a dir with MEMORY.md at the root, excluding shared and examples.
+  local roles d n
+  roles=()
+  for d in "$root_abs"/*/; do
+    [ -d "$d" ] || continue
+    n="$(basename "$d")"
+    if [ -f "$d/MEMORY.md" ] && [ "$n" != "shared" ] && [ "$n" != "examples" ]; then
+      roles+=("$n")
+    fi
+  done
+
+  if [ "${#roles[@]}" -eq 0 ]; then
+    return 0
+  fi
+
+  local role
+  for role in "${roles[@]}"; do
+    _role_clones_check_role "$root_abs" "$parent" "$memrepo_name" "$project_name" "$role"
+  done
 }
 
 _embedded_check_claude_settings_hooks() {
