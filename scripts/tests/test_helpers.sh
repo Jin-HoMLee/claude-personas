@@ -89,6 +89,26 @@ assert_not_exists() {
   fi
 }
 
+assert_contains() {
+  local haystack="$1"
+  local needle="$2"
+  local msg="${3:-assert_contains}"
+  TESTS_RUN=$((TESTS_RUN + 1))
+  case "$haystack" in
+    *"$needle"*)
+      TESTS_PASSED=$((TESTS_PASSED + 1))
+      echo "${GREEN}  PASS${RESET}: $msg"
+      ;;
+    *)
+      TESTS_FAILED=$((TESTS_FAILED + 1))
+      FAILED_TESTS+=("$msg")
+      echo "${RED}  FAIL${RESET}: $msg"
+      echo "    expected to find: $needle"
+      echo "    in: $haystack"
+      ;;
+  esac
+}
+
 assert_exit_nonzero() {
   local msg="${1:-command should exit non-zero}"
   shift || true

@@ -17,23 +17,7 @@ run_doctor() {
   rm -f "$errfile"
 }
 
-assert_contains() {
-  local haystack="$1" needle="$2" msg="$3"
-  TESTS_RUN=$((TESTS_RUN + 1))
-  case "$haystack" in
-    *"$needle"*)
-      TESTS_PASSED=$((TESTS_PASSED + 1))
-      echo "  PASS: $msg"
-      ;;
-    *)
-      TESTS_FAILED=$((TESTS_FAILED + 1))
-      FAILED_TESTS+=("$msg")
-      echo "  FAIL: $msg"
-      echo "    expected to find: $needle"
-      echo "    in: $haystack"
-      ;;
-  esac
-}
+# assert_contains lives in test_helpers.sh (shared across scripts/tests/*.sh).
 
 echo "=== test_doctor_manifest: no manifest refuses, names all 3 topologies + --init ==="
 tmp="$(mktemp -d)"
@@ -51,6 +35,21 @@ for topo in role-clones embedded user-tier; do
   run_doctor --init "$topo" --root "$tmp"
   assert_equal "0" "$DOCTOR_EXIT" "--init $topo exits 0"
   assert_exists "$tmp/.agents/manifest" "--init $topo writes .agents/manifest"
+
+  # A freshly --init'd manifest declares a topology but seeds no payload;
+  # check_payload (Task 2) is now wired into the main flow, so give it the
+  # minimal index its declared memory_layout requires before re-checking.
+  case "$topo" in
+    role-clones)
+      mkdir -p "$tmp/dev" "$tmp/shared"
+      echo "# dev" > "$tmp/dev/MEMORY.md"
+      echo "# shared" > "$tmp/shared/MEMORY.md"
+      ;;
+    embedded|user-tier)
+      mkdir -p "$tmp/.agents/memory"
+      echo "# index" > "$tmp/.agents/memory/MEMORY.md"
+      ;;
+  esac
 
   run_doctor --check --root "$tmp"
   assert_equal "0" "$DOCTOR_EXIT" "--check on fresh $topo starter proceeds past manifest stage"
@@ -137,7 +136,8 @@ rm -rf "$tmp"
 
 echo "=== test_doctor_manifest: # comments and blank lines are ignored ==="
 tmp="$(mktemp -d)"
-mkdir -p "$tmp/.agents"
+mkdir -p "$tmp/.agents/memory"
+echo "# index" > "$tmp/.agents/memory/MEMORY.md"
 cat > "$tmp/.agents/manifest" <<'EOF'
 # this is a comment
 
@@ -154,7 +154,8 @@ rm -rf "$tmp"
 
 echo "=== test_doctor_manifest: indented comment lines are ignored too ==="
 tmp="$(mktemp -d)"
-mkdir -p "$tmp/.agents"
+mkdir -p "$tmp/.agents/memory"
+echo "# index" > "$tmp/.agents/memory/MEMORY.md"
 cat > "$tmp/.agents/manifest" <<'EOF'
 manifest_version=1
 topology=embedded
@@ -192,5 +193,259 @@ run_doctor --check --root "$tmp"
 assert_equal "2" "$DOCTOR_EXIT" "opencode outside role-clones: exit 2"
 assert_contains "$DOCTOR_STDERR" "opencode" "stderr names the offending key"
 rm -rf "$tmp"
+
+# --- Task 2: shared check core (need_link, check_payload, check_hook_scripts, require_jq) ---
+
+echo "=== test_doctor_manifest: check_payload - flat layout missing MEMORY.md is DRIFT + exit 1 ==="
+tmp="$(mktemp -d)"
+mkdir -p "$tmp/.agents"
+cat > "$tmp/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=user-tier
+memory_layout=flat
+EOF
+run_doctor --check --root "$tmp"
+assert_equal "1" "$DOCTOR_EXIT" "flat layout, missing payload: exit 1"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: .agents/memory/MEMORY.md missing" "stdout names the missing payload"
+rm -rf "$tmp"
+
+echo "=== test_doctor_manifest: check_payload - flat layout present is clean ==="
+tmp="$(mktemp -d)"
+mkdir -p "$tmp/.agents/memory"
+echo "# index" > "$tmp/.agents/memory/MEMORY.md"
+cat > "$tmp/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=user-tier
+memory_layout=flat
+EOF
+run_doctor --check --root "$tmp"
+assert_equal "0" "$DOCTOR_EXIT" "flat layout, payload present: exit 0"
+rm -rf "$tmp"
+
+echo "=== test_doctor_manifest: check_payload - roles layout with zero role dirs is DRIFT + exit 1 ==="
+tmp="$(mktemp -d)"
+mkdir -p "$tmp/.agents" "$tmp/shared"
+echo "# shared" > "$tmp/shared/MEMORY.md"
+cat > "$tmp/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=role-clones
+memory_layout=roles
+EOF
+run_doctor --check --root "$tmp"
+assert_equal "1" "$DOCTOR_EXIT" "roles layout, zero role dirs: exit 1"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: roles layout declared but no role dirs found" "stdout names the missing role dirs"
+rm -rf "$tmp"
+
+echo "=== test_doctor_manifest: check_payload - roles layout missing shared/MEMORY.md is DRIFT + exit 1 ==="
+tmp="$(mktemp -d)"
+mkdir -p "$tmp/.agents" "$tmp/dev"
+echo "# dev" > "$tmp/dev/MEMORY.md"
+cat > "$tmp/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=role-clones
+memory_layout=roles
+EOF
+run_doctor --check --root "$tmp"
+assert_equal "1" "$DOCTOR_EXIT" "roles layout, missing shared/MEMORY.md: exit 1"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: shared/MEMORY.md missing" "stdout names the missing shared index"
+rm -rf "$tmp"
+
+echo "=== test_doctor_manifest: check_payload - roles layout excludes 'shared' and 'examples' from role-dir count ==="
+tmp="$(mktemp -d)"
+mkdir -p "$tmp/.agents" "$tmp/shared" "$tmp/examples"
+echo "# shared" > "$tmp/shared/MEMORY.md"
+echo "# examples" > "$tmp/examples/MEMORY.md"
+cat > "$tmp/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=role-clones
+memory_layout=roles
+EOF
+run_doctor --check --root "$tmp"
+assert_equal "1" "$DOCTOR_EXIT" "roles layout, only shared+examples present: still zero role dirs"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: roles layout declared but no role dirs found" "stdout names the missing role dirs (shared/examples excluded)"
+rm -rf "$tmp"
+
+echo "=== test_doctor_manifest: check_payload - roles layout fully present is clean ==="
+tmp="$(mktemp -d)"
+mkdir -p "$tmp/.agents" "$tmp/dev" "$tmp/shared"
+echo "# dev" > "$tmp/dev/MEMORY.md"
+echo "# shared" > "$tmp/shared/MEMORY.md"
+cat > "$tmp/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=role-clones
+memory_layout=roles
+EOF
+run_doctor --check --root "$tmp"
+assert_equal "0" "$DOCTOR_EXIT" "roles layout, fully present: exit 0"
+rm -rf "$tmp"
+
+echo "=== test_doctor_manifest: check_hook_scripts - missing claude_hook is DRIFT + exit 1 ==="
+tmp="$(mktemp -d)"
+mkdir -p "$tmp/.agents/memory"
+echo "# index" > "$tmp/.agents/memory/MEMORY.md"
+cat > "$tmp/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=embedded
+memory_layout=flat
+claude_hook=scripts/some-hook.sh
+EOF
+run_doctor --check --root "$tmp"
+assert_equal "1" "$DOCTOR_EXIT" "missing claude_hook script: exit 1"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: claude_hook 'scripts/some-hook.sh' missing or not executable" "stdout names the missing hook"
+rm -rf "$tmp"
+
+echo "=== test_doctor_manifest: check_hook_scripts - non-executable codex_hook is DRIFT + exit 1 ==="
+tmp="$(mktemp -d)"
+mkdir -p "$tmp/.agents/memory" "$tmp/scripts"
+echo "# index" > "$tmp/.agents/memory/MEMORY.md"
+echo '#!/usr/bin/env bash' > "$tmp/scripts/some-hook.sh"
+chmod -x "$tmp/scripts/some-hook.sh"
+cat > "$tmp/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=embedded
+memory_layout=flat
+codex_hook=scripts/some-hook.sh
+EOF
+run_doctor --check --root "$tmp"
+assert_equal "1" "$DOCTOR_EXIT" "non-executable codex_hook script: exit 1"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: codex_hook 'scripts/some-hook.sh' missing or not executable" "stdout names the non-executable hook"
+rm -rf "$tmp"
+
+echo "=== test_doctor_manifest: check_hook_scripts - existing + executable hooks are clean ==="
+tmp="$(mktemp -d)"
+mkdir -p "$tmp/.agents/memory" "$tmp/scripts"
+echo "# index" > "$tmp/.agents/memory/MEMORY.md"
+echo '#!/usr/bin/env bash' > "$tmp/scripts/claude-hook.sh"
+echo '#!/usr/bin/env bash' > "$tmp/scripts/codex-hook.sh"
+chmod +x "$tmp/scripts/claude-hook.sh" "$tmp/scripts/codex-hook.sh"
+cat > "$tmp/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=embedded
+memory_layout=flat
+claude_hook=scripts/claude-hook.sh
+codex_hook=scripts/codex-hook.sh
+EOF
+run_doctor --check --root "$tmp"
+assert_equal "0" "$DOCTOR_EXIT" "existing + executable hooks: exit 0"
+rm -rf "$tmp"
+
+echo "=== test_doctor_manifest: multiple DRIFTs don't hide each other (payload + hook both reported) ==="
+tmp="$(mktemp -d)"
+mkdir -p "$tmp/.agents"
+cat > "$tmp/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=embedded
+memory_layout=flat
+claude_hook=scripts/missing-hook.sh
+EOF
+run_doctor --check --root "$tmp"
+assert_equal "1" "$DOCTOR_EXIT" "payload + hook both missing: exit 1"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: .agents/memory/MEMORY.md missing" "stdout still names the missing payload"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: claude_hook 'scripts/missing-hook.sh' missing or not executable" "stdout still names the missing hook"
+rm -rf "$tmp"
+
+echo "=== test_doctor_manifest: need_link + require_jq (direct function-extraction tests) ==="
+# Neither function has a CLI-reachable consumer yet: need_link's topology
+# callers land in Task 3+, require_jq's jq-dependent callers in Tasks 4-6.
+# Rather than reimplement their logic here (which would drift from the real
+# functions), extract the literal source text out of doctor.sh and eval it,
+# so these tests exercise the actual shipped code, not a copy of it.
+extract_function() {
+  # extract_function <func_name> <file> - print a top-level bash function
+  # definition of the form 'name() {' ... '}' (closing brace alone on its
+  # own line), matched by exact function name.
+  local name="$1" file="$2"
+  awk -v name="$name" '
+    $0 == name"() {" { capture=1 }
+    capture { print }
+    capture && /^}$/ { exit }
+  ' "$file"
+}
+
+need_link_src="$(extract_function need_link "$DOCTOR")"
+assert_contains "$need_link_src" "need_link" "extract_function finds need_link in doctor.sh"
+
+report_drift_src="$(extract_function report_drift "$DOCTOR")"
+report_fixed_src="$(extract_function report_fixed "$DOCTOR")"
+report_error_src="$(extract_function report_error "$DOCTOR")"
+eval "$report_drift_src"
+eval "$report_fixed_src"
+eval "$report_error_src"
+eval "$need_link_src"
+
+nl_tmp="$(mktemp -d)"
+nl_outfile="$(mktemp)"
+# need_link is called via redirection into a file rather than "$(...)"
+# capture, for the same reason as require_jq above: command substitution
+# forks a subshell, so DRIFT_COUNT mutations inside it never reach this
+# script's copy of the variable.
+
+# Correct symlink: silent, no drift.
+ln -s "correct-target" "$nl_tmp/good_link"
+DRIFT_COUNT=0
+CHECK=1 need_link "$nl_tmp/good_link" "correct-target" "good_link" > "$nl_outfile"
+assert_equal "" "$(cat "$nl_outfile")" "need_link: silent when the symlink already points at the target"
+assert_equal "0" "$DRIFT_COUNT" "need_link: no drift for a correct symlink"
+
+# Real (non-symlink) file at the path: DRIFT in both modes, never touched.
+echo "real file" > "$nl_tmp/real_file"
+DRIFT_COUNT=0
+CHECK=1 need_link "$nl_tmp/real_file" "some-target" "real_file" > "$nl_outfile"
+assert_contains "$(cat "$nl_outfile")" "DRIFT: real_file exists and is not a symlink (refusing to touch)" \
+  "need_link: --check refuses a real file at the link path"
+assert_equal "1" "$DRIFT_COUNT" "need_link: real file counts as drift in --check"
+DRIFT_COUNT=0
+CHECK=0 need_link "$nl_tmp/real_file" "some-target" "real_file" > "$nl_outfile"
+assert_contains "$(cat "$nl_outfile")" "DRIFT: real_file exists and is not a symlink (refusing to touch)" \
+  "need_link: fix mode also refuses a real file at the link path"
+assert_equal "real file" "$(cat "$nl_tmp/real_file")" "need_link: fix mode left the real file's contents untouched"
+
+# Missing symlink, --check mode: reports drift, creates nothing.
+DRIFT_COUNT=0
+CHECK=1 need_link "$nl_tmp/missing_link" "some-target" "missing_link" > "$nl_outfile"
+assert_contains "$(cat "$nl_outfile")" "DRIFT: missing_link -> MISSING, expected some-target" \
+  "need_link: --check names MISSING + expected target for an absent link"
+assert_equal "1" "$DRIFT_COUNT" "need_link: missing link counts as drift in --check"
+assert_not_exists "$nl_tmp/missing_link" "need_link: --check mode created nothing"
+
+# Missing symlink, fix mode: mkdir -p's the parent, creates the symlink.
+DRIFT_COUNT=0
+CHECK=0 need_link "$nl_tmp/nested/deep/new_link" "some-target" "nested/deep/new_link" > "$nl_outfile"
+assert_contains "$(cat "$nl_outfile")" "FIXED: nested/deep/new_link -> some-target" \
+  "need_link: fix mode reports FIXED for a newly created link"
+assert_symlink "$nl_tmp/nested/deep/new_link" "some-target" "need_link: fix mode created the symlink with the right target"
+
+rm -f "$nl_outfile"
+rm -rf "$nl_tmp"
+
+# report_drift is already defined (extracted + eval'd above); only require_jq
+# is new here.
+require_jq_src="$(extract_function require_jq "$DOCTOR")"
+assert_contains "$require_jq_src" "require_jq" "extract_function finds require_jq in doctor.sh"
+eval "$require_jq_src"
+
+# Redirect to a file rather than capture via "$(...)" - command substitution
+# forks a subshell, which would run require_jq's DRIFT_COUNT mutation in a
+# copy that never propagates back, making that assertion always pass/fail
+# vacuously. A plain redirection runs the function inline.
+jq_outfile="$(mktemp)"
+
+DRIFT_COUNT=0
+PATH="/nonexistent" require_jq "test purpose" > "$jq_outfile"
+jq_masked_rc=$?
+jq_masked_out="$(cat "$jq_outfile")"
+assert_contains "$jq_masked_out" "DRIFT: jq not installed (needed for test purpose) - skipping those checks" \
+  "require_jq: DRIFT line naming the purpose when jq is absent from PATH"
+assert_equal "1" "$jq_masked_rc" "require_jq: returns 1 (skip loudly) when jq is absent"
+assert_equal "1" "$DRIFT_COUNT" "require_jq: increments DRIFT_COUNT when jq is absent"
+
+DRIFT_COUNT=0
+require_jq "test purpose" > "$jq_outfile"
+jq_present_rc=$?
+jq_present_out="$(cat "$jq_outfile")"
+assert_equal "" "$jq_present_out" "require_jq: silent when jq is present on PATH"
+assert_equal "0" "$jq_present_rc" "require_jq: returns 0 when jq is present"
+assert_equal "0" "$DRIFT_COUNT" "require_jq: does not increment DRIFT_COUNT when jq is present"
+rm -f "$jq_outfile"
 
 print_summary

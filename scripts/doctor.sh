@@ -17,11 +17,12 @@
 #
 # Never uses `set -e`: one refusal must not hide others.
 #
-# shellcheck disable=SC2034
-# CHECK / MEMORY_LAYOUT / ADAPTERS / CLAUDE_HOOKS / CODEX_HOOKS /
-# SKILLS_MOUNT / OPENCODE_MODE are produced globals: this skeleton populates
-# them from the manifest but does not consume them itself. They are read by
-# topology_*_checks once the per-topology catalogs land in Tasks 2-8.
+# ADAPTERS / SKILLS_MOUNT / OPENCODE_MODE are produced globals not consumed
+# in this file yet: they are read by topology_*_checks once the per-topology
+# catalogs land in Tasks 3-8 (see the per-assignment shellcheck disables at
+# each of those globals below). CHECK / MEMORY_LAYOUT / CLAUDE_HOOKS /
+# CODEX_HOOKS are consumed by this file's shared check core (need_link,
+# check_payload, check_hook_scripts).
 set -u
 
 # --- constants: the manifest key vocabulary (the validation whitelist) ---
@@ -400,6 +401,7 @@ validate_manifest_semantics
 TOPOLOGY="$(manifest_get topology)"
 MEMORY_LAYOUT="$(manifest_get memory_layout)"
 
+# shellcheck disable=SC2034 # consumed by topology_*_checks (Tasks 3-8)
 ADAPTERS=()
 while IFS= read -r _v; do
   [ -n "$_v" ] && ADAPTERS+=("$_v")
@@ -415,11 +417,125 @@ while IFS= read -r _v; do
   [ -n "$_v" ] && CODEX_HOOKS+=("$_v")
 done < <(manifest_get_all codex_hook)
 
+# shellcheck disable=SC2034 # consumed by topology_*_checks (Tasks 3-8)
 SKILLS_MOUNT="$(manifest_get skills_mount)"
 [ -n "$SKILLS_MOUNT" ] || SKILLS_MOUNT="false"
 
+# shellcheck disable=SC2034 # consumed by topology_*_checks (Tasks 3-8)
 OPENCODE_MODE="$(manifest_get opencode)"
 [ -n "$OPENCODE_MODE" ] || OPENCODE_MODE="global"
+
+# --- shared check core (Task 2): counters, reporters, link/payload/hook checks ---
+
+# Single counter driving the final exit code. FIXED lines never touch it: a
+# repaired instance still exits 0 and prints the final OK line.
+DRIFT_COUNT=0
+
+report_drift() {
+  echo "DRIFT: $1"
+  DRIFT_COUNT=$((DRIFT_COUNT + 1))
+}
+
+# shellcheck disable=SC2329 # called by need_link, which topology_*_checks wire in from Task 3
+report_fixed() {
+  echo "FIXED: $1"
+}
+
+# shellcheck disable=SC2329 # called by need_link, which topology_*_checks wire in from Task 3
+report_error() {
+  echo "ERROR: $1"
+  DRIFT_COUNT=$((DRIFT_COUNT + 1))
+}
+
+# shellcheck disable=SC2329 # this task's shared machinery; topology_*_checks call it from Task 3
+need_link() {
+  # need_link <path> <target> <label>
+  #
+  # Correct symlink (right target): silent, does nothing.
+  # Real (non-symlink) file or dir at <path>: DRIFT, never touched in either
+  # mode - that path is owned by something else.
+  # Wrong or missing symlink: --check reports drift; default (fix) mode
+  # mkdir -p's the parent then ln -sfn's the target.
+  local p="$1" tgt="$2" label="$3"
+
+  if [ -L "$p" ] && [ "$(readlink "$p")" = "$tgt" ]; then
+    return 0
+  fi
+
+  if [ -e "$p" ] && [ ! -L "$p" ]; then
+    report_drift "$label exists and is not a symlink (refusing to touch)"
+    return 0
+  fi
+
+  if [ "$CHECK" = 1 ]; then
+    report_drift "$label -> $(readlink "$p" 2>/dev/null || echo MISSING), expected $tgt"
+  elif mkdir -p "$(dirname "$p")" && ln -sfn "$tgt" "$p" 2>/dev/null; then
+    report_fixed "$label -> $tgt"
+  else
+    report_error "could not create $label -> $tgt"
+  fi
+}
+
+# shellcheck disable=SC2329 # this task's shared machinery; first CLI consumer lands in Task 4
+require_jq() {
+  # require_jq <what-for>
+  # jq present: silent, returns 0. jq absent: one DRIFT line naming what the
+  # skipped checks were for, returns 1 - callers skip their jq-dependent
+  # checks loudly instead of silently swallowing them.
+  if command -v jq >/dev/null 2>&1; then
+    return 0
+  fi
+  report_drift "jq not installed (needed for $1) - skipping those checks"
+  return 1
+}
+
+check_payload() {
+  # Payload sanity, keyed off the declared memory_layout. flat: a single
+  # always-loaded index. roles: every role dir (same discovery rule as
+  # list-roles.sh / init-clone.sh - a dir with MEMORY.md, excluding shared
+  # and examples) plus shared/MEMORY.md.
+  case "$MEMORY_LAYOUT" in
+    flat)
+      [ -f "$ROOT/.agents/memory/MEMORY.md" ] \
+        || report_drift ".agents/memory/MEMORY.md missing"
+      ;;
+    roles)
+      local d n role_count=0
+      for d in "$ROOT"/*/; do
+        [ -d "$d" ] || continue
+        n="$(basename "$d")"
+        if [ -f "$d/MEMORY.md" ] && [ "$n" != "shared" ] && [ "$n" != "examples" ]; then
+          role_count=$((role_count + 1))
+        fi
+      done
+      if [ "$role_count" -eq 0 ]; then
+        report_drift "roles layout declared but no role dirs found"
+      fi
+      [ -f "$ROOT/shared/MEMORY.md" ] \
+        || report_drift "shared/MEMORY.md missing"
+      ;;
+  esac
+}
+
+check_hook_scripts() {
+  # Every declared claude_hook / codex_hook must exist and be executable at
+  # its repo-relative path under $ROOT.
+  local hook
+
+  if [ "${#CLAUDE_HOOKS[@]}" -gt 0 ]; then
+    for hook in "${CLAUDE_HOOKS[@]}"; do
+      [ -x "$ROOT/$hook" ] \
+        || report_drift "claude_hook '$hook' missing or not executable at $ROOT/$hook"
+    done
+  fi
+
+  if [ "${#CODEX_HOOKS[@]}" -gt 0 ]; then
+    for hook in "${CODEX_HOOKS[@]}"; do
+      [ -x "$ROOT/$hook" ] \
+        || report_drift "codex_hook '$hook' missing or not executable at $ROOT/$hook"
+    done
+  fi
+}
 
 # --- topology dispatch (stubs; catalogs land in later tasks) ---
 
@@ -435,11 +551,19 @@ topology_user_tier_checks() {
   :
 }
 
+# Shared floor for every topology, run before the topology-specific catalog.
+check_payload
+check_hook_scripts
+
 case "$TOPOLOGY" in
   role-clones) topology_role_clones_checks ;;
   embedded) topology_embedded_checks ;;
   user-tier) topology_user_tier_checks ;;
 esac
+
+if [ "$DRIFT_COUNT" -gt 0 ]; then
+  exit 1
+fi
 
 echo "OK: $TOPOLOGY instance at $ROOT - all declared wiring verified"
 exit 0
