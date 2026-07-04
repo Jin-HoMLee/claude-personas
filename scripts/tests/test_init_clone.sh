@@ -590,11 +590,11 @@ predicted_slug="$(compute_hash "$(cd "$tmp21" && pwd -P)/myapp")"
 mkdir -p "$tmp21/home/.claude/projects/$predicted_slug/memory"
 echo "user data" > "$tmp21/home/.claude/projects/$predicted_slug/memory/user_note.md"
 
-set +e
+# This file deliberately runs without errexit (set -uo pipefail only), so the
+# failing subshell doesn't abort the run and $? can be captured directly.
 ( cd "$tmp21/claude-personas-myapp" && \
   HOME="$tmp21/home" bash "$INIT_CLONE" developer --project-url "$tmp21/project-repo.git" ) 2>"$tmp21/stderr.log"
 status=$?
-set -e 2>/dev/null || true
 assert_equal "2" "$status" "exits 2 when a vendor warning fired"
 if grep -q "WARN:" "$tmp21/stderr.log"; then
   echo "  PASS: WARN emitted for real dir with content"
