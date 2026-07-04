@@ -1,22 +1,25 @@
 #!/usr/bin/env bash
 # Test doctor.sh's role-clones topology catalog: role discovery + candidate
 # walk (memory-repo self-mount, no-suffix clone, suffixed clone - same order
-# as list-roles.sh) and, per claimed workspace, the two-hop mount
-# (.agents/memory, .claude/memory) and the .git/info/exclude entries
-# init-clone.sh owns. This task's slice stops at the FIRST claimant per role
-# (Task 7 makes the walk exhaustive) and does not yet check vendor wiring
-# (external CC hop / codex hooks.json / opencode - Task 6).
+# as list-roles.sh); per claimed workspace, the two-hop mount (.agents/memory,
+# .claude/memory), the .git/info/exclude entries init-clone.sh owns, and the
+# three vendor checks (external CC hop, .codex/hooks.json, OpenCode per the
+# declared mode). This task's slice stops at the FIRST claimant per role
+# (Task 7 makes the walk exhaustive); the orphan sweep is Task 8.
 #
 # The fixture is wired by RUNNING the real init-clone.sh (never hand-rolled),
 # on top of make_clone_test_fixture, mirroring test_init_clone.sh's and
-# test_list_roles.sh's invocation pattern. init-clone.sh runs may exit 2
-# (vendor WARN, e.g. no scripts/inject-role-index.sh in this fixture) - that
-# is tolerated, the core mount is still wired.
+# test_list_roles.sh's invocation pattern. The fixture ships a real
+# scripts/inject-role-index.sh (copied from this repo) so init-clone.sh's
+# Codex adapter actually wires .codex/hooks.json instead of WARN-and-skip;
+# with that in place init-clone.sh exits 0, but the runs below still tolerate
+# exit 2 defensively.
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 DOCTOR="$(cd "$SCRIPT_DIR/.." && pwd)/doctor.sh"
 INIT_CLONE="$(cd "$SCRIPT_DIR/.." && pwd)/init-clone.sh"
+INJECT_SCRIPT="$(cd "$SCRIPT_DIR/.." && pwd)/inject-role-index.sh"
 
 # Runs doctor.sh with $1=HOME and the remaining args passed through; sets
 # DOCTOR_STDOUT, DOCTOR_STDERR, DOCTOR_EXIT. Never lets doctor.sh's own
@@ -46,10 +49,14 @@ repo_abs() {
 # (suffixed), memory_manager via --self, plus the untouched scientist/designer
 # role dirs make_clone_test_fixture already seeds (left unwired on purpose -
 # covers the INFO "no workspace wired" case for free). Writes the manifest
-# into the memory repo. Leaves globals MEMREPO / DEVCLONE / PMCLONE / HOME_DIR
-# (raw fixture paths, for filesystem operations) and MEMREPO_ABS / DEVCLONE_ABS
-# / PMCLONE_ABS (pwd -P resolved, for matching doctor.sh's own output) set for
-# the caller.
+# into the memory repo. Also seeds the machine-wide (fixture-HOME)
+# ~/.config/opencode/opencode.json WITH the relative memory-index entry, so
+# the default opencode=global manifest is genuinely clean out of the box -
+# init-clone.sh's own OpenCode wiring is a one-time manual step it can only
+# print a reminder for, never script (see wire_opencode_adapter). Leaves
+# globals MEMREPO / DEVCLONE / PMCLONE / HOME_DIR (raw fixture paths, for
+# filesystem operations) and MEMREPO_ABS / DEVCLONE_ABS / PMCLONE_ABS (pwd -P
+# resolved, for matching doctor.sh's own output) set for the caller.
 setup_wired_fixture() {
   local base="$1"
   make_clone_test_fixture "$base"
@@ -65,9 +72,17 @@ setup_wired_fixture() {
   mkdir -p "$MEMREPO/memory_manager"
   printf "# Memory Index - memory_manager\n" > "$MEMREPO/memory_manager/MEMORY.md"
   ( cd "$MEMREPO/memory_manager" && ln -s ../shared shared )
+
+  # Ship a real scripts/inject-role-index.sh so init-clone.sh's Codex adapter
+  # actually generates .codex/hooks.json for every workspace below, instead
+  # of the WARN-and-skip path this fixture used to hit.
+  mkdir -p "$MEMREPO/scripts"
+  cp "$INJECT_SCRIPT" "$MEMREPO/scripts/inject-role-index.sh"
+  chmod +x "$MEMREPO/scripts/inject-role-index.sh"
+
   ( cd "$MEMREPO" && \
     git -c user.email=t@x -c user.name=T add -A && \
-    git -c user.email=t@x -c user.name=T commit --quiet -m "add memory_manager role" )
+    git -c user.email=t@x -c user.name=T commit --quiet -m "add memory_manager role + inject-role-index.sh" )
 
   ( cd "$MEMREPO" && HOME="$HOME_DIR" bash "$INIT_CLONE" developer --project-url "$base/project-repo.git" ) \
     >/dev/null 2>&1 || [ $? -eq 2 ]
@@ -88,6 +103,14 @@ adapter=claude-code
 adapter=codex
 adapter=opencode
 opencode=global
+EOF
+
+  mkdir -p "$HOME_DIR/.config/opencode"
+  cat > "$HOME_DIR/.config/opencode/opencode.json" <<'EOF'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [".agents/memory/MEMORY.md"]
+}
 EOF
 }
 
@@ -186,6 +209,138 @@ EOF
 run_doctor "$tmp/home" --check --root "$tmp/memory-repo"
 assert_equal "1" "$DOCTOR_EXIT" "non-prefixed memory repo name: --check exit 1"
 assert_contains "$DOCTOR_STDOUT" "DRIFT: memory repo dir name 'memory-repo' does not start with 'claude-personas-'" "naming-convention violation named in DRIFT"
+rm -rf "$tmp"
+
+echo "=== test_doctor_role_clones: drift (d) dangling external CC hop for the developer clone - DRIFT, fix repairs, re-check clean ==="
+tmp="$(mktemp -d)"
+setup_wired_fixture "$tmp"
+ext_dev="$HOME_DIR/.claude/projects/$(compute_hash "$DEVCLONE_ABS")/memory"
+ln -sfn /nonexistent "$ext_dev"
+
+run_doctor "$HOME_DIR" --check --root "$MEMREPO"
+assert_equal "1" "$DOCTOR_EXIT" "dangling developer external hop: --check exit 1"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: external CC hop for role developer -> /nonexistent, expected $DEVCLONE_ABS/.claude/memory" "dangling developer external hop named in DRIFT"
+
+run_doctor "$HOME_DIR" --root "$MEMREPO"
+assert_equal "0" "$DOCTOR_EXIT" "fix mode repairs the dangling developer external hop: exit 0"
+assert_contains "$DOCTOR_STDOUT" "FIXED: external CC hop for role developer -> $DEVCLONE_ABS/.claude/memory" "fix mode reports FIXED for developer external hop"
+assert_symlink "$ext_dev" "$DEVCLONE_ABS/.claude/memory" "developer external hop repointed correctly"
+
+run_doctor "$HOME_DIR" --check --root "$MEMREPO"
+assert_equal "0" "$DOCTOR_EXIT" "re-check after repair: exit 0"
+rm -rf "$tmp"
+
+echo "=== test_doctor_role_clones: drift (e) pm .codex/hooks.json carries another machine's memory-repo prefix - DRIFT despite plausible shape, fix regenerates, re-check clean ==="
+tmp="$(mktemp -d)"
+setup_wired_fixture "$tmp"
+cat > "$PMCLONE/.codex/hooks.json" <<'EOF'
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Users/other/dev/claude-personas-myapp/scripts/inject-role-index.sh' '/Users/other/dev/claude-personas-myapp/pm'",
+            "timeout": 10,
+            "statusMessage": "Injecting role memory index…"
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+
+# NOTE: the codex-check's memory-repo path is deliberately the LOGICAL $(pwd)
+# of --root (matching init-clone.sh's own $MEMORY_REPO="$(pwd)" convention -
+# see doctor.sh's _role_clones_check_codex_hooks_json comment), not the
+# canonical MEMREPO_ABS used everywhere else in this file. Since this test
+# invokes doctor.sh with --root "$MEMREPO" (the raw fixture path), doctor's
+# own logical resolution reproduces that same raw string - assert against
+# $MEMREPO, not $MEMREPO_ABS, for this one piece of the message.
+run_doctor "$HOME_DIR" --check --root "$MEMREPO"
+assert_equal "1" "$DOCTOR_EXIT" "pm hooks.json with foreign prefix: --check exit 1"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: $PMCLONE_ABS/.codex/hooks.json does not exactly wire role pm's inject-role-index.sh for this memory repo ($MEMREPO)" "foreign-prefix hooks.json named in DRIFT"
+
+run_doctor "$HOME_DIR" --root "$MEMREPO"
+assert_equal "0" "$DOCTOR_EXIT" "fix mode regenerates pm hooks.json: exit 0"
+assert_contains "$DOCTOR_STDOUT" "FIXED: $PMCLONE_ABS/.codex/hooks.json regenerated for role pm" "fix mode reports FIXED for pm hooks.json regeneration"
+assert_equal "0" "$(jq empty "$PMCLONE/.codex/hooks.json" >/dev/null 2>&1; echo $?)" "regenerated pm hooks.json is valid JSON"
+regen_cmd="$(jq -r '.hooks.SessionStart[0].hooks[0].command' "$PMCLONE/.codex/hooks.json")"
+assert_equal "'$MEMREPO/scripts/inject-role-index.sh' '$MEMREPO/pm'" "$regen_cmd" "regenerated pm hooks.json command is exact"
+if grep -qxF '/.codex/hooks.json' "$PMCLONE/.git/info/exclude"; then
+  echo "  PASS: /.codex/hooks.json exclude line present after regeneration"
+else
+  echo "  FAIL: /.codex/hooks.json exclude line missing after regeneration"; exit 1
+fi
+
+run_doctor "$HOME_DIR" --check --root "$MEMREPO"
+assert_equal "0" "$DOCTOR_EXIT" "re-check after repair: exit 0"
+rm -rf "$tmp"
+
+echo "=== test_doctor_role_clones: drift (f) opencode=global with the fixture-home global file lacking the entry - report-only DRIFT in both modes, file untouched ==="
+tmp="$(mktemp -d)"
+setup_wired_fixture "$tmp"
+global_oc="$HOME_DIR/.config/opencode/opencode.json"
+cat > "$global_oc" <<'EOF'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": []
+}
+EOF
+before_global="$(cksum "$global_oc")"
+
+run_doctor "$HOME_DIR" --check --root "$MEMREPO"
+assert_equal "1" "$DOCTOR_EXIT" "global opencode.json lacking entry: --check exit 1"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: $global_oc missing or its instructions lack \".agents/memory/MEMORY.md\"" "global opencode DRIFT names the exact line to add (check mode)"
+
+run_doctor "$HOME_DIR" --root "$MEMREPO"
+assert_equal "1" "$DOCTOR_EXIT" "global opencode.json lacking entry: fix mode also exits 1 (report-only)"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: $global_oc missing or its instructions lack \".agents/memory/MEMORY.md\"" "global opencode DRIFT persists in fix mode (report-only)"
+after_global="$(cksum "$global_oc")"
+assert_equal "$before_global" "$after_global" "fix mode never touches the global opencode.json"
+rm -rf "$tmp"
+
+echo "=== test_doctor_role_clones: opencode=global with the entry already present - clean (no DRIFT) ==="
+tmp="$(mktemp -d)"
+setup_wired_fixture "$tmp"
+# setup_wired_fixture already seeds the global opencode.json WITH the entry.
+run_doctor "$HOME_DIR" --check --root "$MEMREPO"
+assert_equal "0" "$DOCTOR_EXIT" "global opencode.json with the entry present: --check exit 0"
+rm -rf "$tmp"
+
+echo "=== test_doctor_role_clones: opencode=per-clone - wrong absolute path in developer's opencode.json is DRIFT, fix regenerates, re-check clean ==="
+tmp="$(mktemp -d)"
+setup_wired_fixture "$tmp"
+cat > "$MEMREPO/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=role-clones
+memory_layout=roles
+adapter=claude-code
+adapter=codex
+adapter=opencode
+opencode=per-clone
+EOF
+cat > "$DEVCLONE/opencode.json" <<'EOF'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": ["/Users/other/dev/myapp/.agents/memory/MEMORY.md"]
+}
+EOF
+
+run_doctor "$HOME_DIR" --check --root "$MEMREPO"
+assert_equal "1" "$DOCTOR_EXIT" "developer per-clone opencode.json with wrong path: --check exit 1"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: $DEVCLONE_ABS/opencode.json instructions[0] is not \"$DEVCLONE_ABS/.agents/memory/MEMORY.md\" for role developer" "wrong per-clone opencode.json named in DRIFT"
+
+run_doctor "$HOME_DIR" --root "$MEMREPO"
+assert_equal "0" "$DOCTOR_EXIT" "fix mode regenerates developer's opencode.json: exit 0"
+assert_contains "$DOCTOR_STDOUT" "FIXED: $DEVCLONE_ABS/opencode.json regenerated for role developer" "fix mode reports FIXED for developer opencode.json regeneration"
+regen_instr="$(jq -r '.instructions[0]' "$DEVCLONE/opencode.json")"
+assert_equal "$DEVCLONE_ABS/.agents/memory/MEMORY.md" "$regen_instr" "regenerated developer opencode.json has the exact absolute path"
+
+run_doctor "$HOME_DIR" --check --root "$MEMREPO"
+assert_equal "0" "$DOCTOR_EXIT" "re-check after repair: exit 0"
 rm -rf "$tmp"
 
 print_summary

@@ -17,12 +17,13 @@
 #
 # Never uses `set -e`: one refusal must not hide others.
 #
-# OPENCODE_MODE is a produced global not consumed in this file yet: it is
-# read once the role-clones catalog's vendor wiring half lands (Task 6; see
-# its shellcheck disable below). CHECK / MEMORY_LAYOUT / CLAUDE_HOOKS /
-# CODEX_HOOKS are consumed by this file's shared check core (need_link,
-# check_payload, check_hook_scripts). ADAPTERS and SKILLS_MOUNT are consumed
-# by topology_user_tier_checks (Task 3) and topology_embedded_checks (Task 4).
+# OPENCODE_MODE is consumed by topology_role_clones_checks' vendor wiring
+# (Task 6): it selects the opencode adapter's per-clone vs. global check.
+# CHECK / MEMORY_LAYOUT / CLAUDE_HOOKS / CODEX_HOOKS are consumed by this
+# file's shared check core (need_link, check_payload, check_hook_scripts).
+# ADAPTERS and SKILLS_MOUNT are consumed by topology_user_tier_checks
+# (Task 3), topology_embedded_checks (Task 4), and topology_role_clones_checks
+# (Task 6).
 set -u
 
 # --- constants: the manifest key vocabulary (the validation whitelist) ---
@@ -419,7 +420,6 @@ done < <(manifest_get_all codex_hook)
 SKILLS_MOUNT="$(manifest_get skills_mount)"
 [ -n "$SKILLS_MOUNT" ] || SKILLS_MOUNT="false"
 
-# shellcheck disable=SC2034 # consumed by topology_role_clones_checks (Task 6)
 OPENCODE_MODE="$(manifest_get opencode)"
 [ -n "$OPENCODE_MODE" ] || OPENCODE_MODE="global"
 
@@ -616,10 +616,146 @@ _role_clones_check_exclude() {
   done
 }
 
+_role_clones_regen_codex_hooks_json() {
+  # _role_clones_regen_codex_hooks_json <memrepo_logical> <workspace> <role>
+  # Regenerate <workspace>/.codex/hooks.json wholesale, matching
+  # init-clone.sh's wire_codex_adapter shape exactly: one SessionStart hook
+  # calling THIS memory repo's inject-role-index.sh with THIS role dir,
+  # timeout 10, the fixed statusMessage. <memrepo_logical> must be the LOGICAL
+  # (plain `pwd`, not `pwd -P`) memory-repo path - init-clone.sh's
+  # wire_codex_adapter embeds $MEMORY_REPO="$(pwd)" verbatim, unlike its
+  # external-hop/opencode siblings which resolve via pwd -P; matching that
+  # exactly (not the canonical root_abs used elsewhere in this file) is what
+  # keeps this check from false-DRIFTing a freshly-init-clone.sh-wired
+  # workspace whenever a path component (e.g. macOS's /var) is itself a
+  # symlink.
+  local memrepo_logical="$1" workspace="$2" role="$3" out tmp_json cmd_value
+  out="$workspace/.codex/hooks.json"
+  cmd_value="'$memrepo_logical/scripts/inject-role-index.sh' '$memrepo_logical/$role'"
+  tmp_json="$(mktemp 2>/dev/null)"
+  if [ -z "$tmp_json" ]; then
+    report_error "could not create temp file for $out regeneration"
+    return 0
+  fi
+
+  {
+    printf '{\n  "hooks": {\n    "SessionStart": [\n      {\n        "hooks": [\n          {\n'
+    printf '            "type": "command",\n'
+    printf '            "command": "%s",\n' "$cmd_value"
+    printf '            "timeout": 10,\n'
+    printf '            "statusMessage": "Injecting role memory index…"\n'
+    printf '          }\n        ]\n      }\n    ]\n  }\n}\n'
+  } > "$tmp_json"
+
+  if mkdir -p "$workspace/.codex" 2>/dev/null && mv "$tmp_json" "$out" 2>/dev/null; then
+    report_fixed "$out regenerated for role $role"
+    _role_clones_check_exclude "$workspace" "/.codex/hooks.json"
+  else
+    rm -f "$tmp_json"
+    report_error "could not regenerate $out"
+  fi
+}
+
+_role_clones_check_codex_hooks_json() {
+  # _role_clones_check_codex_hooks_json <memrepo_logical> <workspace> <role>
+  # Per-workspace .codex/hooks.json: the single SessionStart command must be
+  # exactly '<memrepo_logical>/scripts/inject-role-index.sh'
+  # '<memrepo_logical>/<role>' - grep -qxF whole-line exact match, never
+  # substring (a copied-from-elsewhere hooks.json with a plausible shape but
+  # another machine's absolute prefix must still be named DRIFT). Missing is
+  # DRIFT too - init-clone.sh would have generated this file; fix mode
+  # regenerates it wholesale (note: Codex /hooks re-approval will be needed
+  # after either fix). <memrepo_logical> is the LOGICAL memory-repo path (see
+  # the regen function's comment on why - it must match init-clone.sh's own
+  # $(pwd)-based MEMORY_REPO, not this file's usual canonical root_abs).
+  local memrepo_logical="$1" workspace="$2" role="$3"
+  if ! require_jq "codex hooks.json checks (role $role)"; then
+    return 0
+  fi
+
+  local hooks="$workspace/.codex/hooks.json" cmds expected
+  expected="'$memrepo_logical/scripts/inject-role-index.sh' '$memrepo_logical/$role'"
+  if [ -f "$hooks" ]; then
+    cmds="$(jq -r '.hooks.SessionStart[]?.hooks[]?.command' "$hooks" 2>/dev/null)"
+  else
+    cmds=""
+  fi
+
+  if printf '%s\n' "$cmds" | grep -qxF -- "$expected"; then
+    return 0
+  fi
+
+  if [ "$CHECK" = 1 ]; then
+    if [ -f "$hooks" ]; then
+      report_drift "$hooks does not exactly wire role $role's inject-role-index.sh for this memory repo ($memrepo_logical)"
+    else
+      report_drift "$hooks missing for role $role (regenerable; Codex /hooks re-approval will be needed after fix)"
+    fi
+  else
+    _role_clones_regen_codex_hooks_json "$memrepo_logical" "$workspace" "$role"
+  fi
+}
+
+_role_clones_regen_opencode_per_clone() {
+  # _role_clones_regen_opencode_per_clone <workspace> <role>
+  local workspace="$1" role="$2" oc
+  oc="$workspace/opencode.json"
+  if printf '{\n  "$schema": "https://opencode.ai/config.json",\n  "instructions": ["%s"]\n}\n' "$workspace/.agents/memory/MEMORY.md" > "$oc"; then
+    report_fixed "$oc regenerated for role $role"
+    _role_clones_check_exclude "$workspace" "/opencode.json"
+  else
+    report_error "could not regenerate $oc"
+  fi
+}
+
+_role_clones_check_opencode_per_clone() {
+  # _role_clones_check_opencode_per_clone <workspace> <role>
+  # opencode=per-clone: the generated opencode.json's instructions[0] must
+  # equal <workspace>/.agents/memory/MEMORY.md exactly (jq-extracted); wrong
+  # or missing is regenerable, matching init-clone.sh's wire_opencode_adapter
+  # shape ($schema + instructions) exactly.
+  local workspace="$1" role="$2"
+  if ! require_jq "opencode.json checks (role $role)"; then
+    return 0
+  fi
+
+  local oc="$workspace/opencode.json" expected got
+  expected="$workspace/.agents/memory/MEMORY.md"
+  got="$(jq -r '.instructions[0]? // empty' "$oc" 2>/dev/null)"
+
+  if [ "$got" = "$expected" ]; then
+    return 0
+  fi
+
+  if [ "$CHECK" = 1 ]; then
+    report_drift "$oc instructions[0] is not \"$expected\" for role $role (regenerable)"
+  else
+    _role_clones_regen_opencode_per_clone "$workspace" "$role"
+  fi
+}
+
+_role_clones_check_opencode_global() {
+  # Single global check for the WHOLE run (not per workspace): the
+  # machine-wide ~/.config/opencode/opencode.json instructions array must
+  # contain the RELATIVE entry ".agents/memory/MEMORY.md" - report-only, this
+  # file is user-owned (serves every clone via OpenCode's per-session project
+  # dir resolution), doctor.sh only names the exact line to add.
+  if ! require_jq "opencode.json checks"; then
+    return 0
+  fi
+
+  local oc="$HOME/.config/opencode/opencode.json"
+  if ! jq -e '.instructions | index(".agents/memory/MEMORY.md")' "$oc" >/dev/null 2>&1; then
+    report_drift "$oc missing or its instructions lack \".agents/memory/MEMORY.md\" - add it to the instructions array"
+  fi
+}
+
 _role_clones_check_role() {
   # _role_clones_check_role <root_abs> <parent> <memrepo_name>
-  #                          <project_name-or-empty> <role>
-  local root_abs="$1" parent="$2" memrepo_name="$3" project_name="$4" role="$5"
+  #                          <project_name-or-empty> <role> <memrepo_logical>
+  # <memrepo_logical> (plain `pwd`, not `pwd -P`) is only for the codex
+  # hooks.json check - see its comment for why it must differ from root_abs.
+  local root_abs="$1" parent="$2" memrepo_name="$3" project_name="$4" role="$5" memrepo_logical="$6"
   local workspace expected_mount lines
 
   workspace="$(_role_clones_find_workspace "$root_abs" "$parent" "$memrepo_name" "$project_name" "$role")"
@@ -648,18 +784,47 @@ _role_clones_check_role() {
     lines+=("/opencode.json")
   fi
   _role_clones_check_exclude "$workspace" "${lines[@]}"
+
+  # Vendor wiring (Task 6), gated per-adapter declaration; a claimed
+  # workspace only (the INFO "no workspace wired" case already returned).
+  local a
+  if [ "${#ADAPTERS[@]}" -gt 0 ]; then
+    for a in "${ADAPTERS[@]}"; do
+      case "$a" in
+        claude-code)
+          _check_external_cc_hop "$workspace" "$workspace/.claude/memory" "external CC hop for role $role"
+          ;;
+        codex)
+          _role_clones_check_codex_hooks_json "$memrepo_logical" "$workspace" "$role"
+          ;;
+        opencode)
+          if [ "$OPENCODE_MODE" = "per-clone" ]; then
+            _role_clones_check_opencode_per_clone "$workspace" "$role"
+          fi
+          # global mode is a single machine-wide check, run once from
+          # topology_role_clones_checks - not per workspace.
+          ;;
+      esac
+    done
+  fi
 }
 
 topology_role_clones_checks() {
-  # Role-clone constellation, doctored FROM the memory repo. This task's
-  # slice: role discovery + the candidate walk + per-workspace mount/exclude
-  # checks. Vendor wiring (external CC hop, codex hooks.json, opencode) is
-  # Task 6; the multi-candidate flag is Task 7; the orphan sweep is Task 8.
-  local root_abs parent memrepo_name project_name
+  # Role-clone constellation, doctored FROM the memory repo: role discovery,
+  # the candidate walk, per-workspace mount/exclude checks, and per-workspace
+  # vendor wiring (external CC hop, codex hooks.json, opencode). The
+  # multi-candidate flag is Task 7; the orphan sweep is Task 8.
+  local root_abs parent memrepo_name project_name memrepo_logical
 
   root_abs="$(cd "$ROOT" && pwd -P)"
   parent="$(dirname "$root_abs")"
   memrepo_name="$(basename "$root_abs")"
+  # Logical (non-canonicalized) memory-repo path - matches init-clone.sh's
+  # own $(pwd) convention for the codex hooks.json check (see that check's
+  # comment); everything else in this function stays on the canonical
+  # root_abs, which is what the workspace path / relative-target comparisons
+  # already rely on.
+  memrepo_logical="$(cd "$ROOT" && pwd)"
 
   case "$memrepo_name" in
     claude-personas-*)
@@ -683,14 +848,24 @@ topology_role_clones_checks() {
     fi
   done
 
-  if [ "${#roles[@]}" -eq 0 ]; then
-    return 0
+  if [ "${#roles[@]}" -gt 0 ]; then
+    local role
+    for role in "${roles[@]}"; do
+      _role_clones_check_role "$root_abs" "$parent" "$memrepo_name" "$project_name" "$role" "$memrepo_logical"
+    done
   fi
 
-  local role
-  for role in "${roles[@]}"; do
-    _role_clones_check_role "$root_abs" "$parent" "$memrepo_name" "$project_name" "$role"
-  done
+  # OpenCode global mode: one machine-wide check for the whole run, gated on
+  # the opencode adapter being declared at all.
+  local a
+  if [ "${#ADAPTERS[@]}" -gt 0 ] && [ "$OPENCODE_MODE" = "global" ]; then
+    for a in "${ADAPTERS[@]}"; do
+      if [ "$a" = "opencode" ]; then
+        _role_clones_check_opencode_global
+        break
+      fi
+    done
+  fi
 }
 
 _embedded_check_claude_settings_hooks() {
@@ -716,39 +891,51 @@ _embedded_check_claude_settings_hooks() {
   done
 }
 
-_embedded_check_external_cc_hop() {
-  # External Claude Code auto-memory hop: $HOME/.claude/projects/<slug>/memory,
-  # where <slug> is this root's absolute (symlink-resolved) path with '/' and
-  # '.' replaced by '-' (matches Claude Code's own project-dir naming, and
-  # test_helpers.sh's compute_hash). Load-bearing: without it, Claude Code
-  # materializes a REAL directory there and memory silently diverges.
+_check_external_cc_hop() {
+  # _check_external_cc_hop <workspace_abs> <expected_target> <label>
   #
-  # A hop resolving (via pwd -P) to $ROOT/.agents/memory is OK whatever its
-  # literal target; a wrong symlink is repaired via need_link; a real
-  # directory is DRIFT, report-only (reconcile by hand); missing is DRIFT in
-  # --check, created in fix mode.
-  local root_abs slug ext canonical_ext canonical_root_memory
-  root_abs="$(cd "$ROOT" && pwd -P)"
-  slug="$(printf '%s' "$root_abs" | tr '/.' '-')"
+  # External Claude Code auto-memory hop for ANY workspace (an embedded
+  # instance's root, or a role-clone constellation workspace):
+  # $HOME/.claude/projects/<slug>/memory, where <slug> is the workspace's
+  # absolute (symlink-resolved) path with '/' and '.' replaced by '-' (matches
+  # Claude Code's own project-dir naming, and test_helpers.sh's compute_hash).
+  # Load-bearing: without it, Claude Code materializes a REAL directory there
+  # and memory silently diverges.
+  #
+  # A hop resolving (via pwd -P) to <expected_target>'s own canonical
+  # resolution is OK whatever its literal link text; a wrong symlink is
+  # repaired to <expected_target> via need_link; a real directory is DRIFT,
+  # report-only (reconcile by hand); missing is DRIFT in --check, created in
+  # fix mode.
+  local workspace_abs="$1" expected_target="$2" label="$3"
+  local slug ext canonical_ext canonical_expected
+
+  slug="$(printf '%s' "$workspace_abs" | tr '/.' '-')"
   ext="$HOME/.claude/projects/$slug/memory"
-  canonical_root_memory="$(cd "$root_abs/.agents/memory" 2>/dev/null && pwd -P)"
+  canonical_expected="$(cd "$expected_target" 2>/dev/null && pwd -P)"
 
   if [ -e "$ext" ] || [ -L "$ext" ]; then
     canonical_ext="$(cd "$ext" 2>/dev/null && pwd -P)"
-    if [ -n "$canonical_ext" ] && [ "$canonical_ext" = "$canonical_root_memory" ]; then
+    if [ -n "$canonical_ext" ] && [ "$canonical_ext" = "$canonical_expected" ]; then
       return 0
     elif [ -L "$ext" ]; then
-      need_link "$ext" "$root_abs/.claude/memory" "external CC auto-memory symlink"
+      need_link "$ext" "$expected_target" "$label"
     else
       report_drift "$ext is a real directory - Claude Code may have written memories there; reconcile by hand"
     fi
   elif [ "$CHECK" = 1 ]; then
-    report_drift "external CC auto-memory symlink missing ($ext)"
-  elif mkdir -p "$(dirname "$ext")" 2>/dev/null && ln -s "$root_abs/.claude/memory" "$ext" 2>/dev/null; then
-    report_fixed "$ext -> $root_abs/.claude/memory"
+    report_drift "$label missing ($ext)"
+  elif mkdir -p "$(dirname "$ext")" 2>/dev/null && ln -s "$expected_target" "$ext" 2>/dev/null; then
+    report_fixed "$ext -> $expected_target"
   else
     report_error "could not create $ext"
   fi
+}
+
+_embedded_check_external_cc_hop() {
+  local root_abs
+  root_abs="$(cd "$ROOT" && pwd -P)"
+  _check_external_cc_hop "$root_abs" "$root_abs/.claude/memory" "external CC auto-memory symlink"
 }
 
 _embedded_regen_codex_hooks_json() {

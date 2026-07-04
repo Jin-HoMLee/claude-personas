@@ -53,6 +53,11 @@ for topo in role-clones embedded user-tier; do
       mkdir -p "$tmp/dev" "$tmp/shared"
       echo "# dev" > "$tmp/dev/MEMORY.md"
       echo "# shared" > "$tmp/shared/MEMORY.md"
+      # dev has no clone/self-mount, so it stays INFO "no workspace wired"
+      # and no per-workspace vendor check runs for it; opencode defaults to
+      # global (commented out in the starter), a single machine-wide,
+      # report-only check unconditional of any wired workspace - it is seeded
+      # below, in the topo_home branch, same as embedded's opencode.json.
       ;;
     embedded)
       mkdir -p "$tmp/.agents/memory"
@@ -71,16 +76,22 @@ for topo in role-clones embedded user-tier; do
   esac
 
   topo_home=""
-  if [ "$topo" = "user-tier" ] || [ "$topo" = "embedded" ]; then
-    # Both topologies' real check catalogs (Tasks 3-4) touch $HOME-relative
-    # paths (user-tier's canonical home hop + gated adapters; embedded's
-    # external CC auto-memory hop). Give each an isolated, empty HOME and
-    # wire it once in fix mode before the generic re-check below, so this
-    # loop keeps testing --init/payload sanity instead of incidentally
-    # reading the real machine's HOME. (role-clones's Task 5 slice - role
-    # walk + mounts - has no $HOME-relative checks yet; those land with the
-    # vendor wiring in Task 6, so no isolation is needed here yet.)
+  if [ "$topo" = "user-tier" ] || [ "$topo" = "embedded" ] || [ "$topo" = "role-clones" ]; then
+    # All three topologies' real check catalogs touch $HOME-relative paths:
+    # user-tier's canonical home hop + gated adapters (Task 3); embedded's
+    # external CC auto-memory hop (Task 4); role-clones' opencode=global
+    # machine-wide check, unconditional of any wired workspace (Task 6). Give
+    # each an isolated, empty HOME and wire it once in fix mode before the
+    # generic re-check below, so this loop keeps testing --init/payload
+    # sanity instead of incidentally reading the real machine's HOME.
     topo_home="$(mktemp -d)"
+    if [ "$topo" = "role-clones" ]; then
+      # opencode=global's check (Task 6) is report-only - never fixed - so
+      # like embedded's opencode.json above, it must be seeded correctly up
+      # front for this starter to ever reach clean.
+      mkdir -p "$topo_home/.config/opencode"
+      echo '{"instructions": [".agents/memory/MEMORY.md"]}' > "$topo_home/.config/opencode/opencode.json"
+    fi
     HOME="$topo_home" bash "$DOCTOR" --root "$tmp" > /dev/null 2>&1
     DOCTOR_STDOUT="$(HOME="$topo_home" bash "$DOCTOR" --check --root "$tmp" 2>/dev/null)"
     DOCTOR_EXIT=$?
