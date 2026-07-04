@@ -291,7 +291,7 @@ claude_hook=scripts/some-hook.sh
 EOF
 run_doctor --check --root "$tmp"
 assert_equal "1" "$DOCTOR_EXIT" "missing claude_hook script: exit 1"
-assert_contains "$DOCTOR_STDOUT" "DRIFT: claude_hook 'scripts/some-hook.sh' missing or not executable" "stdout names the missing hook"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: claude_hook 'scripts/some-hook.sh' missing at" "stdout names the missing hook as missing (not conflated with non-executable)"
 rm -rf "$tmp"
 
 echo "=== test_doctor_manifest: check_hook_scripts - non-executable codex_hook is DRIFT + exit 1 ==="
@@ -308,7 +308,7 @@ codex_hook=scripts/some-hook.sh
 EOF
 run_doctor --check --root "$tmp"
 assert_equal "1" "$DOCTOR_EXIT" "non-executable codex_hook script: exit 1"
-assert_contains "$DOCTOR_STDOUT" "DRIFT: codex_hook 'scripts/some-hook.sh' missing or not executable" "stdout names the non-executable hook"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: codex_hook 'scripts/some-hook.sh' not executable at" "stdout names the hook as not executable (not conflated with missing)"
 rm -rf "$tmp"
 
 echo "=== test_doctor_manifest: check_hook_scripts - existing + executable hooks are clean ==="
@@ -341,7 +341,7 @@ EOF
 run_doctor --check --root "$tmp"
 assert_equal "1" "$DOCTOR_EXIT" "payload + hook both missing: exit 1"
 assert_contains "$DOCTOR_STDOUT" "DRIFT: .agents/memory/MEMORY.md missing" "stdout still names the missing payload"
-assert_contains "$DOCTOR_STDOUT" "DRIFT: claude_hook 'scripts/missing-hook.sh' missing or not executable" "stdout still names the missing hook"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: claude_hook 'scripts/missing-hook.sh' missing at" "stdout still names the missing hook"
 rm -rf "$tmp"
 
 echo "=== test_doctor_manifest: need_link + require_jq (direct function-extraction tests) ==="
@@ -354,6 +354,11 @@ extract_function() {
   # extract_function <func_name> <file> - print a top-level bash function
   # definition of the form 'name() {' ... '}' (closing brace alone on its
   # own line), matched by exact function name.
+  # BRITTLE BY DESIGN: this assumes doctor.sh's exact brace style ('name() {'
+  # opener, '^}$' closer). Reformatting a function there (e.g. 'function
+  # name {' or an indented closing brace) silently truncates the extraction;
+  # the assert_contains guards below catch a fully-missed function but not a
+  # partial one - keep the style or update this matcher with it.
   local name="$1" file="$2"
   awk -v name="$name" '
     $0 == name"() {" { capture=1 }
@@ -414,6 +419,38 @@ CHECK=0 need_link "$nl_tmp/nested/deep/new_link" "some-target" "nested/deep/new_
 assert_contains "$(cat "$nl_outfile")" "FIXED: nested/deep/new_link -> some-target" \
   "need_link: fix mode reports FIXED for a newly created link"
 assert_symlink "$nl_tmp/nested/deep/new_link" "some-target" "need_link: fix mode created the symlink with the right target"
+
+# ERROR branch: fix mode where the link cannot be created (read-only parent).
+# root ignores file modes, so these failures cannot be forced when running
+# as root - skip loudly rather than assert vacuously.
+if [ "$(id -u)" -eq 0 ]; then
+  echo "  SKIP: need_link ERROR-branch tests (running as root; chmod 555 cannot block root)"
+else
+  nl_errfile="$(mktemp)"
+  mkdir -p "$nl_tmp/ro"
+  chmod 555 "$nl_tmp/ro"
+
+  # ln -sfn fails: the parent dir exists (mkdir -p succeeds) but is read-only.
+  DRIFT_COUNT=0
+  CHECK=0 need_link "$nl_tmp/ro/link" "some-target" "ro/link" > "$nl_outfile" 2>"$nl_errfile"
+  assert_contains "$(cat "$nl_outfile")" "ERROR: could not create ro/link -> some-target" \
+    "need_link: ln failure in fix mode reports the contractual ERROR line"
+  assert_equal "1" "$DRIFT_COUNT" "need_link: ln failure counts as drift (drives exit 1)"
+  assert_not_exists "$nl_tmp/ro/link" "need_link: no link materialized on ln failure"
+
+  # mkdir -p fails: creating the parent itself is blocked by the read-only
+  # grandparent. This is the path where mkdir's own stderr would leak if it
+  # were not suppressed the same way ln's is.
+  DRIFT_COUNT=0
+  CHECK=0 need_link "$nl_tmp/ro/sub/link" "some-target" "ro/sub/link" > "$nl_outfile" 2>"$nl_errfile"
+  assert_contains "$(cat "$nl_outfile")" "ERROR: could not create ro/sub/link -> some-target" \
+    "need_link: mkdir failure in fix mode reports the contractual ERROR line"
+  assert_equal "1" "$DRIFT_COUNT" "need_link: mkdir failure counts as drift (drives exit 1)"
+  assert_equal "" "$(cat "$nl_errfile")" "need_link: mkdir failure leaks nothing to stderr (symmetric with ln)"
+
+  chmod 755 "$nl_tmp/ro"
+  rm -f "$nl_errfile"
+fi
 
 rm -f "$nl_outfile"
 rm -rf "$nl_tmp"

@@ -469,7 +469,7 @@ need_link() {
 
   if [ "$CHECK" = 1 ]; then
     report_drift "$label -> $(readlink "$p" 2>/dev/null || echo MISSING), expected $tgt"
-  elif mkdir -p "$(dirname "$p")" && ln -sfn "$tgt" "$p" 2>/dev/null; then
+  elif mkdir -p "$(dirname "$p")" 2>/dev/null && ln -sfn "$tgt" "$p" 2>/dev/null; then
     report_fixed "$label -> $tgt"
   else
     report_error "could not create $label -> $tgt"
@@ -519,20 +519,28 @@ check_payload() {
 
 check_hook_scripts() {
   # Every declared claude_hook / codex_hook must exist and be executable at
-  # its repo-relative path under $ROOT.
+  # its repo-relative path under $ROOT. The two failure modes get distinct
+  # DRIFT lines: "missing" points at a wrong path or an undeployed script,
+  # "not executable" at a chmod problem - different fixes.
   local hook
+
+  _check_one_hook() { # $1=manifest key  $2=repo-relative hook path
+    if [ ! -e "$ROOT/$2" ]; then
+      report_drift "$1 '$2' missing at $ROOT/$2"
+    elif [ ! -x "$ROOT/$2" ]; then
+      report_drift "$1 '$2' not executable at $ROOT/$2 (chmod +x it)"
+    fi
+  }
 
   if [ "${#CLAUDE_HOOKS[@]}" -gt 0 ]; then
     for hook in "${CLAUDE_HOOKS[@]}"; do
-      [ -x "$ROOT/$hook" ] \
-        || report_drift "claude_hook '$hook' missing or not executable at $ROOT/$hook"
+      _check_one_hook claude_hook "$hook"
     done
   fi
 
   if [ "${#CODEX_HOOKS[@]}" -gt 0 ]; then
     for hook in "${CODEX_HOOKS[@]}"; do
-      [ -x "$ROOT/$hook" ] \
-        || report_drift "codex_hook '$hook' missing or not executable at $ROOT/$hook"
+      _check_one_hook codex_hook "$hook"
     done
   fi
 }
