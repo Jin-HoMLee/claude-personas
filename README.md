@@ -201,14 +201,16 @@ cd user-memory
 ```
 
 `--init <topology>` writes a commented starter manifest for that topology and exits; it refuses to overwrite an existing one.
-Edit the starter to match your instance - comment out an `adapter=` line for a vendor you don't wire, or uncomment a topology-specific optional key (`opencode=per-clone`, `claude_hook=`, `codex_hook=`, `skills_mount=true`).
+Edit the starter to match your instance - delete (or comment out) an `adapter=` line for a vendor you don't wire, and set a topology-specific optional key (`opencode=<mode>`, `claude_hook=<path>`, `codex_hook=<path>`, `skills_mount=<bool>`) by adding a bare `key=value` line.
+Don't just remove the leading `#` from one of the starter's commented examples: they carry trailing inline comments, and the strict parser rejects anything after the value on a `key=value` line.
 `--check` reports drift and exits nonzero without changing anything - safe to run any time, including in CI.
 Plain `doctor.sh` (no flags) is fix mode: it repairs whatever it can, then reports on anything it can't the same way `--check` would.
 
 ### Fix what is derivable, report what is owned
 
 Fix mode does not mean "fixes everything."
-Symlinks, fully generated files (`.codex/hooks.json`, per-clone `opencode.json`), and dangling external-hop orphans are fully derivable from the manifest, so fix mode writes them directly.
+Symlinks and fully generated files (`.codex/hooks.json`, per-clone `opencode.json`) are fully derivable from the manifest, so fix mode writes them directly.
+Dangling external-hop orphans (a `~/.claude/projects/<slug>/memory` symlink whose target no longer exists) are found by a global sweep rather than derived from the manifest, and fix mode removes them - a symlink whose target is gone serves nobody by definition.
 `.claude/settings.json` hook stanzas and the global `~/.config/opencode/opencode.json` entry are user-owned config the doctor never rewrites - it reports the drift and prints the exact line or stanza to add by hand.
 A real (non-symlink) file or directory sitting where a symlink is expected is never touched either - one refusal must not hide another.
 More than one workspace claiming the same role is flagged as drift, report-only: retiring a stale clone is a human decision, not one the doctor makes for you.
@@ -221,7 +223,7 @@ More than one workspace claiming the same role is flagged as drift, report-only:
 
 ### What `doctor.sh` deliberately does not check
 
-Per-machine Codex trust grants (repo trust, plus `/hooks` review of the generated hook) are printed as a one-time reminder, never checked - they are not inspectable from a script.
+Per-machine Codex trust grants (repo trust, plus `/hooks` review of the generated hook) are not inspectable from any script - `init-clone.sh` prints them as one-time steps at wiring time, and `doctor.sh` does not re-check them.
 Skills packaging and distribution are out of scope here, tracked separately as [issue #43](https://github.com/Jin-HoMLee/claude-personas/issues/43); `doctor.sh` only checks the `.claude/skills -> ../.agents/skills` symlink itself, and only when the manifest declares `skills_mount=true`.
 
 ### `memory_cliff.py` and the manifest
