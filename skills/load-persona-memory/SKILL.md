@@ -39,7 +39,7 @@ Read these two indices first:
 <memory-repo>/<role>/shared/MEMORY.md
 ```
 
-As `memory_manager` (no role directory of its own), read `shared/MEMORY.md` plus each `<role>/MEMORY.md` directly instead.
+As `memory_manager` (step 4; no role directory of its own), read `shared/MEMORY.md` plus each `<role>/MEMORY.md` directly instead.
 
 Treat the role index and shared index as routing tables.
 Read linked files only when relevant to the current task.
