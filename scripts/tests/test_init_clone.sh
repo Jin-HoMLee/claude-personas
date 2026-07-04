@@ -840,4 +840,39 @@ assert_symlink "$weird_clone29/.agents/memory" "../../claude-personas-myapp/deve
 
 cleanup_clone_test_fixture "$tmp29"
 
+# --- v3.1 -> two-hop migration via --force (spec: CC adapter, last paragraph) ---
+echo "=== test_init_clone v3.1 -> two-hop migration ==="
+tmp30="$(mktemp -d)"
+make_clone_test_fixture "$tmp30"
+mv "$tmp30/memory-repo" "$tmp30/claude-personas-myapp"
+mkdir -p "$tmp30/home"
+
+# Plant a v3.1-shaped clone BY HAND: direct .claude/memory symlink + gitignore line.
+git clone --quiet "$tmp30/project-repo.git" "$tmp30/myapp"
+mkdir -p "$tmp30/myapp/.claude"
+ln -s "../../claude-personas-myapp/developer" "$tmp30/myapp/.claude/memory"
+printf "\n# claude-personas role-memory symlink\n/.claude/memory/\n" >> "$tmp30/myapp/.gitignore"
+
+( cd "$tmp30/claude-personas-myapp" && \
+  HOME="$tmp30/home" bash "$INIT_CLONE" developer --force --project-url "$tmp30/project-repo.git" ) || [ $? -eq 2 ]
+
+assert_symlink "$tmp30/myapp/.agents/memory" "../../claude-personas-myapp/developer" "mount created on migration"
+assert_symlink "$tmp30/myapp/.claude/memory" "../.agents/memory" "direct v3.1 symlink rewired into the hop"
+assert_exists "$tmp30/myapp/.claude/memory/MEMORY.md" "MEMORY.md resolves after migration"
+mig_backup="$(find "$tmp30/myapp/.claude" -maxdepth 1 -name "memory.backup-*" | wc -l | tr -d ' ')"
+assert_equal "1" "$mig_backup" "old direct symlink backed up (existing backup semantics)"
+
+# Existing v3.1 .gitignore line is LEFT ALONE (spec: "keep working; stop adding").
+if grep -qE '^/?\.claude/memory/?$' "$tmp30/myapp/.gitignore"; then
+  echo "  PASS: existing v3.1 .gitignore line preserved"
+else
+  echo "  FAIL: v3.1 .gitignore line was removed"; exit 1
+fi
+
+# External hop created for the migrated clone too.
+mig_slug="$(compute_hash "$(cd "$tmp30/myapp" && pwd -P)")"
+assert_exists "$tmp30/home/.claude/projects/$mig_slug/memory" "external hop created on migration"
+
+cleanup_clone_test_fixture "$tmp30"
+
 print_summary
