@@ -552,10 +552,18 @@ _role_clones_find_workspace() {
   # candidate claims the role when it has .git AND either its .agents/memory
   # (or, v3.1 fallback, its .claude/memory) symlink targets end in "/<role>"
   # or equal "<role>" outright, or - a broken-rewire fallback, matching
-  # list-roles.sh - its own path ends in "-<role>". Stops at the FIRST
-  # claimant (Task 7 makes this exhaustive for the multi-candidate flag).
+  # list-roles.sh - its own path ends in "-<role>".
+  #
+  # Exhaustive (Task 7): every claiming candidate is printed, one per line, in
+  # walk order - this function no longer stops at the first match. The caller
+  # (_role_clones_check_role) decides what more than one claimant means (the
+  # multi-candidate DRIFT) and which claimant gets the per-workspace checks
+  # (the first line - walk order doubles as precedence order). Candidates are
+  # distinct by construction (memory repo, no-suffix, suffixed paths differ),
+  # but a pwd -P dedup guards against double-counting the same physical dir
+  # under two different candidate spellings.
   local root_abs="$1" parent="$2" memrepo_name="$3" project_name="$4" role="$5"
-  local candidates cand link target
+  local candidates cand link target claims phys seen_phys=""
 
   candidates=("$root_abs")
   if [ -n "$project_name" ]; then
@@ -575,22 +583,25 @@ _role_clones_find_workspace() {
     fi
 
     target="$(readlink "$link")"
+    claims=0
     case "$target" in
-      *"/$role"|"$role")
-        printf '%s\n' "$cand"
-        return 0
-        ;;
+      *"/$role"|"$role") claims=1 ;;
     esac
+    if [ "$claims" = 0 ]; then
+      case "$cand" in
+        *"-$role") claims=1 ;;
+      esac
+    fi
+    [ "$claims" = 1 ] || continue
 
-    case "$cand" in
-      *"-$role")
-        printf '%s\n' "$cand"
-        return 0
-        ;;
+    phys="$(cd "$cand" 2>/dev/null && pwd -P)"
+    case " $seen_phys " in
+      *" $phys "*) continue ;;
     esac
+    seen_phys="$seen_phys $phys"
+
+    printf '%s\n' "$cand"
   done
-
-  return 1
 }
 
 _role_clones_check_exclude() {
@@ -756,13 +767,33 @@ _role_clones_check_role() {
   # <memrepo_logical> (plain `pwd`, not `pwd -P`) is only for the codex
   # hooks.json check - see its comment for why it must differ from root_abs.
   local root_abs="$1" parent="$2" memrepo_name="$3" project_name="$4" role="$5" memrepo_logical="$6"
-  local workspace expected_mount lines
+  local workspaces workspace expected_mount lines _w
 
-  workspace="$(_role_clones_find_workspace "$root_abs" "$parent" "$memrepo_name" "$project_name" "$role")"
-  if [ -z "$workspace" ]; then
+  workspaces=()
+  while IFS= read -r _w; do
+    [ -n "$_w" ] && workspaces+=("$_w")
+  done < <(_role_clones_find_workspace "$root_abs" "$parent" "$memrepo_name" "$project_name" "$role")
+
+  if [ "${#workspaces[@]}" -eq 0 ]; then
     echo "INFO: role $role - no workspace wired"
     return 0
   fi
+
+  if [ "${#workspaces[@]}" -gt 1 ]; then
+    # Multi-candidate flag (Task 7, PR #40 review): more than one workspace
+    # claiming the same role is DRIFT, report-only in both modes - retiring a
+    # workspace is a human decision, doctor.sh never auto-picks a winner. One
+    # line names every claimant.
+    report_drift "role $role claimed by more than one workspace: ${workspaces[*]} - retire or re-wire one (doctor will not pick)"
+  fi
+
+  # Per-workspace checks (mount/exclude/vendor wiring below) run on the FIRST
+  # claimant only, regardless of how many claim the role. Walk order is
+  # precedence order (matches list-roles.sh semantics), so the real,
+  # first-claimant's drifts stay visible even in a multi-candidate state; a
+  # stale/duplicate claimant is surfaced solely via the DRIFT above, never
+  # double-checked.
+  workspace="${workspaces[0]}"
 
   # Self-mount (workspace IS the memory repo) resolves ../<role> against
   # .agents/; a clone resolves ../../<memrepo>/<role> the same way - matching
@@ -811,9 +842,9 @@ _role_clones_check_role() {
 
 topology_role_clones_checks() {
   # Role-clone constellation, doctored FROM the memory repo: role discovery,
-  # the candidate walk, per-workspace mount/exclude checks, and per-workspace
-  # vendor wiring (external CC hop, codex hooks.json, opencode). The
-  # multi-candidate flag is Task 7; the orphan sweep is Task 8.
+  # the candidate walk, the multi-candidate flag, per-workspace mount/exclude
+  # checks, and per-workspace vendor wiring (external CC hop, codex
+  # hooks.json, opencode). The orphan sweep is Task 8.
   local root_abs parent memrepo_name project_name memrepo_logical
 
   root_abs="$(cd "$ROOT" && pwd -P)"

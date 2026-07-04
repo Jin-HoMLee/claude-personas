@@ -343,4 +343,48 @@ run_doctor "$HOME_DIR" --check --root "$MEMREPO"
 assert_equal "0" "$DOCTOR_EXIT" "re-check after repair: exit 0"
 rm -rf "$tmp"
 
+echo "=== test_doctor_role_clones: multi-candidate flag (g) stale pre-#40 suffixed memory_manager clone alongside the --self mount - ONE DRIFT naming both paths, report-only, other roles' checks still run ==="
+tmp="$(mktemp -d)"
+setup_wired_fixture "$tmp"
+
+# Hand-plant a stale pre-#40-style suffixed memory_manager clone: a v3.1-shaped
+# direct .claude/memory symlink (no .agents/memory two-hop), NOT wired via
+# init-clone.sh - it refuses a bare "memory_manager" role arg (see
+# init-clone.sh's guard: "Run '$(basename "$0") --self' ... instead").
+STALECLONE="$tmp/myapp-memory_manager"
+git clone --quiet "$tmp/project-repo.git" "$STALECLONE"
+mkdir -p "$STALECLONE/.claude"
+ln -s "../../claude-personas-myapp/memory_manager" "$STALECLONE/.claude/memory"
+STALECLONE_ABS="$(repo_abs "$STALECLONE")"
+stale_link_before="$(readlink "$STALECLONE/.claude/memory")"
+
+run_doctor "$HOME_DIR" --check --root "$MEMREPO"
+assert_equal "1" "$DOCTOR_EXIT" "multi-candidate memory_manager: --check exit 1"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: role memory_manager claimed by more than one workspace: $MEMREPO_ABS $STALECLONE_ABS - retire or re-wire one (doctor will not pick)" "multi-candidate DRIFT names both memory_manager claimants"
+mc_drift_count="$(echo "$DOCTOR_STDOUT" | grep -c "claimed by more than one workspace")"
+assert_equal "1" "$mc_drift_count" "exactly one multi-candidate DRIFT line, not one per candidate"
+
+run_doctor "$HOME_DIR" --root "$MEMREPO"
+assert_equal "1" "$DOCTOR_EXIT" "fix mode: multi-candidate flag is report-only, exit stays 1"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: role memory_manager claimed by more than one workspace: $MEMREPO_ABS $STALECLONE_ABS - retire or re-wire one (doctor will not pick)" "multi-candidate DRIFT persists in fix mode"
+stale_link_after="$(readlink "$STALECLONE/.claude/memory")"
+assert_equal "$stale_link_before" "$stale_link_after" "fix mode never touches the stale clone's v3.1 symlink"
+assert_not_exists "$STALECLONE/.agents/memory" "fix mode never creates an .agents/memory hop on the stale (non-first) claimant"
+
+run_doctor "$HOME_DIR" --check --root "$MEMREPO"
+assert_equal "1" "$DOCTOR_EXIT" "re-check after fix: still exit 1 (multi-candidate flag has nothing to fix)"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: role memory_manager claimed by more than one workspace: $MEMREPO_ABS $STALECLONE_ABS - retire or re-wire one (doctor will not pick)" "multi-candidate DRIFT still present on re-check"
+
+# Single-claimant roles stay clean and their own per-workspace checks still
+# run: inject a real mount drift on pm in the same multi-candidate state and
+# assert BOTH drifts appear together - the memory_manager refusal must not
+# hide pm's real drift, nor vice versa.
+rm -f "$PMCLONE/.agents/memory"
+run_doctor "$HOME_DIR" --check --root "$MEMREPO"
+assert_equal "1" "$DOCTOR_EXIT" "multi-candidate + pm mount drift together: --check exit 1"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: role memory_manager claimed by more than one workspace: $MEMREPO_ABS $STALECLONE_ABS - retire or re-wire one (doctor will not pick)" "memory_manager multi-candidate DRIFT still present alongside pm's drift"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: $PMCLONE_ABS/.agents/memory -> MISSING, expected ../../claude-personas-myapp/pm" "pm mount DRIFT also present - one refusal does not hide the other"
+assert_contains "$DOCTOR_STDOUT" "INFO: role designer - no workspace wired" "unrelated unwired roles unaffected by the memory_manager multi-candidate state"
+rm -rf "$tmp"
+
 print_summary
