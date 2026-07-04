@@ -26,6 +26,7 @@ Re-verify anything volatile before relying on it; each line carries the date it 
 - Snapshot/undo cannot cover files behind a symlink (anomalyco/opencode#31984, open; the trigger is exactly the `.claude/x -> .agents/x` pattern). Git covers recovery. (2026-07-03)
 - No local config variant (`opencode.local.json` does not exist; anomalyco/opencode#17232 open) - the per-clone fallback file is plain `opencode.json`, untracked via `.git/info/exclude`. (2026-07-03)
 - Glob-through-symlink for `instructions` entries is gated on `follow: false` upstream behavior - live test 1 below decides the default wiring. (2026-07-03)
+- Switching a clone from `--opencode-per-clone` back to the global default does NOT remove the per-clone `opencode.json`: a later plain `--force` run leaves it in place (the script never deletes a file you may have edited) while printing the global-entry note. The stale file keeps working but pins an absolute path that goes stale if the clone moves - delete it by hand when switching back. (2026-07-04)
 
 ## Live-test results
 
