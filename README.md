@@ -145,6 +145,90 @@ One-time steps per machine that the script cannot perform (it prints them):
 Sharp edges per vendor (trust layers, symlink bugs, context ceilings) live in [docs/vendor-caveats.md](docs/vendor-caveats.md).
 Embedded-topology projects (memory inside the same repo) should start from [examples/substrate/](examples/substrate/) instead of `init-clone.sh`.
 
+## Checking your wiring: `doctor.sh`
+
+`init-clone.sh` wires a role clone once.
+`doctor.sh` re-checks it any time - after a machine move, a version bump, or just to be sure.
+It is one manifest-driven script covering three substrate topologies: `role-clones` (the constellation every fork of this template uses - run it from the memory repo), `embedded` (a single repo carries `.agents/` alongside its own project code, see [examples/substrate/](examples/substrate/)), and `user-tier` (the global user-memory tier described above).
+Full design, including the check catalog per topology: [`docs/superpowers/specs/2026-07-04-toolbox-manifest-driven-doctor-design.md`](docs/superpowers/specs/2026-07-04-toolbox-manifest-driven-doctor-design.md).
+
+### The manifest: `.agents/manifest`
+
+Every instance declares its topology in one committed file, `.agents/manifest`, at the instance root.
+`doctor.sh` never infers the topology from repo shape - an instance with no manifest gets a refusal naming the three topologies and the `--init` command, not a guess.
+Syntax is flat `key=value` lines: no spaces around `=`, no quoting, no sections, no nesting.
+`#` comments and blank lines are ignored; every other line is parsed strictly, and an unknown key or an unknown value is an error, not a warning - a newer manifest must fail loudly on an older doctor rather than silently skip checks (`manifest_version` is the escape hatch for future format changes).
+The manifest is read with grep/cut in bash (and a small reader in `memory_cliff.py`) - it is never shell-sourced, so a manifest cannot execute code.
+
+| Key | Values | Applies to | Meaning |
+|---|---|---|---|
+| `manifest_version` | `1` | all (required) | Format version; doctor refuses versions it does not know |
+| `topology` | `role-clones` \| `embedded` \| `user-tier` | all (required) | Selects the check catalog; never inferred from repo shape |
+| `memory_layout` | `roles` \| `flat` | all (required) | Drives payload checks and `memory_cliff.py` corpus discovery |
+| `adapter` | `claude-code` \| `codex` \| `opencode` | all (repeatable) | Which vendor adapters must be wired; an undeclared adapter is not checked |
+| `claude_hook` | repo-relative script path | embedded (repeatable) | Hook that `.claude/settings.json` must wire via `$CLAUDE_PROJECT_DIR` |
+| `codex_hook` | repo-relative script path | embedded (repeatable) | Hook that `.codex/hooks.json` must wire with this instance's absolute path |
+| `skills_mount` | `true` \| `false` (default) | embedded | Whether `.claude/skills -> ../.agents/skills` must exist |
+| `opencode` | `global` (default) \| `per-clone` | role-clones | Which OpenCode wiring variant the clones use |
+
+### Quickstart per topology
+
+Role-clone constellation (run from the memory repo):
+
+```sh
+cd claude-personas-<my-app>
+./scripts/doctor.sh --init role-clones
+./scripts/doctor.sh --check
+./scripts/doctor.sh
+```
+
+Embedded (a single repo carrying `.agents/` alongside its own project code):
+
+```sh
+cd <your-repo>
+./scripts/doctor.sh --init embedded
+./scripts/doctor.sh --check
+./scripts/doctor.sh
+```
+
+User tier (a global `<owner>/user-memory` repo - see [User-memory tier](#user-memory-tier) above):
+
+```sh
+cd user-memory
+./scripts/doctor.sh --init user-tier
+./scripts/doctor.sh --check
+./scripts/doctor.sh
+```
+
+`--init <topology>` writes a commented starter manifest for that topology and exits; it refuses to overwrite an existing one.
+Edit the starter to match your instance - comment out an `adapter=` line for a vendor you don't wire, or uncomment a topology-specific optional key (`opencode=per-clone`, `claude_hook=`, `codex_hook=`, `skills_mount=true`).
+`--check` reports drift and exits nonzero without changing anything - safe to run any time, including in CI.
+Plain `doctor.sh` (no flags) is fix mode: it repairs whatever it can, then reports on anything it can't the same way `--check` would.
+
+### Fix what is derivable, report what is owned
+
+Fix mode does not mean "fixes everything."
+Symlinks, fully generated files (`.codex/hooks.json`, per-clone `opencode.json`), and dangling external-hop orphans are fully derivable from the manifest, so fix mode writes them directly.
+`.claude/settings.json` hook stanzas and the global `~/.config/opencode/opencode.json` entry are user-owned config the doctor never rewrites - it reports the drift and prints the exact line or stanza to add by hand.
+A real (non-symlink) file or directory sitting where a symlink is expected is never touched either - one refusal must not hide another.
+More than one workspace claiming the same role is flagged as drift, report-only: retiring a stale clone is a human decision, not one the doctor makes for you.
+
+### Exit codes
+
+`0` - clean, or (in fix mode) everything derivable was repaired.
+`1` - drift or error remains: a report-only finding in fix mode, or any finding at all in `--check` mode.
+`2` - no manifest, or an invalid one (unknown key, unknown value, unsupported `manifest_version`).
+
+### What `doctor.sh` deliberately does not check
+
+Per-machine Codex trust grants (repo trust, plus `/hooks` review of the generated hook) are printed as a one-time reminder, never checked - they are not inspectable from a script.
+Skills packaging and distribution are out of scope here, tracked separately as [issue #43](https://github.com/Jin-HoMLee/claude-personas/issues/43); `doctor.sh` only checks the `.claude/skills -> ../.agents/skills` symlink itself, and only when the manifest declares `skills_mount=true`.
+
+### `memory_cliff.py` and the manifest
+
+`scripts/memory_cliff.py --layout flat` lints a flat-layout instance's single `MEMORY.md` as one always-loaded unit, since a flat instance has no shared file to add and no role/shared split to subtract.
+With no `--layout` flag, it reads `memory_layout` from `.agents/manifest` when one is present, and falls back to the original role-discovery behavior when there is no manifest at all - so the template repo and any pre-manifest instance keep working unchanged.
+
 ## Windows
 
 Symlink creation needs Developer Mode on Windows (Settings → Privacy & Security → Developer Mode). If Developer Mode isn't an option in your environment, use WSL.
