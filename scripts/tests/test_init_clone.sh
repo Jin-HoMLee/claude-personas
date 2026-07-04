@@ -9,26 +9,46 @@ echo "=== test_init_clone happy path (developer = no-suffix) ==="
 
 tmp="$(mktemp -d)"
 make_clone_test_fixture "$tmp"
+mkdir -p "$tmp/home"
 
 # Rename memory-repo to claude-personas-myapp to match real naming
 mv "$tmp/memory-repo" "$tmp/claude-personas-myapp"
 
 # Run init-clone.sh developer with --project-url
 ( cd "$tmp/claude-personas-myapp" && \
-  bash "$INIT_CLONE" developer --project-url "$tmp/project-repo.git" )
+  HOME="$tmp/home" bash "$INIT_CLONE" developer --project-url "$tmp/project-repo.git" )
 
 assert_exists "$tmp/myapp" "developer clone landed at no-suffix path"
 assert_exists "$tmp/myapp/.git" "developer clone is a real git repo"
-assert_symlink "$tmp/myapp/.claude/memory" "../../claude-personas-myapp/developer" "memory symlink points to developer/"
-assert_exists "$tmp/myapp/.claude/memory/MEMORY.md" "MEMORY.md resolves through symlink"
+assert_symlink "$tmp/myapp/.agents/memory" "../../claude-personas-myapp/developer" "vendor-neutral mount points to developer/"
+assert_symlink "$tmp/myapp/.claude/memory" "../.agents/memory" "Claude Code hop points to .agents/memory"
+assert_exists "$tmp/myapp/.claude/memory/MEMORY.md" "MEMORY.md resolves through the two-hop chain"
 
-# .claude/memory/ added to .gitignore
-if grep -qE '^/?\.claude/memory/?$' "$tmp/myapp/.gitignore" 2>/dev/null; then
-  echo "  PASS: .claude/memory/ in .gitignore"
+# Untracked-ness is behavior, not a .gitignore line: the wired clone must be clean.
+if [ -z "$( cd "$tmp/myapp" && git status --porcelain )" ]; then
+  echo "  PASS: wired clone is git-clean (exclude entries work)"
 else
-  echo "  FAIL: .claude/memory/ not in .gitignore (or .gitignore missing)"
+  echo "  FAIL: wired clone is dirty:"; ( cd "$tmp/myapp" && git status --porcelain )
   exit 1
 fi
+
+# .gitignore is no longer touched on a fresh clone.
+if [ -f "$tmp/myapp/.gitignore" ] && grep -qE '^/?\.claude/memory/?$' "$tmp/myapp/.gitignore"; then
+  echo "  FAIL: .gitignore was modified on a fresh clone (should use .git/info/exclude)"
+  exit 1
+else
+  echo "  PASS: .gitignore not modified on fresh clone"
+fi
+
+# Exclude entries present.
+for pat in "/.agents/memory" "/.claude/memory"; do
+  if grep -qxF "$pat" "$tmp/myapp/.git/info/exclude"; then
+    echo "  PASS: $pat in .git/info/exclude"
+  else
+    echo "  FAIL: $pat missing from .git/info/exclude"
+    exit 1
+  fi
+done
 
 # project.txt persisted
 assert_exists "$tmp/claude-personas-myapp/.claude-personas/project.txt" "project.txt persisted"
@@ -45,11 +65,12 @@ cleanup_clone_test_fixture "$tmp"
 echo "=== test_init_clone role validation ==="
 tmp2="$(mktemp -d)"
 make_clone_test_fixture "$tmp2"
+mkdir -p "$tmp2/home"
 mv "$tmp2/memory-repo" "$tmp2/claude-personas-myapp"
 
 # Unknown role should fail
 if ( cd "$tmp2/claude-personas-myapp" && \
-     bash "$INIT_CLONE" nonexistentrole --project-url "$tmp2/project-repo.git" ) 2>/dev/null; then
+     HOME="$tmp2/home" bash "$INIT_CLONE" nonexistentrole --project-url "$tmp2/project-repo.git" ) 2>/dev/null; then
   echo "  FAIL: should have exited nonzero for unknown role"
   exit 1
 else
@@ -62,6 +83,7 @@ cleanup_clone_test_fixture "$tmp2"
 echo "=== test_init_clone URL precedence ==="
 tmp3="$(mktemp -d)"
 make_clone_test_fixture "$tmp3"
+mkdir -p "$tmp3/home"
 mv "$tmp3/memory-repo" "$tmp3/claude-personas-myapp"
 
 # Pre-seed project.txt with a WRONG url
@@ -70,7 +92,7 @@ echo "/this/does/not/exist.git" > "$tmp3/claude-personas-myapp/.claude-personas/
 
 # --project-url flag should override the file
 ( cd "$tmp3/claude-personas-myapp" && \
-  bash "$INIT_CLONE" developer --project-url "$tmp3/project-repo.git" )
+  HOME="$tmp3/home" bash "$INIT_CLONE" developer --project-url "$tmp3/project-repo.git" )
 
 assert_exists "$tmp3/myapp" "flag overrode project.txt; clone landed"
 
@@ -84,12 +106,13 @@ cleanup_clone_test_fixture "$tmp3"
 echo "=== test_init_clone URL from project.txt ==="
 tmp4="$(mktemp -d)"
 make_clone_test_fixture "$tmp4"
+mkdir -p "$tmp4/home"
 mv "$tmp4/memory-repo" "$tmp4/claude-personas-myapp"
 
 mkdir -p "$tmp4/claude-personas-myapp/.claude-personas"
 echo "$tmp4/project-repo.git" > "$tmp4/claude-personas-myapp/.claude-personas/project.txt"
 
-( cd "$tmp4/claude-personas-myapp" && bash "$INIT_CLONE" pm )
+( cd "$tmp4/claude-personas-myapp" && HOME="$tmp4/home" bash "$INIT_CLONE" pm )
 
 assert_exists "$tmp4/myapp-pm" "URL read from project.txt; pm clone landed (suffixed)"
 
@@ -99,13 +122,15 @@ cleanup_clone_test_fixture "$tmp4"
 echo "=== test_init_clone --main flag ==="
 tmp5="$(mktemp -d)"
 make_clone_test_fixture "$tmp5"
+mkdir -p "$tmp5/home"
 mv "$tmp5/memory-repo" "$tmp5/claude-personas-myapp"
 
 ( cd "$tmp5/claude-personas-myapp" && \
-  bash "$INIT_CLONE" pm --main --project-url "$tmp5/project-repo.git" )
+  HOME="$tmp5/home" bash "$INIT_CLONE" pm --main --project-url "$tmp5/project-repo.git" )
 
 assert_exists "$tmp5/myapp" "pm with --main landed at no-suffix path"
-assert_symlink "$tmp5/myapp/.claude/memory" "../../claude-personas-myapp/pm" "memory points to pm/"
+assert_symlink "$tmp5/myapp/.agents/memory" "../../claude-personas-myapp/pm" "mount points to pm/"
+assert_symlink "$tmp5/myapp/.claude/memory" "../.agents/memory" "hop points to .agents/memory"
 
 cleanup_clone_test_fixture "$tmp5"
 
@@ -113,20 +138,22 @@ cleanup_clone_test_fixture "$tmp5"
 echo "=== test_init_clone main-role.txt override ==="
 tmp6="$(mktemp -d)"
 make_clone_test_fixture "$tmp6"
+mkdir -p "$tmp6/home"
 mv "$tmp6/memory-repo" "$tmp6/claude-personas-myapp"
 
 mkdir -p "$tmp6/claude-personas-myapp/.claude-personas"
 echo "scientist" > "$tmp6/claude-personas-myapp/.claude-personas/main-role.txt"
 
 ( cd "$tmp6/claude-personas-myapp" && \
-  bash "$INIT_CLONE" scientist --project-url "$tmp6/project-repo.git" )
+  HOME="$tmp6/home" bash "$INIT_CLONE" scientist --project-url "$tmp6/project-repo.git" )
 
 assert_exists "$tmp6/myapp" "scientist landed at no-suffix path (main-role.txt)"
-assert_symlink "$tmp6/myapp/.claude/memory" "../../claude-personas-myapp/scientist" "memory points to scientist/"
+assert_symlink "$tmp6/myapp/.agents/memory" "../../claude-personas-myapp/scientist" "mount points to scientist/"
+assert_symlink "$tmp6/myapp/.claude/memory" "../.agents/memory" "hop points to .agents/memory"
 
 # Now running developer should NOT claim no-suffix (already taken)
 ( cd "$tmp6/claude-personas-myapp" && \
-  bash "$INIT_CLONE" developer --project-url "$tmp6/project-repo.git" )
+  HOME="$tmp6/home" bash "$INIT_CLONE" developer --project-url "$tmp6/project-repo.git" )
 
 assert_exists "$tmp6/myapp-developer" "developer fell back to suffixed path"
 
@@ -137,23 +164,28 @@ cleanup_clone_test_fixture "$tmp6"
 echo "=== test_init_clone --force on same-project clone ==="
 tmp7="$(mktemp -d)"
 make_clone_test_fixture "$tmp7"
+mkdir -p "$tmp7/home"
 mv "$tmp7/memory-repo" "$tmp7/claude-personas-myapp"
 
 # First init creates the clone
 ( cd "$tmp7/claude-personas-myapp" && \
-  bash "$INIT_CLONE" developer --project-url "$tmp7/project-repo.git" )
+  HOME="$tmp7/home" bash "$INIT_CLONE" developer --project-url "$tmp7/project-repo.git" )
 
 # Break the memory symlink
-rm "$tmp7/myapp/.claude/memory"
+rm "$tmp7/myapp/.claude/memory" "$tmp7/myapp/.agents/memory"
 ln -s /nonexistent "$tmp7/myapp/.claude/memory"
+ln -s /nonexistent "$tmp7/myapp/.agents/memory"
 
 # --force should detect, back up, re-wire
 ( cd "$tmp7/claude-personas-myapp" && \
-  bash "$INIT_CLONE" developer --force --project-url "$tmp7/project-repo.git" )
+  HOME="$tmp7/home" bash "$INIT_CLONE" developer --force --project-url "$tmp7/project-repo.git" )
 
-assert_symlink "$tmp7/myapp/.claude/memory" "../../claude-personas-myapp/developer" "memory re-wired"
+assert_symlink "$tmp7/myapp/.agents/memory" "../../claude-personas-myapp/developer" "mount re-wired"
+assert_symlink "$tmp7/myapp/.claude/memory" "../.agents/memory" "hop re-wired"
 backup_count="$(find "$tmp7/myapp/.claude" -maxdepth 1 -name "memory.backup-*" | wc -l | tr -d ' ')"
-assert_equal "1" "$backup_count" "exactly one backup created"
+assert_equal "1" "$backup_count" "exactly one .claude backup created"
+agents_backup_count="$(find "$tmp7/myapp/.agents" -maxdepth 1 -name "memory.backup-*" | wc -l | tr -d ' ')"
+assert_equal "1" "$agents_backup_count" "exactly one .agents backup created"
 
 cleanup_clone_test_fixture "$tmp7"
 
@@ -161,6 +193,7 @@ cleanup_clone_test_fixture "$tmp7"
 echo "=== test_init_clone --force on wrong-project clone ==="
 tmp8="$(mktemp -d)"
 make_clone_test_fixture "$tmp8"
+mkdir -p "$tmp8/home"
 mv "$tmp8/memory-repo" "$tmp8/claude-personas-myapp"
 
 # Create a clone of a DIFFERENT project at the target path
@@ -175,7 +208,7 @@ git clone --quiet "$tmp8/other-project.git" "$tmp8/myapp"
 
 # --force should refuse
 if ( cd "$tmp8/claude-personas-myapp" && \
-     bash "$INIT_CLONE" developer --force --project-url "$tmp8/project-repo.git" ) 2>/dev/null; then
+     HOME="$tmp8/home" bash "$INIT_CLONE" developer --force --project-url "$tmp8/project-repo.git" ) 2>/dev/null; then
   echo "  FAIL: should have refused --force on wrong-project clone"
   exit 1
 else
@@ -188,12 +221,13 @@ cleanup_clone_test_fixture "$tmp8"
 echo "=== test_init_clone target collision no --force ==="
 tmp9="$(mktemp -d)"
 make_clone_test_fixture "$tmp9"
+mkdir -p "$tmp9/home"
 mv "$tmp9/memory-repo" "$tmp9/claude-personas-myapp"
 
 mkdir "$tmp9/myapp"  # block the no-suffix path
 
 if ( cd "$tmp9/claude-personas-myapp" && \
-     bash "$INIT_CLONE" developer --project-url "$tmp9/project-repo.git" ) 2>/dev/null; then
+     HOME="$tmp9/home" bash "$INIT_CLONE" developer --project-url "$tmp9/project-repo.git" ) 2>/dev/null; then
   # Should have fallen through to suffixed path since no-suffix is taken
   assert_exists "$tmp9/myapp-developer" "developer fell through to suffix when no-suffix taken"
 else
@@ -207,20 +241,21 @@ cleanup_clone_test_fixture "$tmp9"
 echo "=== test_init_clone .gitignore idempotency ==="
 tmp10="$(mktemp -d)"
 make_clone_test_fixture "$tmp10"
+mkdir -p "$tmp10/home"
 mv "$tmp10/memory-repo" "$tmp10/claude-personas-myapp"
 
 ( cd "$tmp10/claude-personas-myapp" && \
-  bash "$INIT_CLONE" developer --project-url "$tmp10/project-repo.git" )
+  HOME="$tmp10/home" bash "$INIT_CLONE" developer --project-url "$tmp10/project-repo.git" )
 
-count1="$(grep -cE '^\/?\.claude\/memory\/?$' "$tmp10/myapp/.gitignore" || true)"
+count1="$(grep -cxF '/.claude/memory' "$tmp10/myapp/.git/info/exclude" || true)"
 
 # Re-run with --force
 ( cd "$tmp10/claude-personas-myapp" && \
-  bash "$INIT_CLONE" developer --force --project-url "$tmp10/project-repo.git" )
+  HOME="$tmp10/home" bash "$INIT_CLONE" developer --force --project-url "$tmp10/project-repo.git" )
 
-count2="$(grep -cE '^\/?\.claude\/memory\/?$' "$tmp10/myapp/.gitignore" || true)"
-assert_equal "$count1" "$count2" ".claude/memory/ line count unchanged after --force re-run"
-assert_equal "1" "$count2" "exactly one .claude/memory/ line in .gitignore"
+count2="$(grep -cxF '/.claude/memory' "$tmp10/myapp/.git/info/exclude" || true)"
+assert_equal "$count1" "$count2" "exclude line count unchanged after --force re-run"
+assert_equal "1" "$count2" "exactly one /.claude/memory line in exclude"
 
 cleanup_clone_test_fixture "$tmp10"
 
@@ -228,15 +263,16 @@ cleanup_clone_test_fixture "$tmp10"
 echo "=== test_init_clone --main with taken no-suffix path fails hard ==="
 tmp11="$(mktemp -d)"
 make_clone_test_fixture "$tmp11"
+mkdir -p "$tmp11/home"
 mv "$tmp11/memory-repo" "$tmp11/claude-personas-myapp"
 
 # Block the no-suffix slot with developer first
 ( cd "$tmp11/claude-personas-myapp" && \
-  bash "$INIT_CLONE" developer --project-url "$tmp11/project-repo.git" )
+  HOME="$tmp11/home" bash "$INIT_CLONE" developer --project-url "$tmp11/project-repo.git" )
 
 # Now pm --main should fail (no-suffix taken, no --force)
 if ( cd "$tmp11/claude-personas-myapp" && \
-     bash "$INIT_CLONE" pm --main --project-url "$tmp11/project-repo.git" ) 2>/dev/null; then
+     HOME="$tmp11/home" bash "$INIT_CLONE" pm --main --project-url "$tmp11/project-repo.git" ) 2>/dev/null; then
   echo "  FAIL: --main should have errored when no-suffix path was taken without --force"
   exit 1
 else
@@ -252,16 +288,18 @@ cleanup_clone_test_fixture "$tmp11"
 echo "=== test_init_clone --target overrides suffix logic ==="
 tmp12="$(mktemp -d)"
 make_clone_test_fixture "$tmp12"
+mkdir -p "$tmp12/home"
 mv "$tmp12/memory-repo" "$tmp12/claude-personas-myapp"
 
 custom="$tmp12/custom-clone-path"
 
 ( cd "$tmp12/claude-personas-myapp" && \
-  bash "$INIT_CLONE" developer --target "$custom" --project-url "$tmp12/project-repo.git" )
+  HOME="$tmp12/home" bash "$INIT_CLONE" developer --target "$custom" --project-url "$tmp12/project-repo.git" )
 
 assert_exists "$custom" "developer landed at --target custom path"
 assert_exists "$custom/.git" "--target clone is a real git repo"
-assert_symlink "$custom/.claude/memory" "../../claude-personas-myapp/developer" "memory symlink in --target clone"
+assert_symlink "$custom/.agents/memory" "../../claude-personas-myapp/developer" "mount in --target clone"
+assert_symlink "$custom/.claude/memory" "../.agents/memory" "hop in --target clone"
 # Default paths should NOT have been created
 assert_not_exists "$tmp12/myapp" "default no-suffix path NOT created when --target given"
 assert_not_exists "$tmp12/myapp-developer" "default suffix path NOT created when --target given"
@@ -272,6 +310,7 @@ cleanup_clone_test_fixture "$tmp12"
 echo "=== test_init_clone --force on non-git directory refuses ==="
 tmp13="$(mktemp -d)"
 make_clone_test_fixture "$tmp13"
+mkdir -p "$tmp13/home"
 mv "$tmp13/memory-repo" "$tmp13/claude-personas-myapp"
 
 # Create a plain (non-git) directory at the no-suffix path
@@ -279,7 +318,7 @@ mkdir "$tmp13/myapp"
 touch "$tmp13/myapp/some-existing-file"
 
 if ( cd "$tmp13/claude-personas-myapp" && \
-     bash "$INIT_CLONE" developer --force --project-url "$tmp13/project-repo.git" ) 2>/dev/null; then
+     HOME="$tmp13/home" bash "$INIT_CLONE" developer --force --project-url "$tmp13/project-repo.git" ) 2>/dev/null; then
   echo "  FAIL: --force should have refused on non-git directory"
   exit 1
 else
@@ -296,6 +335,7 @@ cleanup_clone_test_fixture "$tmp13"
 echo "=== test_init_clone v3.0 -> v3.1 migration ==="
 tmp14="$(mktemp -d)"
 make_clone_test_fixture "$tmp14"
+mkdir -p "$tmp14/home"
 mv "$tmp14/memory-repo" "$tmp14/claude-personas-myapp"
 
 # Arrange: clone the project, then plant a LEGACY v3.0 layout by hand
@@ -306,28 +346,33 @@ printf "\n# legacy v3.0 marker\n/memory/\n" >> "$tmp14/myapp/.gitignore"
 
 # Act: run --force, which should detect the legacy layout and migrate
 ( cd "$tmp14/claude-personas-myapp" && \
-  bash "$INIT_CLONE" developer --force --project-url "$tmp14/project-repo.git" )
+  HOME="$tmp14/home" bash "$INIT_CLONE" developer --force --project-url "$tmp14/project-repo.git" )
 
 # Assert: new layout exists
-assert_symlink "$tmp14/myapp/.claude/memory" "../../claude-personas-myapp/developer" "new .claude/memory symlink created"
+assert_symlink "$tmp14/myapp/.agents/memory" "../../claude-personas-myapp/developer" "new mount created"
+assert_symlink "$tmp14/myapp/.claude/memory" "../.agents/memory" "new hop created"
 assert_exists "$tmp14/myapp/.claude/memory/MEMORY.md" "MEMORY.md resolves through new symlink"
 
 # Assert: legacy root symlink removed
 assert_not_exists "$tmp14/myapp/memory" "legacy root memory/ symlink removed"
 
-# Assert: legacy /memory/ line removed from .gitignore, new /.claude/memory/ line present
+# Assert: legacy /memory/ line removed from .gitignore
 if grep -qE '^/?memory/?$' "$tmp14/myapp/.gitignore"; then
   echo "  FAIL: legacy /memory/ line still in .gitignore"
   exit 1
 else
   echo "  PASS: legacy /memory/ line removed from .gitignore"
 fi
-if grep -qE '^/?\.claude/memory/?$' "$tmp14/myapp/.gitignore"; then
-  echo "  PASS: /.claude/memory/ line present in .gitignore"
-else
-  echo "  FAIL: /.claude/memory/ line not in .gitignore"
-  exit 1
-fi
+
+# Exclude entries present (replaces the old .gitignore-line assertion).
+for pat in "/.agents/memory" "/.claude/memory"; do
+  if grep -qxF "$pat" "$tmp14/myapp/.git/info/exclude"; then
+    echo "  PASS: $pat in .git/info/exclude"
+  else
+    echo "  FAIL: $pat missing from .git/info/exclude"
+    exit 1
+  fi
+done
 
 cleanup_clone_test_fixture "$tmp14"
 
@@ -335,6 +380,7 @@ cleanup_clone_test_fixture "$tmp14"
 echo "=== test_init_clone v3.0 -> v3.1 migration, single-line .gitignore ==="
 tmp15="$(mktemp -d)"
 make_clone_test_fixture "$tmp15"
+mkdir -p "$tmp15/home"
 mv "$tmp15/memory-repo" "$tmp15/claude-personas-myapp"
 
 # Arrange: clone the project, plant the v3.0 layout, but make .gitignore
@@ -345,7 +391,7 @@ printf "/memory/\n" > "$tmp15/myapp/.gitignore"
 
 # Act
 ( cd "$tmp15/claude-personas-myapp" && \
-  bash "$INIT_CLONE" developer --force --project-url "$tmp15/project-repo.git" )
+  HOME="$tmp15/home" bash "$INIT_CLONE" developer --force --project-url "$tmp15/project-repo.git" )
 
 # Assert legacy /memory/ removed from .gitignore (regression: grep -v exited 1
 # when no lines survived, the && short-circuited mv, silently leaving the line)
@@ -356,13 +402,15 @@ else
   echo "  PASS: legacy /memory/ removed from single-line .gitignore"
 fi
 
-# Assert new /.claude/memory/ line was added
-if grep -qE '^/?\.claude/memory/?$' "$tmp15/myapp/.gitignore"; then
-  echo "  PASS: /.claude/memory/ line added"
-else
-  echo "  FAIL: /.claude/memory/ line not added"
-  exit 1
-fi
+# Exclude entries present (replaces the old .gitignore-line assertion).
+for pat in "/.agents/memory" "/.claude/memory"; do
+  if grep -qxF "$pat" "$tmp15/myapp/.git/info/exclude"; then
+    echo "  PASS: $pat in .git/info/exclude"
+  else
+    echo "  FAIL: $pat missing from .git/info/exclude"
+    exit 1
+  fi
+done
 
 # Assert no orphaned .gitignore.tmp file
 assert_not_exists "$tmp15/myapp/.gitignore.tmp" ".gitignore.tmp cleaned up"
@@ -373,6 +421,7 @@ cleanup_clone_test_fixture "$tmp15"
 echo "=== test_init_clone rollback on ln -s failure (fresh clone) ==="
 tmp16="$(mktemp -d)"
 make_clone_test_fixture "$tmp16"
+mkdir -p "$tmp16/home"
 mv "$tmp16/memory-repo" "$tmp16/claude-personas-myapp"
 
 # Inject an ln failure via a PATH shim. This simulates the race/permission
@@ -386,7 +435,7 @@ printf '#!/usr/bin/env bash\necho "ln: simulated failure (test shim)" >&2\nexit 
 chmod +x "$shimbin16/ln"
 
 if ( cd "$tmp16/claude-personas-myapp" && \
-     PATH="$shimbin16:$PATH" bash "$INIT_CLONE" developer --project-url "$tmp16/project-repo.git" ) 2>/dev/null; then
+     HOME="$tmp16/home" PATH="$shimbin16:$PATH" bash "$INIT_CLONE" developer --project-url "$tmp16/project-repo.git" ) 2>/dev/null; then
   echo "  FAIL: should have exited nonzero when ln -s failed"
   exit 1
 else
@@ -403,11 +452,12 @@ cleanup_clone_test_fixture "$tmp16"
 echo "=== test_init_clone rollback safety: --force preserves existing clone on ln -s failure ==="
 tmp17="$(mktemp -d)"
 make_clone_test_fixture "$tmp17"
+mkdir -p "$tmp17/home"
 mv "$tmp17/memory-repo" "$tmp17/claude-personas-myapp"
 
 # First, create the clone normally (real ln).
 ( cd "$tmp17/claude-personas-myapp" && \
-  bash "$INIT_CLONE" developer --project-url "$tmp17/project-repo.git" )
+  HOME="$tmp17/home" bash "$INIT_CLONE" developer --project-url "$tmp17/project-repo.git" )
 assert_exists "$tmp17/myapp/.git" "precondition: clone created in first run"
 
 # Re-run with --force but inject an ln failure. Because the clone was NOT
@@ -418,7 +468,7 @@ printf '#!/usr/bin/env bash\necho "ln: simulated failure (test shim)" >&2\nexit 
 chmod +x "$shimbin17/ln"
 
 if ( cd "$tmp17/claude-personas-myapp" && \
-     PATH="$shimbin17:$PATH" bash "$INIT_CLONE" developer --force --project-url "$tmp17/project-repo.git" ) 2>/dev/null; then
+     HOME="$tmp17/home" PATH="$shimbin17:$PATH" bash "$INIT_CLONE" developer --force --project-url "$tmp17/project-repo.git" ) 2>/dev/null; then
   echo "  FAIL: --force should have exited nonzero when ln -s failed"
   exit 1
 else
@@ -438,6 +488,7 @@ cleanup_clone_test_fixture "$tmp17"
 echo "=== test_init_clone rollback on mkdir failure (fresh clone) ==="
 tmp18="$(mktemp -d)"
 make_clone_test_fixture "$tmp18"
+mkdir -p "$tmp18/home"
 mv "$tmp18/memory-repo" "$tmp18/claude-personas-myapp"
 
 # Inject a failure when the script creates the .claude wiring dir, AFTER the
@@ -459,7 +510,7 @@ SHIM
 chmod +x "$shimbin18/mkdir"
 
 if ( cd "$tmp18/claude-personas-myapp" && \
-     PATH="$shimbin18:$PATH" bash "$INIT_CLONE" developer --project-url "$tmp18/project-repo.git" ) 2>/dev/null; then
+     HOME="$tmp18/home" PATH="$shimbin18:$PATH" bash "$INIT_CLONE" developer --project-url "$tmp18/project-repo.git" ) 2>/dev/null; then
   echo "  FAIL: should have exited nonzero when mkdir of .claude failed"
   exit 1
 else
@@ -479,6 +530,7 @@ cleanup_clone_test_fixture "$tmp18"
 echo "=== test_init_clone rollback when cloned repo ships .claude/memory (fresh clone) ==="
 tmp19="$(mktemp -d)"
 make_clone_test_fixture "$tmp19"
+mkdir -p "$tmp19/home"
 mv "$tmp19/memory-repo" "$tmp19/claude-personas-myapp"
 
 # Make the PROJECT repo ship a committed .claude/memory (uncommon but legal).
@@ -496,7 +548,7 @@ rm -rf "$seed19"
 # the clone), then MEMORY_LINK already exists → script errors. The
 # freshly-created clone must still be rolled back.
 if ( cd "$tmp19/claude-personas-myapp" && \
-     bash "$INIT_CLONE" developer --project-url "$tmp19/project-repo.git" ) 2>/dev/null; then
+     HOME="$tmp19/home" bash "$INIT_CLONE" developer --project-url "$tmp19/project-repo.git" ) 2>/dev/null; then
   echo "  FAIL: should have exited nonzero when cloned repo already has .claude/memory"
   exit 1
 else

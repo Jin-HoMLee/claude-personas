@@ -151,18 +151,39 @@ else
   CREATED_CLONE=1
 fi
 
-# Wire memory symlink under .claude/. On --force, also clean up any legacy
-# root-level memory/ symlink and stale /memory/ .gitignore line from v3.0.
-# A failure anywhere in this post-clone wiring window must roll back a clone
-# we created this run — not only an ln -s failure.
-if ! mkdir -p "$TARGET/.claude"; then
-  echo "Error: failed to create $TARGET/.claude" >&2
+# --- Helpers for wiring ------------------------------------------------------
+
+# Idempotently append a line to the clone's .git/info/exclude (per-clone
+# untracked-ness that never dirties the project repo - spec decision log).
+EXCLUDE_FILE="$TARGET/.git/info/exclude"
+add_exclude() {
+  mkdir -p "$(dirname "$EXCLUDE_FILE")"
+  touch "$EXCLUDE_FILE"
+  grep -qxF "$1" "$EXCLUDE_FILE" 2>/dev/null || printf '%s\n' "$1" >> "$EXCLUDE_FILE"
+}
+
+# Per-vendor failures report and continue - one vendor's problem must not
+# kill the other two (spec: init-clone.sh changes, last bullet).
+VENDOR_WARNINGS=0
+vendor_warn() {
+  echo "WARN: $*" >&2
+  VENDOR_WARNINGS=$((VENDOR_WARNINGS + 1))
+}
+
+# --- Core mount (vendor-neutral, rollback-protected) --------------------------
+# .agents/memory -> ../../<memory-repo>/<role>   (the single role signal)
+# .claude/memory -> ../.agents/memory            (Claude Code in-repo hop)
+# A failure anywhere in this window must roll back a clone we created this run.
+
+if ! mkdir -p "$TARGET/.agents" "$TARGET/.claude"; then
+  echo "Error: failed to create $TARGET/.agents or $TARGET/.claude" >&2
   rollback_fresh_clone
   exit 1
 fi
+AGENTS_LINK="$TARGET/.agents/memory"
 MEMORY_LINK="$TARGET/.claude/memory"
 
-# Migrate v3.0 layout: legacy root symlink → back up under .claude/
+# Migrate v3.0 layout: legacy root symlink -> back up under .claude/
 LEGACY_LINK="$TARGET/memory"
 if [[ "$FORCE" -eq 1 && ( -L "$LEGACY_LINK" || -e "$LEGACY_LINK" ) ]]; then
   LEGACY_BACKUP="$TARGET/.claude/memory.legacy-backup-$(date +%Y%m%d-%H%M%S)"
@@ -170,44 +191,50 @@ if [[ "$FORCE" -eq 1 && ( -L "$LEGACY_LINK" || -e "$LEGACY_LINK" ) ]]; then
   echo "✓ Migrated legacy root memory/ → $LEGACY_BACKUP"
 fi
 
-if [[ -e "$MEMORY_LINK" || -L "$MEMORY_LINK" ]]; then
-  if [[ "$FORCE" -eq 1 ]]; then
-    BACKUP="$TARGET/.claude/memory.backup-$(date +%Y%m%d-%H%M%S)"
-    mv "$MEMORY_LINK" "$BACKUP"
-    echo "✓ Backed up existing .claude/memory → $BACKUP"
-  else
-    echo "Error: $MEMORY_LINK already exists. Use --force to back up." >&2
-    # Reachable only on a fresh clone (FORCE=0 + existing target exits earlier),
-    # so this leaves an unwired clone too — roll it back. --force re-run re-clones.
-    rollback_fresh_clone
-    exit 1
+# Back up whatever sits at either mount point (v3.1 direct symlink on a
+# --force migration, or artifacts from a prior run).
+for link in "$AGENTS_LINK" "$MEMORY_LINK"; do
+  if [[ -e "$link" || -L "$link" ]]; then
+    if [[ "$FORCE" -eq 1 ]]; then
+      BACKUP="$link.backup-$(date +%Y%m%d-%H%M%S)"
+      mv "$link" "$BACKUP"
+      echo "✓ Backed up existing ${link#"$TARGET"/} → ${BACKUP#"$TARGET"/}"
+    else
+      echo "Error: $link already exists. Use --force to back up." >&2
+      rollback_fresh_clone
+      exit 1
+    fi
   fi
-fi
+done
 
-if ! ln -s "../../$MEMORY_REPO_NAME/$ROLE" "$MEMORY_LINK"; then
-  echo "Error: failed to create memory symlink $MEMORY_LINK" >&2
+if ! ln -s "../../$MEMORY_REPO_NAME/$ROLE" "$AGENTS_LINK"; then
+  echo "Error: failed to create memory mount $AGENTS_LINK" >&2
   rollback_fresh_clone
   exit 1
 fi
-echo "✓ Symlinked $MEMORY_LINK → ../../$MEMORY_REPO_NAME/$ROLE"
+echo "✓ Symlinked .agents/memory → ../../$MEMORY_REPO_NAME/$ROLE"
 
-# Update .gitignore: add /.claude/memory/, remove legacy /memory/ if present
+if ! ln -s "../.agents/memory" "$MEMORY_LINK"; then
+  echo "Error: failed to create Claude Code hop $MEMORY_LINK" >&2
+  rollback_fresh_clone
+  exit 1
+fi
+echo "✓ Symlinked .claude/memory → ../.agents/memory"
+
+# Untracked-ness via exclude, NOT .gitignore. Existing committed v3.1
+# .gitignore lines keep working; we just stop adding new ones. NOTE the
+# entries have no trailing slash: a trailing slash matches only real
+# directories, and these paths are symlinks.
+add_exclude "# claude-personas vendor wiring (per-clone, untracked)"
+add_exclude "/.agents/memory"
+add_exclude "/.claude/memory"
+
+# Remove legacy /memory/ line on --force (v3.0 -> v3.1 migration) - unchanged.
 GITIGNORE="$TARGET/.gitignore"
-touch "$GITIGNORE"
-
-# Remove legacy /memory/ line on --force (v3.0 → v3.1 migration)
-if [[ "$FORCE" -eq 1 ]] && grep -qE '^/?memory/?$' "$GITIGNORE"; then
-  # Portable in-place edit: write to temp, swap. grep -v exits 1 when output
-  # is empty (e.g. .gitignore was only the legacy line); || true keeps us
-  # going so the mv still runs and replaces the file with empty content.
+if [[ "$FORCE" -eq 1 && -f "$GITIGNORE" ]] && grep -qE '^/?memory/?$' "$GITIGNORE"; then
   grep -vE '^/?memory/?$' "$GITIGNORE" > "$GITIGNORE.tmp" || true
   mv "$GITIGNORE.tmp" "$GITIGNORE"
   echo "✓ Removed legacy /memory/ from $GITIGNORE"
-fi
-
-if ! grep -qE '^/?\.claude/memory/?$' "$GITIGNORE"; then
-  printf "\n# claude-personas role-memory symlink\n/.claude/memory/\n" >> "$GITIGNORE"
-  echo "✓ Added /.claude/memory/ to $GITIGNORE"
 fi
 
 # Persist project URL
@@ -218,4 +245,8 @@ if [[ ! -f "$PROJECT_TXT" ]]; then
 fi
 
 echo ""
-echo "Done. Open $TARGET in Claude Code → .claude/memory/MEMORY.md auto-loads."
+if [[ "$VENDOR_WARNINGS" -gt 0 ]]; then
+  echo "Done with $VENDOR_WARNINGS vendor warning(s) - see WARN lines above. Core mount is wired."
+  exit 2
+fi
+echo "Done. Open $TARGET in Claude Code → role memory loads via .claude/memory → .agents/memory."
