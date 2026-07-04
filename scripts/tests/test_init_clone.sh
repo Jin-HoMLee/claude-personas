@@ -762,4 +762,45 @@ assert_symlink "$tmp26/myapp/.agents/memory" "../../claude-personas-myapp/develo
 
 cleanup_clone_test_fixture "$tmp26"
 
+# --- OpenCode: default prints the one-time global step, writes no per-clone file ---
+echo "=== test_init_clone OpenCode default (global instructions note) ==="
+tmp27="$(mktemp -d)"
+make_clone_test_fixture "$tmp27"
+mv "$tmp27/memory-repo" "$tmp27/claude-personas-myapp"
+mkdir -p "$tmp27/home"
+
+out27="$( cd "$tmp27/claude-personas-myapp" && \
+  HOME="$tmp27/home" bash "$INIT_CLONE" developer --project-url "$tmp27/project-repo.git" 2>/dev/null )" || true
+assert_not_exists "$tmp27/myapp/opencode.json" "no per-clone opencode.json by default"
+case "$out27" in
+  *".agents/memory/MEMORY.md"*opencode*|*opencode*".agents/memory/MEMORY.md"*)
+    echo "  PASS: one-time global OpenCode step printed";;
+  *) echo "  FAIL: global OpenCode step not printed"; exit 1;;
+esac
+
+cleanup_clone_test_fixture "$tmp27"
+
+# --- OpenCode: --opencode-per-clone writes the absolute-path fallback ---
+echo "=== test_init_clone OpenCode per-clone fallback ==="
+tmp28="$(mktemp -d)"
+make_clone_test_fixture "$tmp28"
+mv "$tmp28/memory-repo" "$tmp28/claude-personas-myapp"
+mkdir -p "$tmp28/home"
+
+( cd "$tmp28/claude-personas-myapp" && \
+  HOME="$tmp28/home" bash "$INIT_CLONE" developer --opencode-per-clone --project-url "$tmp28/project-repo.git" ) || [ $? -eq 2 ]
+
+oc="$tmp28/myapp/opencode.json"
+assert_exists "$oc" "per-clone opencode.json written"
+clone_abs28="$(cd "$tmp28/myapp" && pwd -P)"
+got="$(jq -r '.instructions[0]' "$oc")"
+assert_equal "$clone_abs28/.agents/memory/MEMORY.md" "$got" "instructions entry is the absolute resolved path"
+if grep -qxF "/opencode.json" "$tmp28/myapp/.git/info/exclude"; then
+  echo "  PASS: /opencode.json in exclude"
+else
+  echo "  FAIL: /opencode.json missing from exclude"; exit 1
+fi
+
+cleanup_clone_test_fixture "$tmp28"
+
 print_summary

@@ -20,6 +20,10 @@ Usage: $(basename "$0") <role> [--project-url <url>] [--target <path>] [--main] 
   --target        Explicit target path for the clone. Overrides suffix rules.
   --main          Force this role to claim the no-suffix path \$PARENT/<project-name>/.
   --force         Re-wire .claude/memory/ in an existing clean clone (must be same project URL).
+  --opencode-per-clone  Write a per-clone opencode.json (absolute path) instead of
+                        relying on the one-time global ~/.config/opencode/opencode.json
+                        instructions entry. Use when OpenCode cannot glob through the
+                        .agents/memory symlink (see docs/vendor-caveats.md).
 
 Run from inside your memory repo (claude-personas-<app>/).
 EOF
@@ -31,6 +35,7 @@ PROJECT_URL=""
 TARGET=""
 MAIN=0
 FORCE=0
+OPENCODE_PER_CLONE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
@@ -38,6 +43,7 @@ while [[ $# -gt 0 ]]; do
     --target) TARGET="$2"; shift 2 ;;
     --main) MAIN=1; shift ;;
     --force) FORCE=1; shift ;;
+    --opencode-per-clone) OPENCODE_PER_CLONE=1; shift ;;
     -*) echo "Error: unknown flag $1" >&2; usage >&2; exit 1 ;;
     *) if [[ -z "$ROLE" ]]; then ROLE="$1"; shift; else echo "Error: unexpected arg $1" >&2; exit 1; fi ;;
   esac
@@ -347,6 +353,47 @@ if [[ "$CODEX_WIRED" -eq 1 ]]; then
   echo "  1. Open Codex in $TARGET and accept the repo trust prompt."
   echo "  2. Run /hooks in Codex and approve the generated SessionStart hook."
   echo "     (Re-approval is required whenever .codex/hooks.json changes.)"
+fi
+
+# --- OpenCode adapter ----------------------------------------------------------
+# Preferred wiring is GLOBAL and one-time (spec decision log): a relative
+# "instructions" entry resolves against each session's project dir, so a
+# single entry serves every wired clone. Gated on OpenCode's symlink-glob
+# behavior (live test 1) - the per-clone absolute-path file is the fallback.
+OPENCODE_GLOBAL_NOTE=0
+wire_opencode_adapter() {
+  if [[ "$OPENCODE_PER_CLONE" -ne 1 ]]; then
+    OPENCODE_GLOBAL_NOTE=1
+    return 0
+  fi
+  local oc="$TARGET/opencode.json" clone_abs
+  clone_abs="$(cd "$TARGET" && pwd -P)" || { vendor_warn "OpenCode: cannot resolve clone path"; return 0; }
+  if [[ -e "$oc" && "$FORCE" -ne 1 ]]; then
+    vendor_warn "OpenCode: $oc already exists - re-run with --force to back up and regenerate"
+    return 0
+  fi
+  if [[ -e "$oc" ]]; then
+    mv "$oc" "$oc.backup-$(date +%Y%m%d-%H%M%S)"
+    echo "✓ Backed up existing opencode.json"
+  fi
+  if ! printf '{\n  "$schema": "https://opencode.ai/config.json",\n  "instructions": ["%s"]\n}\n' "$clone_abs/.agents/memory/MEMORY.md" > "$oc"; then
+    vendor_warn "OpenCode: could not write $oc"
+    return 0
+  fi
+  add_exclude "/opencode.json"
+  echo "✓ Wrote per-clone opencode.json (absolute instructions path)"
+  return 0
+}
+
+wire_opencode_adapter
+
+if [[ "$OPENCODE_GLOBAL_NOTE" -eq 1 ]]; then
+  echo ""
+  echo "OpenCode one-time step (per machine, serves every wired clone):"
+  echo "  Add \".agents/memory/MEMORY.md\" to the \"instructions\" array in"
+  echo "  ~/.config/opencode/opencode.json"
+  echo "  (If OpenCode does not load it through the symlink, re-run with"
+  echo "   --opencode-per-clone; see docs/vendor-caveats.md.)"
 fi
 
 echo ""
