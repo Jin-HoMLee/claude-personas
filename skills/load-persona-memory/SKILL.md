@@ -25,6 +25,7 @@ Resolve the memory repo and role before reading memory, in this order - first hi
 5. Last resort: clone-naming conventions as implemented by `scripts/init-clone.sh` - the no-suffix clone is the main role (`.claude-personas/main-role.txt` when present, else `developer`); suffix clones are `<project>-<role>`.
 
 Validate that `<memory-repo>/<role>/MEMORY.md` exists before proceeding.
+Exception - `memory_manager` (step 4): a memory repo need not have a `memory_manager/` directory, so validate the repo shape instead: `.claude-personas/` plus at least one `<role>/MEMORY.md`.
 
 ## Read Order
 
@@ -37,6 +38,8 @@ Read these two indices first:
 <memory-repo>/<role>/MEMORY.md
 <memory-repo>/<role>/shared/MEMORY.md
 ```
+
+As `memory_manager` (no role directory of its own), read `shared/MEMORY.md` plus each `<role>/MEMORY.md` directly instead.
 
 Treat the role index and shared index as routing tables.
 Read linked files only when relevant to the current task.
