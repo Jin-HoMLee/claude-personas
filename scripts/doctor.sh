@@ -17,13 +17,12 @@
 #
 # Never uses `set -e`: one refusal must not hide others.
 #
-# SKILLS_MOUNT / OPENCODE_MODE are produced globals not consumed in this file
-# yet: they are read by topology_*_checks once the embedded/role-clones
-# catalogs land in Tasks 4-8 (see the per-assignment shellcheck disables at
-# each of those globals below). CHECK / MEMORY_LAYOUT / CLAUDE_HOOKS /
-# CODEX_HOOKS are consumed by this file's shared check core (need_link,
-# check_payload, check_hook_scripts). ADAPTERS is consumed by
-# topology_user_tier_checks (Task 3).
+# OPENCODE_MODE is a produced global not consumed in this file yet: it is
+# read once the role-clones catalog lands (Task 5+; see its shellcheck
+# disable below). CHECK / MEMORY_LAYOUT / CLAUDE_HOOKS / CODEX_HOOKS are
+# consumed by this file's shared check core (need_link, check_payload,
+# check_hook_scripts). ADAPTERS and SKILLS_MOUNT are consumed by
+# topology_user_tier_checks (Task 3) and topology_embedded_checks (Task 4).
 set -u
 
 # --- constants: the manifest key vocabulary (the validation whitelist) ---
@@ -417,11 +416,10 @@ while IFS= read -r _v; do
   [ -n "$_v" ] && CODEX_HOOKS+=("$_v")
 done < <(manifest_get_all codex_hook)
 
-# shellcheck disable=SC2034 # consumed by topology_*_checks (Tasks 4-8)
 SKILLS_MOUNT="$(manifest_get skills_mount)"
 [ -n "$SKILLS_MOUNT" ] || SKILLS_MOUNT="false"
 
-# shellcheck disable=SC2034 # consumed by topology_*_checks (Tasks 4-8)
+# shellcheck disable=SC2034 # consumed by topology_role_clones_checks (Task 5+)
 OPENCODE_MODE="$(manifest_get opencode)"
 [ -n "$OPENCODE_MODE" ] || OPENCODE_MODE="global"
 
@@ -473,7 +471,6 @@ need_link() {
   fi
 }
 
-# shellcheck disable=SC2329 # this task's shared machinery; first CLI consumer lands in Task 4
 require_jq() {
   # require_jq <what-for>
   # jq present: silent, returns 0. jq absent: one DRIFT line naming what the
@@ -548,8 +545,184 @@ topology_role_clones_checks() {
   :
 }
 
+_embedded_check_claude_settings_hooks() {
+  # Every declared claude_hook must be wired in .claude/settings.json via the
+  # exact "$CLAUDE_PROJECT_DIR/<hook>" command string - including the
+  # embedded literal double quotes, which is what Claude Code itself stores
+  # (see cerebrum's .claude/settings.json). Report-only: doctor.sh never
+  # rewrites a hand-authored settings.json.
+  if ! require_jq "settings.json hook checks"; then
+    return 0
+  fi
+  if [ "${#CLAUDE_HOOKS[@]}" -eq 0 ]; then
+    return 0
+  fi
+
+  local cmds hook expected
+  cmds="$(jq -r '.hooks.SessionStart[]?.hooks[]?.command' "$ROOT/.claude/settings.json" 2>/dev/null)"
+  for hook in "${CLAUDE_HOOKS[@]}"; do
+    expected="$(printf '"$CLAUDE_PROJECT_DIR/%s"' "$hook")"
+    if ! printf '%s\n' "$cmds" | grep -qxF -- "$expected"; then
+      report_drift ".claude/settings.json does not wire claude_hook '$hook' via \$CLAUDE_PROJECT_DIR"
+    fi
+  done
+}
+
+_embedded_check_external_cc_hop() {
+  # External Claude Code auto-memory hop: $HOME/.claude/projects/<slug>/memory,
+  # where <slug> is this root's absolute (symlink-resolved) path with '/' and
+  # '.' replaced by '-' (matches Claude Code's own project-dir naming, and
+  # test_helpers.sh's compute_hash). Load-bearing: without it, Claude Code
+  # materializes a REAL directory there and memory silently diverges.
+  #
+  # A hop resolving (via pwd -P) to $ROOT/.agents/memory is OK whatever its
+  # literal target; a wrong symlink is repaired via need_link; a real
+  # directory is DRIFT, report-only (reconcile by hand); missing is DRIFT in
+  # --check, created in fix mode.
+  local root_abs slug ext canonical_ext canonical_root_memory
+  root_abs="$(cd "$ROOT" && pwd -P)"
+  slug="$(printf '%s' "$root_abs" | tr '/.' '-')"
+  ext="$HOME/.claude/projects/$slug/memory"
+  canonical_root_memory="$(cd "$root_abs/.agents/memory" 2>/dev/null && pwd -P)"
+
+  if [ -e "$ext" ] || [ -L "$ext" ]; then
+    canonical_ext="$(cd "$ext" 2>/dev/null && pwd -P)"
+    if [ -n "$canonical_ext" ] && [ "$canonical_ext" = "$canonical_root_memory" ]; then
+      return 0
+    elif [ -L "$ext" ]; then
+      need_link "$ext" "$root_abs/.claude/memory" "external CC auto-memory symlink"
+    else
+      report_drift "$ext is a real directory - Claude Code may have written memories there; reconcile by hand"
+    fi
+  elif [ "$CHECK" = 1 ]; then
+    report_drift "external CC auto-memory symlink missing ($ext)"
+  elif mkdir -p "$(dirname "$ext")" 2>/dev/null && ln -s "$root_abs/.claude/memory" "$ext" 2>/dev/null; then
+    report_fixed "$ext -> $root_abs/.claude/memory"
+  else
+    report_error "could not create $ext"
+  fi
+}
+
+_embedded_regen_codex_hooks_json() {
+  # Regenerate .codex/hooks.json wholesale for THIS root: one hooks-array
+  # entry per declared codex_hook, in manifest order, matching the JSON
+  # shape cerebrum's sync.sh writes (single SessionStart entry, "timeout":
+  # 10, statusMessage derived from the hook's basename).
+  local root_abs="$1" out tmp_json i n hook base
+  out="$ROOT/.codex/hooks.json"
+  tmp_json="$(mktemp 2>/dev/null)"
+  if [ -z "$tmp_json" ]; then
+    report_error "could not create temp file for .codex/hooks.json regeneration"
+    return 0
+  fi
+
+  {
+    printf '{\n  "hooks": {\n    "SessionStart": [\n      {\n        "hooks": [\n'
+    n="${#CODEX_HOOKS[@]}"
+    i=0
+    for hook in "${CODEX_HOOKS[@]}"; do
+      i=$((i + 1))
+      base="$(basename "$hook")"
+      printf '          {\n'
+      printf '            "type": "command",\n'
+      printf '            "command": "'"'"'%s/%s'"'"'",\n' "$root_abs" "$hook"
+      printf '            "timeout": 10,\n'
+      printf '            "statusMessage": "Running %s…"\n' "$base"
+      if [ "$i" -lt "$n" ]; then
+        printf '          },\n'
+      else
+        printf '          }\n'
+      fi
+    done
+    printf '        ]\n      }\n    ]\n  }\n}\n'
+  } > "$tmp_json"
+
+  if mkdir -p "$ROOT/.codex" 2>/dev/null && mv "$tmp_json" "$out" 2>/dev/null; then
+    report_fixed ".codex/hooks.json regenerated for $root_abs"
+  else
+    rm -f "$tmp_json"
+    report_error "could not regenerate .codex/hooks.json"
+  fi
+}
+
+_embedded_check_codex_hooks_json() {
+  # .codex/hooks.json must wire every declared codex_hook as an absolute,
+  # single-quoted, exact-match command string rooted at THIS instance's path
+  # - grep -qxF (whole-line exact match), never a substring check, which
+  # would wrongly accept another machine's absolute prefix as long as the
+  # hook's relative suffix happened to appear somewhere in the file.
+  if ! require_jq "hooks.json checks"; then
+    return 0
+  fi
+  if [ "${#CODEX_HOOKS[@]}" -eq 0 ]; then
+    return 0
+  fi
+
+  local root_abs cmds hook expected codex_ok=1
+  root_abs="$(cd "$ROOT" && pwd -P)"
+  if [ -f "$ROOT/.codex/hooks.json" ]; then
+    cmds="$(jq -r '.hooks.SessionStart[]?.hooks[]?.command' "$ROOT/.codex/hooks.json" 2>/dev/null)"
+  else
+    cmds=""
+  fi
+  for hook in "${CODEX_HOOKS[@]}"; do
+    expected="'$root_abs/$hook'"
+    if ! printf '%s\n' "$cmds" | grep -qxF -- "$expected"; then
+      codex_ok=0
+    fi
+  done
+
+  if [ "$codex_ok" = 1 ]; then
+    return 0
+  fi
+
+  if [ "$CHECK" = 1 ]; then
+    report_drift ".codex/hooks.json does not wire all declared codex_hook entries for this root ($root_abs)"
+  else
+    _embedded_regen_codex_hooks_json "$root_abs"
+  fi
+}
+
+_embedded_check_opencode_instructions() {
+  # Root opencode.json's instructions array must contain the flat memory
+  # index path. Report-only: doctor.sh never rewrites a hand-authored
+  # opencode.json, only names the exact line to add.
+  if ! require_jq "opencode.json checks"; then
+    return 0
+  fi
+  if ! jq -e '.instructions | index(".agents/memory/MEMORY.md")' "$ROOT/opencode.json" >/dev/null 2>&1; then
+    report_drift "opencode.json missing or its instructions lack \".agents/memory/MEMORY.md\" - add it to the instructions array"
+  fi
+}
+
 topology_embedded_checks() {
-  :
+  # In-repo links: fixable regardless of which adapters are declared.
+  need_link "$ROOT/.claude/memory" "../.agents/memory" ".claude/memory"
+  need_link "$ROOT/CLAUDE.md" "AGENTS.md" "CLAUDE.md"
+  if [ "$SKILLS_MOUNT" = "true" ]; then
+    need_link "$ROOT/.claude/skills" "../.agents/skills" ".claude/skills"
+  fi
+
+  # Per-adapter wiring, each gated on its adapter= declaration. Length check
+  # first: bash 3.2's `set -u` treats an empty array as unbound on
+  # expansion (same guard as topology_user_tier_checks).
+  local a
+  if [ "${#ADAPTERS[@]}" -gt 0 ]; then
+    for a in "${ADAPTERS[@]}"; do
+      case "$a" in
+        claude-code)
+          _embedded_check_claude_settings_hooks
+          _embedded_check_external_cc_hop
+          ;;
+        codex)
+          _embedded_check_codex_hooks_json
+          ;;
+        opencode)
+          _embedded_check_opencode_instructions
+          ;;
+      esac
+    done
+  fi
 }
 
 topology_user_tier_checks() {

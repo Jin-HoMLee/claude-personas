@@ -48,6 +48,11 @@ for topo in role-clones embedded user-tier; do
     embedded)
       mkdir -p "$tmp/.agents/memory"
       echo "# index" > "$tmp/.agents/memory/MEMORY.md"
+      echo "# AGENTS" > "$tmp/AGENTS.md"
+      # opencode.json's instructions check (Task 4) is report-only - never
+      # fixed - so unlike the in-repo links and the external CC hop, it must
+      # be seeded correctly up front for this starter to ever reach clean.
+      echo '{"instructions": [".agents/memory/MEMORY.md"]}' > "$tmp/opencode.json"
       ;;
     user-tier)
       mkdir -p "$tmp/.agents/memory"
@@ -57,14 +62,14 @@ for topo in role-clones embedded user-tier; do
   esac
 
   topo_home=""
-  if [ "$topo" = "user-tier" ]; then
-    # user-tier's real check catalog (Task 3) touches $HOME-relative paths
-    # (the canonical home hop + gated per-tool adapters). Give it an
-    # isolated, empty HOME and wire it once in fix mode before the generic
-    # re-check below, so this loop keeps testing --init/payload sanity
-    # instead of incidentally reading the real machine's HOME. (embedded /
-    # role-clones stay inert stubs until their own external-hop checks land
-    # in Tasks 4-8 - the same isolation will be needed there too.)
+  if [ "$topo" = "user-tier" ] || [ "$topo" = "embedded" ]; then
+    # Both topologies' real check catalogs (Tasks 3-4) touch $HOME-relative
+    # paths (user-tier's canonical home hop + gated adapters; embedded's
+    # external CC auto-memory hop). Give each an isolated, empty HOME and
+    # wire it once in fix mode before the generic re-check below, so this
+    # loop keeps testing --init/payload sanity instead of incidentally
+    # reading the real machine's HOME. (role-clones stays an inert stub
+    # until Task 5 - no isolation needed there yet.)
     topo_home="$(mktemp -d)"
     HOME="$topo_home" bash "$DOCTOR" --root "$tmp" > /dev/null 2>&1
     DOCTOR_STDOUT="$(HOME="$topo_home" bash "$DOCTOR" --check --root "$tmp" 2>/dev/null)"
@@ -156,10 +161,13 @@ assert_equal "2" "$DOCTOR_EXIT" "spaces around = is invalid: exit 2"
 rm -rf "$tmp"
 
 echo "=== test_doctor_manifest: # comments and blank lines are ignored ==="
-# topology=embedded, not user-tier: this is a generic manifest-parsing test
-# with no isolated HOME, and Task 3 wired real $HOME-touching checks onto
-# user-tier - embedded stays an inert stub until Task 4, so it can't leak
-# into the real machine's HOME here.
+# topology=role-clones, not embedded/user-tier: this is a generic
+# manifest-parsing test with no isolated HOME. Both user-tier (Task 3) and
+# embedded (Task 4) wired real $HOME-relative / in-repo-link checks onto
+# their topologies now; role-clones stays an inert stub until Task 5, and
+# memory_layout isn't restricted to a specific topology, so it can carry
+# memory_layout=flat here without leaking into the real machine's HOME or
+# tripping embedded's own link checks.
 tmp="$(mktemp -d)"
 mkdir -p "$tmp/.agents/memory"
 echo "# index" > "$tmp/.agents/memory/MEMORY.md"
@@ -168,7 +176,7 @@ cat > "$tmp/.agents/manifest" <<'EOF'
 
 manifest_version=1
 
-topology=embedded
+topology=role-clones
 memory_layout=flat
 # trailing comment
 EOF
@@ -183,7 +191,7 @@ mkdir -p "$tmp/.agents/memory"
 echo "# index" > "$tmp/.agents/memory/MEMORY.md"
 cat > "$tmp/.agents/manifest" <<'EOF'
 manifest_version=1
-topology=embedded
+topology=role-clones
 memory_layout=flat
   # an indented comment line
 	# a tab-indented comment line
@@ -238,12 +246,17 @@ assert_contains "$DOCTOR_STDOUT" "DRIFT: .agents/memory/MEMORY.md missing" "stdo
 rm -rf "$tmp"
 
 echo "=== test_doctor_manifest: check_payload - flat layout present is clean ==="
+# topology=role-clones (not embedded): memory_layout isn't restricted to a
+# specific topology, and role-clones stays an inert stub until Task 5 - this
+# keeps the test targeting check_payload's flat-layout branch generically,
+# without incidentally exercising embedded's own in-repo-link/adapter checks
+# (Task 4).
 tmp="$(mktemp -d)"
 mkdir -p "$tmp/.agents/memory"
 echo "# index" > "$tmp/.agents/memory/MEMORY.md"
 cat > "$tmp/.agents/manifest" <<'EOF'
 manifest_version=1
-topology=embedded
+topology=role-clones
 memory_layout=flat
 EOF
 run_doctor --check --root "$tmp"
@@ -340,12 +353,22 @@ assert_contains "$DOCTOR_STDOUT" "DRIFT: codex_hook 'scripts/some-hook.sh' not e
 rm -rf "$tmp"
 
 echo "=== test_doctor_manifest: check_hook_scripts - existing + executable hooks are clean ==="
+# claude_hook/codex_hook are embedded-only keys, so this test can't dodge
+# Task 4's own in-repo-link checks (.claude/memory, CLAUDE.md - unconditional
+# regardless of which adapters are declared) the way the generic
+# check_payload tests above do by switching to role-clones. No adapter=
+# lines are declared here, so the per-adapter (settings.json/hooks.json/
+# opencode.json/external-hop) checks stay off; only the two unconditional
+# links need pre-wiring.
 tmp="$(mktemp -d)"
-mkdir -p "$tmp/.agents/memory" "$tmp/scripts"
+mkdir -p "$tmp/.agents/memory" "$tmp/scripts" "$tmp/.claude"
 echo "# index" > "$tmp/.agents/memory/MEMORY.md"
 echo '#!/usr/bin/env bash' > "$tmp/scripts/claude-hook.sh"
 echo '#!/usr/bin/env bash' > "$tmp/scripts/codex-hook.sh"
 chmod +x "$tmp/scripts/claude-hook.sh" "$tmp/scripts/codex-hook.sh"
+echo "# AGENTS" > "$tmp/AGENTS.md"
+( cd "$tmp" && ln -s AGENTS.md CLAUDE.md )
+( cd "$tmp/.claude" && ln -s ../.agents/memory memory )
 cat > "$tmp/.agents/manifest" <<'EOF'
 manifest_version=1
 topology=embedded
