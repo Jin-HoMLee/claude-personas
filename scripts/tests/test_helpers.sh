@@ -109,6 +109,23 @@ assert_contains() {
   esac
 }
 
+assert_matches() {
+  local haystack="$1"
+  local regex="$2"
+  local msg="${3:-assert_matches}"
+  TESTS_RUN=$((TESTS_RUN + 1))
+  if echo "$haystack" | grep -qE "$regex"; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    echo "${GREEN}  PASS${RESET}: $msg"
+  else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    FAILED_TESTS+=("$msg")
+    echo "${RED}  FAIL${RESET}: $msg"
+    echo "    expected to match: $regex"
+    echo "    in: $haystack"
+  fi
+}
+
 assert_exit_nonzero() {
   local msg="${1:-command should exit non-zero}"
   shift || true
