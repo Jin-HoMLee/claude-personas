@@ -459,7 +459,15 @@ setup_wired_fixture "$base"
 # so no workspace has a .codex/hooks.json - each is a codex DRIFT the doctor's
 # fix mode will try to regen. The apostrophe is fine inside a JSON string, so
 # opencode per-clone regen must still succeed (guard precision, not blanket).
-sed -i '' 's/^opencode=global$/opencode=per-clone/' "$MEMREPO/.agents/manifest"
+cat > "$MEMREPO/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=role-clones
+memory_layout=roles
+adapter=claude-code
+adapter=codex
+adapter=opencode
+opencode=per-clone
+EOF
 
 run_doctor "$HOME_DIR" --root "$MEMREPO"
 assert_equal "1" "$DOCTOR_EXIT" "unembeddable path: fix mode exits 1 (codex refusals)"
