@@ -27,6 +27,18 @@ class _CorpusBuilderMixin:
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
 
+    def _flat_index(self, root, content):
+        """Write the single flat-layout index file (Task 9)."""
+        self._write(root, mc.FLAT_INDEX_REL, content)
+
+    def _manifest(self, root, memory_layout, extra=""):
+        """Write a minimal `.agents/manifest` declaring `memory_layout` (Task 9).
+        `extra` lets a test add stray lines (comments/blanks/unrelated keys)."""
+        self._write(
+            root, os.path.join(".agents", "manifest"),
+            f"manifest_version=1\nmemory_layout={memory_layout}\n{extra}",
+        )
+
     def _role(self, root, r, content):
         """Write a role's MEMORY.md AND its `shared` symlink, so discover() finds it."""
         self._write(root, f"{r}/MEMORY.md", content)
@@ -575,6 +587,178 @@ class TestBaselineMainIntegration(_CorpusBuilderMixin, unittest.TestCase):
                 rc = mc.main(["--root", root, "--baseline", bpath])
             self.assertEqual(rc, 1)
             self.assertIn("RATCHET FAILED", buf.getvalue())
+
+
+class TestReadManifestLayout(_CorpusBuilderMixin, unittest.TestCase):
+    def test_missing_manifest_returns_none(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.assertIsNone(mc.read_manifest_layout(root))
+
+    def test_manifest_without_memory_layout_key_returns_none(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._write(root, os.path.join(".agents", "manifest"), "manifest_version=1\ntopology=embedded\n")
+            self.assertIsNone(mc.read_manifest_layout(root))
+
+    def test_reads_flat(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._manifest(root, "flat")
+            self.assertEqual(mc.read_manifest_layout(root), "flat")
+
+    def test_reads_roles(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._manifest(root, "roles")
+            self.assertEqual(mc.read_manifest_layout(root), "roles")
+
+    def test_comments_and_blank_lines_ignored(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._manifest(root, "flat", extra="# a comment\n\n   \nadapter=claude-code\n")
+            self.assertEqual(mc.read_manifest_layout(root), "flat")
+
+    def test_first_value_wins(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._write(
+                root, os.path.join(".agents", "manifest"),
+                "memory_layout=flat\nmemory_layout=roles\n",
+            )
+            self.assertEqual(mc.read_manifest_layout(root), "flat")
+
+    def test_malformed_manifest_directory_not_file_is_tolerated(self):
+        # `.agents/manifest` exists as a directory (unreadable as a file) - the
+        # linter must not crash, just treat it as no signal.
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, ".agents", "manifest"))
+            self.assertIsNone(mc.read_manifest_layout(root))
+
+
+class TestResolveLayout(_CorpusBuilderMixin, unittest.TestCase):
+    def test_no_flag_no_manifest_defaults_to_roles(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.assertEqual(mc.resolve_layout(None, root), "roles")
+
+    def test_manifest_flat_no_flag(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._manifest(root, "flat")
+            self.assertEqual(mc.resolve_layout(None, root), "flat")
+
+    def test_flag_overrides_manifest(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._manifest(root, "flat")
+            self.assertEqual(mc.resolve_layout("roles", root), "roles")
+
+    def test_malformed_manifest_value_falls_back_to_roles(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._manifest(root, "nonsense")
+            self.assertEqual(mc.resolve_layout(None, root), "roles")
+
+
+class TestAnalyzeTextWholeFile(unittest.TestCase):
+    def test_whole_file_is_always_ignores_section_headers(self):
+        # No "Always" header at all - roles-style extraction would return zero
+        # rules; whole-file mode must still count every top-level bullet.
+        text = "# Some Index\n- **A:** x\n- **B:** y\n- **C:** z\n"
+        m = mc.analyze_text(text, whole_file_is_always=True)
+        self.assertEqual(m.rules, 3)
+        # text ends with a trailing "\n" so splitlines() and the `wc -l` newline
+        # count agree exactly (no dangling unterminated final line).
+        self.assertEqual(m.always_lines, m.file_lines)
+        self.assertEqual(m.always_lines, 4)
+
+    def test_default_unaffected(self):
+        # Sanity: the new parameter defaults False and reproduces the exact prior
+        # roles-style behavior (extract_section, not the whole file).
+        text = "# Some Index\n- **A:** x\n"
+        m = mc.analyze_text(text)
+        self.assertEqual(m.rules, 0)   # no always-section -> nothing counted
+        self.assertEqual(m.always_lines, 0)
+
+
+class TestComputeLoadsFlat(_CorpusBuilderMixin, unittest.TestCase):
+    def test_one_index_row_whole_file_counts(self):
+        with tempfile.TemporaryDirectory() as root:
+            content = "".join(f"- **R{i}:** x\n" for i in range(5))
+            self._flat_index(root, content)
+            per_file, per_role = mc.compute_loads_flat(root)
+            self.assertEqual([name for name, _ in per_file], ["index"])
+            self.assertEqual(per_file[0][1].rules, 5)
+            self.assertEqual(len(per_role), 1)
+            self.assertEqual(per_role[0].role, "index")
+            self.assertEqual(per_role[0].rules, 5)
+
+    def test_missing_index_raises_oserror(self):
+        with tempfile.TemporaryDirectory() as root:
+            with self.assertRaises(OSError):
+                mc.compute_loads_flat(root)
+
+
+class TestMainFlatLayout(_CorpusBuilderMixin, unittest.TestCase):
+    def _run(self, args):
+        buf, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(buf), redirect_stderr(err):
+            rc = mc.main(args)
+        return rc, buf.getvalue(), err.getvalue()
+
+    def test_layout_flag_flat_one_index_row_under_cliff(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._flat_index(root, "".join(f"- **R{i}:** x\n" for i in range(3)))
+            rc, out, _ = self._run(["--root", root, "--layout", "flat"])
+            self.assertEqual(rc, 0)
+            self.assertIn("index", out)
+            self.assertIn("OK", out)
+
+    def test_layout_flag_flat_over_cliff_exits_1(self):
+        with tempfile.TemporaryDirectory() as root:
+            # 15 rules > RULE_CLIFF (14); whole file counted, no section needed.
+            self._flat_index(root, "".join(f"- **R{i}:** x\n" for i in range(15)))
+            rc, out, _ = self._run(["--root", root, "--layout", "flat"])
+            self.assertEqual(rc, 1)
+            self.assertIn("OVER (rules)", out)
+
+    def test_manifest_driven_flat_no_flag_same_result(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._flat_index(root, "".join(f"- **R{i}:** x\n" for i in range(15)))
+            self._manifest(root, "flat")
+            rc, out, _ = self._run(["--root", root])
+            self.assertEqual(rc, 1)
+            self.assertIn("OVER (rules)", out)
+            self.assertIn("index", out)
+
+    def test_manifest_present_layout_roles_flag_overrides(self):
+        with tempfile.TemporaryDirectory() as root:
+            # Both a flat index AND a full role/shared corpus exist at root; the
+            # manifest says flat, but --layout roles must force role discovery.
+            self._flat_index(root, "".join(f"- **R{i}:** x\n" for i in range(15)))
+            self._manifest(root, "flat")
+            self._corpus(root, shared_rules=2, role_rules=2)   # under cliff
+            rc, out, _ = self._run(["--root", root, "--layout", "roles"])
+            self.assertEqual(rc, 0)
+            self.assertIn("pm", out)          # role discovery ran, not flat
+            self.assertNotIn("Role (the whole index file", out)
+
+    def test_no_manifest_no_flag_existing_behavior_unchanged(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._corpus(root, shared_rules=2, role_rules=2)
+            rc, out, _ = self._run(["--root", root])
+            self.assertEqual(rc, 0)
+            self.assertIn("Role (role + shared)", out)
+
+    def test_flat_missing_index_clean_error_exit_2(self):
+        with tempfile.TemporaryDirectory() as root:
+            rc, _, err = self._run(["--root", root, "--layout", "flat"])
+            self.assertEqual(rc, 2)
+            self.assertIn("error", err.lower())
+
+    def test_flat_baseline_write_then_ratchet_role_key_is_index(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._flat_index(root, "".join(f"- **R{i}:** x\n" for i in range(3)))
+            bpath = os.path.join(root, "baseline.json")
+            rc, _, _ = self._run(["--root", root, "--layout", "flat", "--write-baseline", bpath])
+            self.assertEqual(rc, 0)
+            data = mc.load_baseline(bpath)
+            self.assertIn("index", data)
+            self.assertEqual(data["index"]["rules"], 3)
+            rc, out, _ = self._run(["--root", root, "--layout", "flat", "--baseline", bpath])
+            self.assertEqual(rc, 0)
+            self.assertIn("Ratchet OK", out)
 
 
 if __name__ == "__main__":

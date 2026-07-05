@@ -89,6 +89,43 @@ assert_not_exists() {
   fi
 }
 
+assert_contains() {
+  local haystack="$1"
+  local needle="$2"
+  local msg="${3:-assert_contains}"
+  TESTS_RUN=$((TESTS_RUN + 1))
+  case "$haystack" in
+    *"$needle"*)
+      TESTS_PASSED=$((TESTS_PASSED + 1))
+      echo "${GREEN}  PASS${RESET}: $msg"
+      ;;
+    *)
+      TESTS_FAILED=$((TESTS_FAILED + 1))
+      FAILED_TESTS+=("$msg")
+      echo "${RED}  FAIL${RESET}: $msg"
+      echo "    expected to find: $needle"
+      echo "    in: $haystack"
+      ;;
+  esac
+}
+
+assert_matches() {
+  local haystack="$1"
+  local regex="$2"
+  local msg="${3:-assert_matches}"
+  TESTS_RUN=$((TESTS_RUN + 1))
+  if echo "$haystack" | grep -qE "$regex"; then
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    echo "${GREEN}  PASS${RESET}: $msg"
+  else
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    FAILED_TESTS+=("$msg")
+    echo "${RED}  FAIL${RESET}: $msg"
+    echo "    expected to match: $regex"
+    echo "    in: $haystack"
+  fi
+}
+
 assert_exit_nonzero() {
   local msg="${1:-command should exit non-zero}"
   shift || true
@@ -177,4 +214,146 @@ make_clone_test_fixture() {
 cleanup_clone_test_fixture() {
   local base="$1"
   rm -rf "$base"
+}
+
+# --- doctor.sh user-tier fixture ---
+
+# Create a user-tier doctor fixture: a repo dir with AGENTS.md, a flat memory
+# index, and a valid user-tier manifest declaring all three adapters, plus an
+# empty sibling dir for tests to point HOME at. Every $HOME-relative doctor
+# check then stays inside $1/home - never touches the real home.
+# Layout produced at $1:
+#   $1/user-repo/AGENTS.md
+#   $1/user-repo/.agents/memory/MEMORY.md
+#   $1/user-repo/.agents/manifest   (manifest_version=1, topology=user-tier,
+#                                    memory_layout=flat, all 3 adapters)
+#   $1/home/                        (empty; the fixture $HOME)
+make_user_tier_fixture() {
+  local base="$1"
+  mkdir -p "$base/user-repo/.agents/memory" "$base/home"
+  echo "# AGENTS" > "$base/user-repo/AGENTS.md"
+  echo "# Memory Index" > "$base/user-repo/.agents/memory/MEMORY.md"
+  cat > "$base/user-repo/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=user-tier
+memory_layout=flat
+adapter=claude-code
+adapter=codex
+adapter=opencode
+EOF
+}
+
+# --- doctor.sh embedded fixture ---
+
+# Create an embedded-topology doctor fixture: a single repo carrying .agents/
+# alongside its own project code, pre-wired correctly on every adapter (this
+# is what generalizes cerebrum's sync.sh - see doctor.sh's
+# topology_embedded_checks). Only the external CC auto-memory hop is left
+# unwired, since its path is derived from this fixture's own (mktemp-random)
+# absolute location and can't be baked in ahead of time - callers run
+# doctor.sh once in fix mode to create it before treating the fixture as the
+# clean baseline.
+# Layout produced at $1:
+#   $1/embedded-repo/AGENTS.md
+#   $1/embedded-repo/CLAUDE.md -> AGENTS.md
+#   $1/embedded-repo/.agents/memory/MEMORY.md
+#   $1/embedded-repo/.agents/hooks/hook-a.sh, hook-b.sh   (executable stubs)
+#   $1/embedded-repo/.agents/skills/                       (empty dir)
+#   $1/embedded-repo/.claude/memory -> ../.agents/memory
+#   $1/embedded-repo/.claude/skills -> ../.agents/skills
+#   $1/embedded-repo/.claude/settings.json    (wires hook-a via $CLAUDE_PROJECT_DIR)
+#   $1/embedded-repo/.codex/hooks.json        (wires hook-a + hook-b for THIS path)
+#   $1/embedded-repo/opencode.json            (instructions has the memory index)
+#   $1/embedded-repo/.agents/manifest         (manifest_version=1, topology=embedded,
+#                                               memory_layout=flat, all 3 adapters,
+#                                               claude_hook=hook-a, codex_hook x2,
+#                                               skills_mount=true)
+#   $1/home/                                  (empty; the fixture $HOME)
+make_embedded_fixture() {
+  local base="$1"
+  local repo="$base/embedded-repo"
+  mkdir -p "$repo/.agents/memory" "$repo/.agents/hooks" "$repo/.agents/skills" \
+    "$repo/.claude" "$repo/.codex" "$base/home"
+
+  echo "# AGENTS" > "$repo/AGENTS.md"
+  ( cd "$repo" && ln -s AGENTS.md CLAUDE.md )
+  echo "# Memory Index" > "$repo/.agents/memory/MEMORY.md"
+
+  cat > "$repo/.agents/hooks/hook-a.sh" <<'EOF'
+#!/usr/bin/env bash
+echo hook-a
+EOF
+  cat > "$repo/.agents/hooks/hook-b.sh" <<'EOF'
+#!/usr/bin/env bash
+echo hook-b
+EOF
+  chmod +x "$repo/.agents/hooks/hook-a.sh" "$repo/.agents/hooks/hook-b.sh"
+
+  ( cd "$repo/.claude" && ln -s ../.agents/memory memory && ln -s ../.agents/skills skills )
+
+  cat > "$repo/.claude/settings.json" <<'EOF'
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.agents/hooks/hook-a.sh\"",
+            "timeout": 10,
+            "statusMessage": "Running hook-a.sh…"
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+
+  local root_abs
+  root_abs="$(cd "$repo" && pwd -P)"
+  cat > "$repo/.codex/hooks.json" <<EOF
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'$root_abs/.agents/hooks/hook-a.sh'",
+            "timeout": 10,
+            "statusMessage": "Running hook-a.sh…"
+          },
+          {
+            "type": "command",
+            "command": "'$root_abs/.agents/hooks/hook-b.sh'",
+            "timeout": 10,
+            "statusMessage": "Running hook-b.sh…"
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+
+  cat > "$repo/opencode.json" <<'EOF'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [".agents/memory/MEMORY.md"]
+}
+EOF
+
+  cat > "$repo/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=embedded
+memory_layout=flat
+adapter=claude-code
+adapter=codex
+adapter=opencode
+claude_hook=.agents/hooks/hook-a.sh
+codex_hook=.agents/hooks/hook-a.sh
+codex_hook=.agents/hooks/hook-b.sh
+skills_mount=true
+EOF
 }

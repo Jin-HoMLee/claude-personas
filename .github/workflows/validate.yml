@@ -30,8 +30,12 @@ jobs:
       - name: scripts are executable
         run: |
           for s in scripts/init-clone.sh scripts/list-roles.sh scripts/memory_cliff.py \
-                   scripts/inject-role-index.sh \
-                   scripts/tests/run_all.sh scripts/tests/test_memory_cliff.sh; do
+                   scripts/inject-role-index.sh scripts/doctor.sh \
+                   scripts/tests/run_all.sh scripts/tests/test_memory_cliff.sh \
+                   scripts/tests/test_doctor_manifest.sh scripts/tests/test_doctor_user_tier.sh \
+                   scripts/tests/test_doctor_embedded.sh scripts/tests/test_doctor_role_clones.sh \
+                   scripts/tests/test_init_clone.sh scripts/tests/test_clone_fixture.sh \
+                   scripts/tests/test_inject_role_index.sh scripts/tests/test_list_roles.sh; do
             if [ ! -x "$s" ]; then
               echo "FAIL: $s is not executable"
               exit 1

@@ -137,8 +137,15 @@ class FileMetrics:
     file_tokens: int = 0   # approx tokens of the WHOLE file (report-only axis)
 
 
-def analyze_text(text: str) -> FileMetrics:
-    section = extract_section(text)
+def analyze_text(text: str, whole_file_is_always: bool = False) -> FileMetrics:
+    """``whole_file_is_always=True`` treats the ENTIRE file as the always-loaded
+    section instead of extracting a ``## ... Always ...`` subsection - this is the
+    flat-layout seam (a flat instance's single index IS the whole tier-1 load;
+    flat-topology adapters inject it in full, so there is no section to subtract).
+    Reusing this one function for both layouts keeps the rule/line/token counting
+    logic in exactly one place; the default (``False``) is byte-for-byte the
+    original roles-layout behavior."""
+    section = text.splitlines() if whole_file_is_always else extract_section(text)
     return FileMetrics(
         rules=count_rules(section),
         always_lines=len(section),
@@ -148,15 +155,16 @@ def analyze_text(text: str) -> FileMetrics:
     )
 
 
-def analyze_file(path: str) -> FileMetrics | None:
+def analyze_file(path: str, whole_file_is_always: bool = False) -> FileMetrics | None:
     """Analyze a MEMORY.md file; return None if it does not exist. Reads as
     ``utf-8-sig`` so a leading BOM is stripped - a BOM would otherwise hide the
     header and silently zero the section. Read/decode errors propagate to the
-    caller (``main`` turns them into a clean exit 2)."""
+    caller (``main`` turns them into a clean exit 2). ``whole_file_is_always`` is
+    forwarded to ``analyze_text`` - see there."""
     if not os.path.isfile(path):
         return None
     with open(path, encoding="utf-8-sig") as f:
-        return analyze_text(f.read())
+        return analyze_text(f.read(), whole_file_is_always=whole_file_is_always)
 
 
 # --------------------------------------------------------------------------- #
@@ -191,6 +199,51 @@ def discover(root: str) -> Corpus:
         if os.path.isdir(os.path.join(root, name)) and _is_role_dir(root, name)
     )
     return Corpus(shared_dir=shared_dir, role_dirs=tuple(roles))
+
+
+# --------------------------------------------------------------------------- #
+# manifest-aware layout resolution (Task 9: flat-layout support)
+# --------------------------------------------------------------------------- #
+# Where a flat instance's single always-loaded index lives, relative to root -
+# same path doctor.sh's payload-sanity check uses for topology=flat instances
+# (see docs/superpowers/specs/2026-07-04-toolbox-manifest-driven-doctor-design.md,
+# "memory_cliff.py flat layout").
+FLAT_INDEX_REL = os.path.join(".agents", "memory", "MEMORY.md")
+
+
+def read_manifest_layout(root: str) -> str | None:
+    """Read ``memory_layout`` from ``$root/.agents/manifest``, LENIENTLY: this is a
+    linter, not the doctor, so it must not replicate doctor.sh's manifest
+    validation. An absent file, an unreadable file, or a file with no
+    ``memory_layout=`` line all mean the same thing here - "no signal, fall
+    through to the next precedence tier" - never an error. Returns the FIRST
+    ``memory_layout=`` value among non-blank, non-``#``-comment lines (flat
+    ``key=value``, matching doctor.sh's own ``manifest_get``), or ``None``."""
+    try:
+        with open(os.path.join(root, ".agents", "manifest"), encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError:
+        return None
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("memory_layout="):
+            return line.split("=", 1)[1].strip()
+    return None
+
+
+def resolve_layout(cli_layout: str | None, root: str) -> str:
+    """Precedence: ``--layout`` flag > manifest ``memory_layout`` > current role
+    discovery. A manifest value other than ``roles``/``flat`` (malformed - doctor.sh's
+    job to reject, not ours) is treated the same as no signal, so it can never crash
+    or silently misroute this linter."""
+    if cli_layout in ("roles", "flat"):
+        return cli_layout
+    manifest_layout = read_manifest_layout(root)
+    if manifest_layout in ("roles", "flat"):
+        return manifest_layout
+    return "roles"
 
 
 # --------------------------------------------------------------------------- #
@@ -250,6 +303,26 @@ def compute_loads(root: str) -> tuple[list[tuple[str, FileMetrics | None]], list
         m = analyze_file(os.path.join(root, f"{name}/MEMORY.md"))
         per_file.append((name, m))
         per_role.append(effective_load(name, m or _zero(), shared_eff))
+    return per_file, per_role
+
+
+def compute_loads_flat(root: str) -> tuple[list[tuple[str, FileMetrics | None]], list[RoleLoad]]:
+    """Flat-layout corpus: the single index file at ``FLAT_INDEX_REL`` IS the whole
+    tier-1 load - flat adapters inject it in full at session start, so unlike roles
+    layout there is no shared file to add and no always-section to subtract (see
+    ``analyze_text``'s ``whole_file_is_always``). Reported/keyed under the fixed
+    label ``"index"`` (mirrors how roles layout keys per-role rows by role name).
+    A missing index is fatal (raises OSError) rather than rendered as a
+    ``(missing)`` row - the whole corpus is one file, so its absence is the
+    flat-layout equivalent of an unreadable root, and ``main`` already maps that to
+    a clean exit 2 with a stderr message."""
+    path = os.path.join(root, FLAT_INDEX_REL)
+    if not os.path.isfile(path):
+        raise OSError(f"flat index not found: {path}")
+    m = analyze_file(path, whole_file_is_always=True)
+    assert m is not None   # just confirmed isfile() above
+    per_file = [("index", m)]
+    per_role = [RoleLoad(role="index", rules=m.rules, always_lines=m.always_lines, tokens=m.tokens)]
     return per_file, per_role
 
 
@@ -325,8 +398,16 @@ _ROLE_ROW = "{:<24}{:>8}{:>13}{:>10}"
 _MISSING_SPAN = 42   # 8 + 13 + 11 + 10, matches the per-file metric columns
 
 
-def render(per_file: list[tuple[str, FileMetrics | None]], per_role: list[RoleLoad]) -> str:
-    """Render the two report tables + threshold footer as text."""
+def render(
+    per_file: list[tuple[str, FileMetrics | None]],
+    per_role: list[RoleLoad],
+    load_label: str = "role + shared",
+) -> str:
+    """Render the two report tables + threshold footer as text. ``load_label``
+    describes what "effective load" means for this layout: roles layout sums a
+    role's own file with ``shared`` (the default, preserving prior wording
+    byte-for-byte); flat layout has no shared file to add - the single index IS
+    the load - so ``main`` passes a label reflecting that instead."""
     out = []
     out.append("Always-loaded cliff report")
     out.append("=" * 64)
@@ -339,7 +420,7 @@ def render(per_file: list[tuple[str, FileMetrics | None]], per_role: list[RoleLo
         else:
             out.append(_FILE_ROW.format(name, m.rules, m.always_lines, m.file_lines, _tok(m.tokens)))
     out.append("")
-    out.append(_ROLE_ROW.format("Role (role + shared)", "Rules", "AlwaysLines", "~Tokens") + "  Status")
+    out.append(_ROLE_ROW.format(f"Role ({load_label})", "Rules", "AlwaysLines", "~Tokens") + "  Status")
     out.append(_ROLE_ROW.format("-" * 20, "-" * 5, "-" * 9, "-" * 7) + "  " + "-" * 24)
     for rl in per_role:
         breached = classify(rl)
@@ -348,7 +429,7 @@ def render(per_file: list[tuple[str, FileMetrics | None]], per_role: list[RoleLo
     out.append("")
     out.append(
         f"Thresholds: {RULE_CLIFF} rules / {LINE_CLIFF} lines / {TOKEN_CLIFF} tokens "
-        f"(effective load = role + shared)."
+        f"(effective load = {load_label})."
     )
     out.append(
         "Note: counts every '## ... Always ...' section (tier-1 + any session-start / "
@@ -373,6 +454,12 @@ def main(argv=None) -> int:
         "--root", default=None,
         help="memory-repo root (default: auto-detect from this script's location).",
     )
+    parser.add_argument(
+        "--layout", choices=("roles", "flat"), default=None,
+        help="corpus layout override. Default: read `memory_layout` from "
+             "$root/.agents/manifest if present, else fall back to role discovery "
+             "(unchanged pre-manifest behavior).",
+    )
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
         "--write-baseline", default=None, metavar="FILE",
@@ -384,9 +471,11 @@ def main(argv=None) -> int:
     )
     args = parser.parse_args(argv)
     root = args.root or _discover_root()
+    layout = resolve_layout(args.layout, root)
+    load_label = "the whole index file (no role/shared split)" if layout == "flat" else "role + shared"
 
     try:
-        per_file, per_role = compute_loads(root)
+        per_file, per_role = compute_loads_flat(root) if layout == "flat" else compute_loads(root)
     except (OSError, UnicodeDecodeError) as exc:
         print(f"memory_cliff: error reading corpus: {exc}", file=sys.stderr)
         return 2
@@ -402,7 +491,7 @@ def main(argv=None) -> int:
         except (OSError, ValueError) as exc:
             print(f"memory_cliff: bad baseline file: {exc}", file=sys.stderr)
             return 2
-        print(render(per_file, per_role))
+        print(render(per_file, per_role, load_label))
         print()
         print(render_wholefile_info(per_file))
         regressions = compare_to_baseline(per_role, baseline)
@@ -416,7 +505,7 @@ def main(argv=None) -> int:
         print("Ratchet OK - no axis exceeds baseline.")
         return 0
 
-    print(render(per_file, per_role))
+    print(render(per_file, per_role, load_label))
     return 1 if any(classify(rl) for rl in per_role) else 0
 
 
