@@ -361,4 +361,19 @@ run_doctor "$home" --check --root "$repo"
 assert_equal "0" "$DOCTOR_EXIT" "re-check after orphan removal: exit 0"
 rm -rf "$tmp"
 
+echo "=== test_doctor_embedded: unembeddable root path (apostrophe) - fix mode REFUSES hooks.json regen with ERROR instead of writing a corrupt file ==="
+tmp="$(mktemp -d)"
+base="$tmp/it's lab"
+mkdir -p "$base"
+make_embedded_fixture "$base"
+repo="$base/embedded-repo"
+home="$base/home"
+rm -f "$repo/.codex/hooks.json"
+
+run_doctor "$home" --root "$repo"
+assert_equal "1" "$DOCTOR_EXIT" "unembeddable path: fix mode exits 1"
+assert_contains "$DOCTOR_STDOUT" "cannot embed safely in hooks.json" "refusal ERROR printed instead of FIXED"
+assert_not_exists "$repo/.codex/hooks.json" "no hooks.json written under an unembeddable path"
+rm -rf "$tmp"
+
 print_summary

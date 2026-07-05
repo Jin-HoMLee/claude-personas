@@ -642,6 +642,15 @@ _role_clones_regen_codex_hooks_json() {
   # symlink.
   local memrepo_logical="$1" workspace="$2" role="$3" out tmp_json cmd_value
   out="$workspace/.codex/hooks.json"
+  # Same embed-safety guard as init-clone.sh's wire_codex_adapter: no escaper
+  # here (jq dependency deliberately avoided), so a quote or backslash would
+  # silently produce invalid JSON and an apostrophe would break the
+  # single-quoted shell command string. Refuse rather than write a corrupt
+  # file that FIXED-and-exit-0 would misreport as repaired.
+  case "$memrepo_logical$role" in (*[\"\\\']*)
+    report_error "$out not regenerated: memory-repo path contains a quote or backslash - cannot embed safely in hooks.json; wire it by hand (init-clone.sh refuses the same path)"
+    return 0 ;;
+  esac
   cmd_value="'$memrepo_logical/scripts/inject-role-index.sh' '$memrepo_logical/$role'"
   tmp_json="$(mktemp 2>/dev/null)"
   if [ -z "$tmp_json" ]; then
@@ -711,6 +720,13 @@ _role_clones_regen_opencode_per_clone() {
   # _role_clones_regen_opencode_per_clone <workspace> <role>
   local workspace="$1" role="$2" oc
   oc="$workspace/opencode.json"
+  # Embed-safety guard matching init-clone.sh's wire_opencode_adapter: the
+  # path lands inside a JSON string only, so just quote and backslash are
+  # unsafe (an apostrophe is fine here, unlike the codex hooks.json case).
+  case "$workspace" in (*[\"\\]*)
+    report_error "$oc not regenerated: clone path contains a quote or backslash - cannot embed safely in opencode.json; wire it by hand (init-clone.sh refuses the same path)"
+    return 0 ;;
+  esac
   if printf '{\n  "$schema": "https://opencode.ai/config.json",\n  "instructions": ["%s"]\n}\n' "$workspace/.agents/memory/MEMORY.md" > "$oc"; then
     report_fixed "$oc regenerated for role $role"
     _role_clones_check_exclude "$workspace" "/opencode.json"
@@ -1027,6 +1043,14 @@ _embedded_regen_codex_hooks_json() {
   # 10, statusMessage derived from the hook's basename).
   local root_abs="$1" out tmp_json i n hook base
   out="$ROOT/.codex/hooks.json"
+  # Embed-safety guard (same class as init-clone.sh's wire_codex_adapter): the
+  # instance path and every declared codex_hook land inside a single-quoted
+  # shell command string within JSON - a quote or backslash breaks the JSON,
+  # an apostrophe breaks the quoting. Refuse rather than write a corrupt file.
+  case "$root_abs${CODEX_HOOKS[*]:-}" in (*[\"\\\']*)
+    report_error "$out not regenerated: instance path or a codex_hook contains a quote or backslash - cannot embed safely in hooks.json; wire it by hand"
+    return 0 ;;
+  esac
   tmp_json="$(mktemp 2>/dev/null)"
   if [ -z "$tmp_json" ]; then
     report_error "could not create temp file for .codex/hooks.json regeneration"

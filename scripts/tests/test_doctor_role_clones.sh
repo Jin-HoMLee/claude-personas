@@ -450,4 +450,23 @@ run_doctor "$HOME_DIR" --check --root "$MEMREPO"
 assert_equal "0" "$DOCTOR_EXIT" "re-check after orphan removal: exit 0"
 rm -rf "$tmp"
 
+echo "=== test_doctor_role_clones: unembeddable constellation path (apostrophe) - codex regen REFUSED with ERROR; per-clone opencode regen (JSON-only embed) still works ==="
+tmp="$(mktemp -d)"
+base="$tmp/it's lab"
+mkdir -p "$base"
+setup_wired_fixture "$base"
+# init-clone.sh's own codex adapter refuses apostrophe paths (WARN-and-skip),
+# so no workspace has a .codex/hooks.json - each is a codex DRIFT the doctor's
+# fix mode will try to regen. The apostrophe is fine inside a JSON string, so
+# opencode per-clone regen must still succeed (guard precision, not blanket).
+sed -i '' 's/^opencode=global$/opencode=per-clone/' "$MEMREPO/.agents/manifest"
+
+run_doctor "$HOME_DIR" --root "$MEMREPO"
+assert_equal "1" "$DOCTOR_EXIT" "unembeddable path: fix mode exits 1 (codex refusals)"
+assert_contains "$DOCTOR_STDOUT" "cannot embed safely in hooks.json" "codex regen refusal ERROR printed"
+assert_not_exists "$DEVCLONE/.codex/hooks.json" "no hooks.json written in the developer clone"
+assert_contains "$DOCTOR_STDOUT" "opencode.json regenerated for role developer" "per-clone opencode.json still regenerated (apostrophe is JSON-safe)"
+assert_exists "$DEVCLONE/opencode.json" "developer per-clone opencode.json exists"
+rm -rf "$tmp"
+
 print_summary
