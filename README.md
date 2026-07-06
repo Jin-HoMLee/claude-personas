@@ -129,7 +129,7 @@ What it creates per clone (all untracked via `.git/info/exclude` - your project 
 
 - `.agents/memory -> ../../<memory-repo>/<role>` - the vendor-neutral mount and the single role signal.
 - `.claude/memory -> ../.agents/memory` - the Claude Code hop, plus an external `~/.claude/projects/<slug>/memory` symlink that Claude Code's auto-memory loader actually reads.
-- `.codex/hooks.json` - a generated SessionStart hook that injects the role + shared indices via the memory repo's `scripts/inject-role-index.sh`.
+- `.codex/hooks.json` - a generated SessionStart hook that injects the role index via the memory repo's `scripts/inject-role-index.sh`, mirroring Claude Code's native role-file auto-load (role index only, bounded by CC's native ~200-line/~25 KB size guard; shared is loaded on demand via the `load-persona-memory` skill, with a one-line pointer in the payload).
 
 One-time steps per machine that the script cannot perform (it prints them):
 
