@@ -35,8 +35,12 @@ command -v jq >/dev/null 2>&1 || {
 }
 
 # Claude Code native role-index truncation thresholds (whichever hits first).
+# Fall back to the defaults on an empty or non-numeric override rather than
+# letting awk coerce garbage to 0 and silently suppress the whole index.
 byte_cap="${PERSONAS_INJECT_BYTE_CAP:-25000}"
 line_cap="${PERSONAS_INJECT_LINE_CAP:-200}"
+case "$byte_cap" in ''|*[!0-9]*) byte_cap=25000;; esac
+case "$line_cap" in ''|*[!0-9]*) line_cap=200;; esac
 
 role_index="$role_dir/MEMORY.md"
 [ -r "$role_index" ] || exit 0
@@ -47,24 +51,21 @@ hdr="# Role memory index
 remaining=$(( byte_cap - ${#hdr} ))
 [ "$remaining" -le 0 ] && exit 0
 
-# grep -c '' counts lines (not newlines), so a final line with no trailing
-# newline is not undercounted (which would silently skip the truncation flag).
-total="$(grep -c '' "$role_index")"
-# Keep whole lines while BOTH the byte budget and the line cap still hold; awk's
-# exit fires before printing the line that would breach either.
+# Keep whole lines while BOTH the byte budget and the line cap still hold. awk
+# signals a REAL cut via exit 3, so the truncation flag never depends on
+# line-count arithmetic - which a blank-line EOF (command substitution strips
+# trailing blank lines from the chunk) or a missing final newline would
+# otherwise mislead into a false (or missed) truncation notice.
 chunk="$(awk -v bcap="$remaining" -v lcap="$line_cap" '
-  { n += length($0) + 1; if (n > bcap || NR > lcap) exit } { print }
+  { n += length($0) + 1; if (n > bcap || NR > lcap) { cut = 1; exit } print }
+  END { if (cut) exit 3 }
 ' "$role_index")"
-kept="$(printf '%s\n' "$chunk" | wc -l | tr -d ' ')"
-# awk emits nothing when even the FIRST line overflows; printf '%s\n' "" | wc -l
-# still reports 1, so force kept=0 for an empty chunk or the trailer silently
-# does not fire on a whole-line drop.
-[ -z "$chunk" ] && kept=0
+awk_rc=$?
 
 payload="$hdr$chunk
 "
 truncated=0
-[ "$kept" -lt "$total" ] && truncated=1
+[ "$awk_rc" -eq 3 ] && truncated=1
 
 # Shared index is loaded on demand (parity with CC, which does not auto-inject
 # shared). Point at it when it exists - the model reaches it via the

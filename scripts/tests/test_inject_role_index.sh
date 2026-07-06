@@ -33,6 +33,29 @@ case "$ctx" in *"loaded on demand"*) echo "  PASS: shared pointer marks it on-de
 case "$ctx" in *TRUNCATED*) echo "  FAIL: unexpected truncation trailer"; TESTS_FAILED=$((TESTS_FAILED+1));; *) echo "  PASS: no truncation trailer on small index";; esac
 rm -rf "$tmp"
 
+echo "=== test_inject_role_index blank-line EOF must NOT false-truncate ==="
+# Regression (code-review of #53): the old count-based flag compared grep -c ''
+# (counts trailing blank lines) against a chunk whose trailing blanks are
+# stripped by command substitution, so an index ending in a blank line fired a
+# false [TRUNCATED] trailer despite injecting the full content.
+tmpb="$(mktemp -d)"
+mkdir -p "$tmpb/memory-repo/developer" "$tmpb/memory-repo/shared"
+printf -- "- entry a\n- entry b canary-tail\n\n" > "$tmpb/memory-repo/developer/MEMORY.md"  # blank line at EOF
+printf "# Shared index\n" > "$tmpb/memory-repo/shared/MEMORY.md"
+( cd "$tmpb/memory-repo/developer" && ln -s ../shared shared )
+ctxb="$(bash "$INJECT" "$tmpb/memory-repo/developer" | jq -r '.hookSpecificOutput.additionalContext')"
+case "$ctxb" in *TRUNCATED*) echo "  FAIL: false truncation trailer on blank-line EOF"; TESTS_FAILED=$((TESTS_FAILED+1));; *) echo "  PASS: no false trailer on blank-line EOF";; esac
+case "$ctxb" in *canary-tail*) echo "  PASS: full content injected";; *) echo "  FAIL: content missing"; TESTS_FAILED=$((TESTS_FAILED+1));; esac
+rm -rf "$tmpb"
+
+echo "=== test_inject_role_index non-numeric cap falls back to default ==="
+tmpc="$(mktemp -d)"
+mkdir -p "$tmpc/memory-repo/developer"
+printf "# Role index numeric-fallback-canary\n" > "$tmpc/memory-repo/developer/MEMORY.md"
+ctxc="$(PERSONAS_INJECT_BYTE_CAP=25k bash "$INJECT" "$tmpc/memory-repo/developer" | jq -r '.hookSpecificOutput.additionalContext')"
+case "$ctxc" in *numeric-fallback-canary*) echo "  PASS: non-numeric cap falls back, index injected";; *) echo "  FAIL: non-numeric cap suppressed the index"; TESTS_FAILED=$((TESTS_FAILED+1));; esac
+rm -rf "$tmpc"
+
 echo "=== test_inject_role_index no shared dir -> role only, no pointer, no crash ==="
 tmpn="$(mktemp -d)"
 mkdir -p "$tmpn/memory-repo/developer"
