@@ -35,6 +35,9 @@ On a name collision the instance's copy wins and sync refuses to overwrite it, r
 Customizing never requires forking the framework payload.
 
 Repo reshuffle implied: current `scripts/` (doctor.sh, memory_cliff.py, init-clone.sh, list-roles.sh) and the shipped `skills/load-persona-memory` move under `framework/`.
+The `framework/hooks/` class has exactly one concrete member today: `scripts/inject-role-index.sh` (the SessionStart index-injection adapter script) moves to `framework/hooks/` and lands in `.agents/hooks/lib/`.
+The split it encodes: the callable script library is framework payload (synced), while the adapter entries that invoke it (`.codex/hooks.json`, `.claude/settings.json`) stay instance-owned wiring - the doctor's territory, never sync's.
+`examples/hooks/*.md` guidance stays copy-once example content (class 2); the two are different things.
 `examples/` stays where it is.
 Instances change nothing structurally; `.agents/` keeps its existing shape, so existing instances adopt by re-install, not re-layout.
 
@@ -58,7 +61,8 @@ Sync refusal semantics (report, never clobber):
 - file dropped upstream from `FILES`: reported as "orphaned framework file, remove with --prune"; never auto-deleted (same conservatism as the doctor's orphan sweep; avoids the #47 unreachable-target bug class).
 - unknown/missing instance manifest: hard error (doctor's exit-2 convention).
 
-Source resolution: new manifest key `framework_source=<path-or-url>`, default a sibling clone path; git URLs allowed later.
+Source resolution: new manifest key `framework_source=<path-or-url>`; git URLs allowed later.
+Default when the key is absent: exactly one candidate, the sibling clone `<instance-toplevel>/../claude-personas` (post-rename `../agent-personas`, checked first, old name still accepted) - no wider candidate walk; any other topology requires an explicit `framework_source`, and install/sync exit-2 when the default candidate is missing.
 Sync shells out to `git -C <source> fetch` and copies from a ref; no network code beyond git.
 
 Manifest grows two doctor-validated keys: `framework_source` and `framework_ref=<tag-or-sha>` (stamped by install/sync).
@@ -77,6 +81,7 @@ In the constellation topology it is a sibling repo conventionally named **`<scop
 Substrate-only instances (no roles module, e.g. the user tier's `user-memory`) may keep a `-memory` name, where it remains accurate.
 The term "memory repo" is retired (formerly-called note where helpful), because the instance repo now carries role identities, memory, AND the installed framework payload.
 Epic item 4's naming proposal updates from `<scope>-memory` to `<scope>-personas`; whether/when splice's actual repo renames stays MM's call.
+Retirement is forward-only by design: this spec fixes the target vocabulary; existing docs that still say "memory repo" (CONVENTIONS.md, README) migrate in the implementation and rename PRs, not in this one.
 
 ## 5. Why one instance repo per project (and when to split)
 
@@ -120,6 +125,11 @@ Examples keep copy-once semantics (content class 2).
 - `framework/CHANGELOG.md`: one "what breaks / what to do" line per entry (the v3.1 layout-bump lesson, #14).
 - `install.sh --sync` prefers a tag; syncing to a bare SHA works but warns.
 - No semver ceremony while there is a single consumer.
+
+Relation to the existing root `CHANGELOG.md` (semver headers up to `[3.1.0]`): that file versioned the **template era** and freezes at the identity switch, gaining one final entry that points forward to `framework/CHANGELOG.md`.
+The tag line starts fresh at `framework/v1` because it versions a new artifact - the installed payload - not the template; it deliberately does not map onto the 3.x series.
+The existing `v1.0`...`v3.1.0` tags keep marking template releases; the `framework/` tag prefix is a disjoint namespace, so the two lines cannot collide.
+Post-switch changes outside the payload (examples, docs) are not changelogged anywhere; git history suffices.
 
 ## 9. Live probe (before spec lock)
 
