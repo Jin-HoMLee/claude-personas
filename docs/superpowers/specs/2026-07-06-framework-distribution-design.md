@@ -1,7 +1,7 @@
 # Framework distribution design (issue #43)
 
 **Date:** 2026-07-06
-**Status:** draft - live-probe results (section 9) must be recorded before this spec locks (= PR merge)
+**Status:** draft - live-probe results recorded 2026-07-06 (section 9); locks at PR merge
 **Issues:** #43 (parent), #50 (this spec), #21 + #17 (absorbed), #27 (epic), #49 (role tier - must not be foreclosed)
 
 ## 1. Identity: installable framework, not a template
@@ -133,9 +133,24 @@ Results are recorded here before the spec PR merges; expected defaults below, wi
 | 4 | Codex + OpenCode user tier: do both actually scan `~/.agents/skills/`? | yes (repo-level scanning proven; user-level half-tested) | per-tool user-level adapter entries, doctor-checked |
 | 5 | Shadowing: same-name skill in instance and framework - which wins per tool? | undefined/first-scan-wins | if a tool double-loads or errors: sync's install-time refusal remains the enforcement; document per-tool behavior |
 
-**Probe results (PENDING - to be filled in before merge.)**
+**Probe results (recorded 2026-07-06; live runs on Claude Code 2.1.201, codex-cli 0.142.5, opencode 1.17.13):**
 
-#21 disposition is decided by probes 1-2 and recorded here; #21 then closes with the evidence either as "documented optional CC install path" or "not a fit".
+1. **CONFIRMED (partial mapping).** `claude plugin init` scaffolds `~/.claude/skills/<name>/` with `.claude-plugin/plugin.json`, a root `SKILL.md`, and optional `skills/`, `agents/`, `hooks/hooks.json` + TypeScript/bun `hooks-handlers/`, `.mcp.json`.
+   Skills map 1:1 onto our layout; tools, memory, and the instance manifest have no plugin slot; the whole mechanism is CC-only, so it cannot carry the vendor-neutral payload.
+2. **FLIPPED - plugins are cleanly per-project, via two mechanisms.** (a) `claude plugin install --scope user|project|local`: project scope commits only an `enabledPlugins` entry to `.claude/settings.json` (verified live in a scratch repo); content stays in the per-user cache, and since CC 2.1.195 teammates must explicitly consent-install.
+   (b) Project-level skills-dir plugins: `./.claude/skills/<name>/.claude-plugin/plugin.json` auto-loads as `<name>@skills-dir` (since 2.1.157), workspace-trust-gated.
+   Friction is low (one committed manifest file), so the flip clause applies - see the #21 disposition below.
+3. **CONFIRMED (works).** With `~/.claude/skills -> ~/.agents/skills` as a whole-dir symlink, a live CC session discovered the discriminator skills that exist only in `~/.agents/skills` (`find-skills`, `skill-creator`); original layout restored after the probe.
+4. **CONFIRMED (yes, both).** Codex natively scans `~/.agents/skills` at user level (listed exactly its valid skills; did not read `~/.claude/skills`).
+   OpenCode scans both `~/.agents/skills` and `~/.claude/skills` at user level.
+5. **CONFIRMED (divergent, no consistent winner).** Same-name skill at user tier and project tier: CC 2.1.201 loads a single entry and the **project** copy wins (replicated twice; contradicts the documented user>project skill precedence, so treat tool-tier shadowing as unstable across versions).
+   Codex **double-loads both** entries.
+   OpenCode loads a single entry and the **user** copy wins.
+   Consequence per the flip clause: sync's install-time refusal is the only enforcement the framework relies on; per-tool behavior is documented here and must not be load-bearing.
+
+**#21 disposition (decided by probes 1-2): documented optional CC install path.**
+The plugin format is a CC-only side door on top of the framework payload (a committed `.claude-plugin/plugin.json` inside a skill dir, or a marketplace entry later), never the primary distribution channel - it cannot carry tools, memory wiring, or the manifest, and Codex/OpenCode ignore it.
+#21 closes citing this section.
 
 ## 10. Testing
 
