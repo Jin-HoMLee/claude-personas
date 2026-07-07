@@ -398,10 +398,10 @@ EOF
     && git -c user.email=t@x -c user.name=T tag -a framework/v1 -m v1 )
 }
 
-# advance_framework_fixture <dir>
-# v2: tool-a content changes, tool-b appears in FILES. hook-x stays.
-advance_framework_fixture() {
-  local fw="$1/fw"
+# advance_framework_fixture_named <dir> <clone-name>
+# Same v2 advance, for a framework clone not named fw.
+advance_framework_fixture_named() {
+  local fw="$1/$2"
   printf '#!/usr/bin/env bash\necho tool-a v2\n' > "$fw/framework/tools/tool-a.sh"
   printf '#!/usr/bin/env bash\necho tool-b v2\n' > "$fw/framework/tools/tool-b.sh"
   chmod +x "$fw/framework/tools/tool-b.sh"
@@ -414,6 +414,12 @@ EOF
   ( cd "$fw" && git -c user.email=t@x -c user.name=T add -A \
     && git -c user.email=t@x -c user.name=T commit --quiet -m "fw v2" \
     && git -c user.email=t@x -c user.name=T tag -a framework/v2 -m v2 )
+}
+
+# advance_framework_fixture <dir>
+# v2: tool-a content changes, tool-b appears in FILES. hook-x stays.
+advance_framework_fixture() {
+  advance_framework_fixture_named "$1" fw
 }
 
 # drop_hook_framework_fixture <dir>

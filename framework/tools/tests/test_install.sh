@@ -156,4 +156,56 @@ case "$(cat "$tmp/inst/.agents/manifest")" in
 esac
 rm -rf "$tmp"
 
+echo "=== test_install: --sync without a pin is fatal ==="
+tmp="$(mktemp -d)"
+make_framework_fixture "$tmp"
+make_instance_fixture "$tmp" inst
+out="$(cd "$tmp/inst" && bash "$INSTALL" --sync 2>&1)"
+assert_equal "2" "$?" "sync without framework_ref exits 2"
+rm -rf "$tmp"
+
+echo "=== test_install: --sync happy path (upstream v2: update + new file + pin bump, manifest otherwise untouched) ==="
+tmp="$(mktemp -d)"
+make_framework_fixture "$tmp"
+make_instance_fixture "$tmp" inst
+( cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/inst" ) >/dev/null
+manifest_before_nopin="$(grep -v '^framework_ref=' "$tmp/inst/.agents/manifest")"
+advance_framework_fixture "$tmp"
+out="$(cd "$tmp/inst" && bash "$INSTALL" --sync 2>&1)"
+status=$?
+assert_equal "0" "$status" "clean sync exits 0"
+assert_contains "$out" "SYNCED: .agents/tools/tool-a.sh" "changed framework file re-copied"
+assert_contains "$(cat "$tmp/inst/.agents/tools/tool-a.sh")" "tool-a v2" "tool-a now at v2 content"
+assert_exists "$tmp/inst/.agents/tools/tool-b.sh" "new upstream file installed on sync"
+assert_contains "$(cat "$tmp/inst/.agents/manifest")" "framework_ref=framework/v2" "pin bumped to v2"
+assert_equal "$manifest_before_nopin" "$(grep -v '^framework_ref=' "$tmp/inst/.agents/manifest")" "sync touched no manifest value except framework_ref"
+assert_equal "$(printf '# Memory Index\n- canary\n')" "$(cat "$tmp/inst/.agents/memory/MEMORY.md")" "memory canary untouched by sync"
+rm -rf "$tmp"
+
+echo "=== test_install: --sync default sibling source resolution (no framework_source key) ==="
+tmp="$(mktemp -d)"
+make_framework_fixture "$tmp"
+mv "$tmp/fw" "$tmp/claude-personas"
+make_instance_fixture "$tmp" inst
+( cd "$tmp/claude-personas" && bash "$INSTALL" --into "$tmp/inst" ) >/dev/null
+# strip the framework_source line to force default resolution (awk-to-tmp, no sed -i)
+awk '!/^framework_source=/' "$tmp/inst/.agents/manifest" > "$tmp/m" && mv "$tmp/m" "$tmp/inst/.agents/manifest"
+advance_framework_fixture_named "$tmp" claude-personas
+out="$(cd "$tmp/inst" && bash "$INSTALL" --sync 2>&1)"
+assert_equal "0" "$?" "default sibling claude-personas resolved"
+assert_contains "$(cat "$tmp/inst/.agents/manifest")" "framework_ref=framework/v2" "pin bumped via default source"
+rm -rf "$tmp"
+
+echo "=== test_install: --sync with no source anywhere is fatal ==="
+tmp="$(mktemp -d)"
+make_framework_fixture "$tmp"
+make_instance_fixture "$tmp" inst
+( cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/inst" ) >/dev/null
+awk '!/^framework_source=/' "$tmp/inst/.agents/manifest" > "$tmp/m" && mv "$tmp/m" "$tmp/inst/.agents/manifest"
+rm -rf "$tmp/fw"
+out="$(cd "$tmp/inst" && bash "$INSTALL" --sync 2>&1)"
+assert_equal "2" "$?" "no source resolvable exits 2"
+assert_contains "$out" "no framework_source" "error explains the fix"
+rm -rf "$tmp"
+
 print_summary
