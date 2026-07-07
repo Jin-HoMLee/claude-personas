@@ -73,4 +73,58 @@ assert_contains "$out" "'..' component" "error names the '..' component"
 assert_not_exists "$tmp/inst_evil/escaped.txt" "escaped file did not land outside .agents/"
 rm -rf "$tmp"
 
+echo "=== test_install: orphan sweep skips a tainted pinned landing ('..' + outside .agents/) ==="
+tmp="$(mktemp -d)"
+make_framework_fixture "$tmp"
+make_instance_fixture "$tmp" inst_taint
+out="$(cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/inst_taint" 2>&1)"
+assert_equal "0" "$?" "clean install for taint fixture exits 0"
+
+# v2: a bad historical FILES declares a traversal entry alongside the normal
+# 3. bait-src.txt's content is literally "bait" so we can later plant an
+# identical instance-side file and see whether --prune would delete it.
+printf 'bait' > "$tmp/fw/framework/tools/bait-src.txt"
+cat > "$tmp/fw/framework/FILES" <<'EOF'
+framework/tools/tool-a.sh -> .agents/tools/tool-a.sh
+framework/hooks/hook-x.sh -> .agents/hooks/lib/hook-x.sh
+framework/skills/demo-skill/SKILL.md -> .agents/skills/demo-skill/SKILL.md
+framework/tools/bait-src.txt -> .agents/../escaped.txt
+EOF
+( cd "$tmp/fw" && git -c user.email=t@x -c user.name=T add -A \
+  && git -c user.email=t@x -c user.name=T commit --quiet -m "fw v2: tainted entry" \
+  && git -c user.email=t@x -c user.name=T tag -a framework/v2 -m v2 )
+
+# Simulate a legacy instance whose pin already points at the tainted ref (the
+# guarded CURRENT-ref walk would fatal on this entry if it were live today -
+# the point is a bad entry sitting in HISTORY, behind the pin, must not be
+# trusted either). Stamp the manifest directly, the same awk-to-tmp+mv
+# rewrite install.sh itself uses for its pin stamp - no sed -i.
+manifest_tmp="$(mktemp)"
+awk -F= '$1 == "framework_ref" { print "framework_ref=framework/v2"; next } { print }' \
+  "$tmp/inst_taint/.agents/manifest" > "$manifest_tmp"
+mv "$manifest_tmp" "$tmp/inst_taint/.agents/manifest"
+
+# Plant the instance-side landing, content-identical to the tainted pinned
+# blob - exactly what --prune would delete if the guard were absent.
+printf 'bait' > "$tmp/inst_taint/escaped.txt"
+
+# v3: FILES is clean again (tainted entry gone) - the tainted landing is now
+# an orphan relative to the (tainted) pin.
+cat > "$tmp/fw/framework/FILES" <<'EOF'
+framework/tools/tool-a.sh -> .agents/tools/tool-a.sh
+framework/hooks/hook-x.sh -> .agents/hooks/lib/hook-x.sh
+framework/skills/demo-skill/SKILL.md -> .agents/skills/demo-skill/SKILL.md
+EOF
+( cd "$tmp/fw" && git -c user.email=t@x -c user.name=T add -A \
+  && git -c user.email=t@x -c user.name=T commit --quiet -m "fw v3: tainted entry dropped" \
+  && git -c user.email=t@x -c user.name=T tag -a framework/v3 -m v3 )
+
+out="$(cd "$tmp/inst_taint" && bash "$INSTALL" --sync --ref framework/v3 --prune 2>&1)"
+status=$?
+assert_equal "1" "$status" "tainted orphan: sync --prune reports pending, exit 1"
+assert_contains "$out" "TAINTED ORPHAN" "tainted orphan is named and skipped"
+assert_equal "bait" "$(cat "$tmp/inst_taint/escaped.txt" 2>/dev/null)" "escaped file outside .agents/ was never touched"
+assert_contains "$(cat "$tmp/inst_taint/.agents/manifest")" "framework_ref=framework/v3" "pin still advances to the clean ref despite the tainted orphan"
+rm -rf "$tmp"
+
 print_summary

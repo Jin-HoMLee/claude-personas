@@ -13,6 +13,9 @@
 #                       override per file with --force-file <landing>
 #   ORPHANED  (--sync)  pinned FILES entry dropped upstream - kept, remove
 #                       with --prune (unmodified orphans only)
+#   TAINTED ORPHAN (--sync) pinned FILES entry itself is untrustworthy ('..'
+#                       component, or outside .agents/) - ignored, never
+#                       touched, not even with --prune
 #
 # Exit: 0 clean/up-to-date; 1 refusals or pending --check changes; 2 fatal.
 
@@ -256,6 +259,24 @@ process_orphans() {
     src_path="${line%%$'\t'*}"
     landing="${line##*$'\t'}"
     if new_has_landing "$landing"; then continue; fi
+    # The pinned FILES entry is HISTORY, not the guarded current-ref walk
+    # below - a stale pin can carry a bad landing (a '..' traversal, or one
+    # outside .agents/) that was never checked at the time it was pinned.
+    # Report-and-skip here, not fatal: fatal would brick --sync forever on
+    # an instance whose pinned history contains one bad entry (the pin only
+    # advances when sync completes), whereas skip-and-report lets the pin
+    # advance past the poisoned FILES so the next sync is clean.
+    case "/$landing/" in
+      */../*)
+        report_pending "TAINTED ORPHAN: pinned FILES entry '$landing' contains a '..' component - ignored, never touched"
+        continue ;;
+    esac
+    case "$landing" in
+      .agents/*) ;;
+      *)
+        report_pending "TAINTED ORPHAN: pinned FILES entry '$landing' is outside .agents/ - ignored, never touched"
+        continue ;;
+    esac
     dest="$TARGET/$landing"
     if [ ! -e "$dest" ]; then continue; fi
     cur="$(cat "$dest" 2>/dev/null)"
