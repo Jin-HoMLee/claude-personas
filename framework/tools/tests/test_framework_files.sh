@@ -10,6 +10,21 @@ source "$SCRIPT_DIR/test_helpers.sh"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 FILES="$REPO_ROOT/framework/FILES"
 
+files_manifest_malformed_count() {
+  local manifest="$1"
+  awk '
+    /^[[:space:]]*$/ { next }
+    /^#/ { next }
+    index($0, " -> ") == 0 { bad += 1 }
+    END { print bad + 0 }
+  ' "$manifest"
+}
+
+files_manifest_inject_count() {
+  local manifest="$1"
+  awk -F' -> ' '!/^#/ && NF == 2 && $1 ~ /inject-role-index[.]sh$/ { count += 1 } END { print count + 0 }' "$manifest"
+}
+
 echo "=== test_framework_files: every declared source exists, scripts executable ==="
 entry_count=0
 while IFS= read -r line; do
@@ -40,9 +55,11 @@ while IFS= read -r line; do
   esac
 done < "$FILES"
 assert_equal "0" "$([ "$entry_count" -ge 6 ] && echo 0 || echo 1)" "FILES has at least the 6 reshuffle entries (found $entry_count)"
+assert_equal "0" "$(files_manifest_malformed_count "$FILES")" "real FILES has no malformed non-comment lines"
 
 echo "=== test_framework_files: inject-hook landing matches the doctor/init-clone literals ==="
 declared="$(awk -F' -> ' '/inject-role-index.sh/ && !/^#/ {print $2}' "$FILES")"
+assert_equal "1" "$(files_manifest_inject_count "$FILES")" "FILES declares exactly one inject-role-index.sh entry"
 assert_equal ".agents/hooks/lib/inject-role-index.sh" "$declared" "FILES declares the canonical inject landing"
 if grep -q "\.agents/hooks/lib/inject-role-index\.sh" "$REPO_ROOT/framework/tools/doctor.sh"; then
   echo "  PASS: doctor.sh embeds the declared landing"
@@ -60,5 +77,20 @@ assert_equal "0" "$stale_doctor" "doctor.sh has no stale scripts/ inject literal
 echo "=== test_framework_files: nothing under examples/ is distributed ==="
 bad="$(awk -F' -> ' '!/^#/ && NF==2 && $1 ~ /^examples\// {print}' "$FILES" | wc -l | tr -d ' ')"
 assert_equal "0" "$bad" "no examples/ entry in FILES"
+
+echo "=== test_framework_files: helper coverage for malformed lines and zero inject entries ==="
+tmp="$(mktemp -d)"
+cat > "$tmp/malformed-FILES" <<'EOF'
+# fixture FILES
+framework/tools/tool-a.sh .agents/tools/tool-a.sh
+framework/tools/tool-b.sh -> .agents/tools/tool-b.sh
+EOF
+assert_equal "1" "$(files_manifest_malformed_count "$tmp/malformed-FILES")" "malformed FILES helper flags the missing arrow branch"
+cat > "$tmp/no-inject-FILES" <<'EOF'
+framework/tools/tool-a.sh -> .agents/tools/tool-a.sh
+framework/skills/demo-skill/SKILL.md -> .agents/skills/demo-skill/SKILL.md
+EOF
+assert_equal "0" "$(files_manifest_inject_count "$tmp/no-inject-FILES")" "inject-count helper handles zero inject entries"
+rm -rf "$tmp"
 
 print_summary

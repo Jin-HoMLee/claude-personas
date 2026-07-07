@@ -69,7 +69,7 @@ Manifest grows two doctor-validated keys: `framework_source` and `framework_ref=
 These replace the hand-written provenance/re-sync header cerebrum's manifest carries today; that header retires at adoption.
 `doctor --check` gains one staleness line: pin vs source HEAD ("framework N commits behind pinned source" / "pin not found in source - fetch or fix").
 
-What sync never does: touch `.agents/memory/`, manifest values other than `framework_ref`, instance skills, or anything not in `FILES`.
+What sync never does: touch `.agents/memory/`, manifest values other than `framework_ref`, instance skills, or anything not in `FILES`, except for install-owned `.agents/framework-receipt`.
 
 **Role-tier readiness (#49):** the installer's mount vocabulary and manifest keys are written so a fourth mount source (role@global) slots in later without relayout.
 Concretely: install/sync operate only on declared file sets and never assume `.agents/` has exactly three content sources; manifest key naming leaves room for `role_source`-style keys; nothing in this spec hardcodes the two-axis scope model away.

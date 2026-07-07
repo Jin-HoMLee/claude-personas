@@ -52,6 +52,18 @@ echo "=== test_install: unknown argument is fatal ==="
 out="$(bash "$INSTALL" --bogus 2>&1)"
 assert_equal "2" "$?" "unknown arg: exit 2"
 
+echo "=== test_install: --into rejects sync-only flags ==="
+tmp="$(mktemp -d)"
+make_framework_fixture "$tmp"
+make_instance_fixture "$tmp" inst
+out="$(cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/inst" --prune 2>&1)"
+assert_equal "2" "$?" "--into --prune exits 2"
+assert_contains "$out" "--prune is only valid with --sync" "--into --prune explains the invalid combination"
+out="$(cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/inst" --force-file .agents/tools/tool-a.sh 2>&1)"
+assert_equal "2" "$?" "--into --force-file exits 2"
+assert_contains "$out" "--force-file is only valid with --sync" "--into --force-file explains the invalid combination"
+rm -rf "$tmp"
+
 echo "=== test_install: '..' component in a landing path is rejected (escapes .agents/) ==="
 tmp="$(mktemp -d)"
 make_framework_fixture "$tmp"
@@ -139,6 +151,26 @@ assert_equal "1" "$status" "shadowed install exits 1"
 assert_contains "$out" "SHADOWED: .agents/tools/tool-a.sh" "names the shadowed landing"
 assert_equal "instance-owned tool-a" "$(cat "$tmp/inst/.agents/tools/tool-a.sh")" "shadowed file kept byte-identical"
 assert_exists "$tmp/inst/.agents/hooks/lib/hook-x.sh" "non-shadowed files still installed"
+assert_contains "$(cat "$tmp/inst/.agents/manifest")" "framework_ref=framework/v1" "pin still stamped despite SHADOWED"
+assert_contains "$(cat "$tmp/inst/.agents/manifest")" "framework_source=../fw" "source still stamped despite SHADOWED"
+rm -rf "$tmp"
+
+echo "=== test_install: --into fatal when FILES source is absent even if landing exists ==="
+tmp="$(mktemp -d)"
+make_framework_fixture "$tmp"
+make_instance_fixture "$tmp" inst_missing_src
+mkdir -p "$tmp/inst_missing_src/.agents/tools"
+printf 'instance-owned fallback\n' > "$tmp/inst_missing_src/.agents/tools/missing.sh"
+cat > "$tmp/fw/framework/FILES" <<'EOF'
+framework/tools/missing.sh -> .agents/tools/missing.sh
+EOF
+( cd "$tmp/fw" && git -c user.email=t@x -c user.name=T add -A \
+  && git -c user.email=t@x -c user.name=T commit --quiet -m "fw missing source in FILES" )
+missing_ref="$(cd "$tmp/fw" && git rev-parse HEAD)"
+out="$(cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/inst_missing_src" --ref "$missing_ref" 2>&1)"
+assert_equal "2" "$?" "missing source under --into exits 2"
+assert_contains "$out" "cannot read 'framework/tools/missing.sh'" "missing source is fatal, not SHADOWED"
+assert_equal "instance-owned fallback" "$(cat "$tmp/inst_missing_src/.agents/tools/missing.sh")" "existing landing kept"
 rm -rf "$tmp"
 
 echo "=== test_install: --into --check reports, writes nothing, stamps nothing ==="
@@ -227,6 +259,33 @@ assert_contains "$out" "FORCED: .agents/tools/tool-a.sh" "forced overwrite repor
 assert_contains "$(cat "$tmp/inst/.agents/tools/tool-a.sh")" "tool-a v2" "forced file now upstream content"
 rm -rf "$tmp"
 
+echo "=== test_install: --into works for user-tier and role-clones topology manifests ==="
+tmp="$(mktemp -d)"
+make_framework_fixture "$tmp"
+make_user_tier_fixture "$tmp"
+user_before="$(cat "$tmp/user-repo/.agents/memory/MEMORY.md")"
+out="$(cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/user-repo" 2>&1)"
+assert_equal "0" "$?" "user-tier install exits 0"
+assert_exists "$tmp/user-repo/.agents/tools/tool-a.sh" "user-tier target receives framework tools"
+assert_equal "$user_before" "$(cat "$tmp/user-repo/.agents/memory/MEMORY.md")" "user-tier memory index untouched"
+
+make_clone_test_fixture "$tmp/clone"
+memrepo="$tmp/clone/memory-repo"
+mkdir -p "$memrepo/.agents"
+cat > "$memrepo/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=role-clones
+memory_layout=roles
+EOF
+( cd "$memrepo" && git -c user.email=t@x -c user.name=T add .agents/manifest \
+  && git -c user.email=t@x -c user.name=T commit --quiet -m "add role-clones manifest" )
+developer_before="$(cat "$memrepo/developer/MEMORY.md")"
+out="$(cd "$tmp/fw" && bash "$INSTALL" --into "$memrepo" 2>&1)"
+assert_equal "0" "$?" "role-clones install exits 0"
+assert_exists "$memrepo/.agents/tools/tool-a.sh" "role-clones target receives framework tools"
+assert_equal "$developer_before" "$(cat "$memrepo/developer/MEMORY.md")" "role-clones role memory untouched"
+rm -rf "$tmp"
+
 echo "=== test_install: orphan reported not deleted; --prune deletes unmodified only ==="
 tmp="$(mktemp -d)"
 make_framework_fixture "$tmp"
@@ -241,6 +300,10 @@ assert_equal "1" "$status" "orphan present: exit 1"
 assert_contains "$out" "ORPHANED: .agents/hooks/lib/hook-x.sh" "orphan named with --prune hint"
 assert_exists "$tmp/inst/.agents/hooks/lib/hook-x.sh" "orphan NOT auto-deleted"
 assert_contains "$(cat "$tmp/inst/.agents/manifest")" "framework_ref=framework/v3" "pin advances past the pending ORPHANED landing (receipt keeps it discoverable, not the pin)"
+out="$(cd "$tmp/inst" && bash "$INSTALL" --sync --check --prune 2>&1)"
+assert_equal "1" "$?" "--check --prune with orphan exits 1"
+assert_contains "$out" "WOULD-PRUNE: .agents/hooks/lib/hook-x.sh" "--check --prune says WOULD-PRUNE, not remove with --prune"
+assert_not_contains "$out" "remove with --prune" "--check --prune does not suggest the flag already passed"
 out="$(cd "$tmp/inst" && bash "$INSTALL" --sync --prune 2>&1)"
 assert_equal "0" "$?" "--prune run exits 0"
 assert_contains "$out" "PRUNED: .agents/hooks/lib/hook-x.sh" "prune reported"
@@ -335,6 +398,18 @@ assert_equal "$(printf '%s\n' "$sorted_landings" | sort)" "$sorted_landings" "re
 receipt_before="$receipt"
 out="$(cd "$tmp/inst" && bash "$INSTALL" --sync --check 2>&1)"
 assert_equal "$receipt_before" "$(cat "$tmp/inst/.agents/framework-receipt")" "--check on sync never modifies the receipt"
+rm -rf "$tmp"
+
+echo "=== test_install: no-op sync preserves framework-receipt inode and mtime ==="
+tmp="$(mktemp -d)"
+make_framework_fixture "$tmp"
+make_instance_fixture "$tmp" inst
+( cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/inst" ) >/dev/null
+receipt_before="$(ls -li "$tmp/inst/.agents/framework-receipt")"
+sleep 1
+out="$(cd "$tmp/inst" && bash "$INSTALL" --sync 2>&1)"
+assert_equal "0" "$?" "no-op sync exits 0"
+assert_equal "$receipt_before" "$(ls -li "$tmp/inst/.agents/framework-receipt")" "no-op sync preserves receipt inode and timestamp"
 rm -rf "$tmp"
 
 echo "=== test_install: receipt entry removed on PRUNED, kept unchanged on a MODIFIED refusal ==="
