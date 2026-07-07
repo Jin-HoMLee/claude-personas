@@ -202,7 +202,11 @@ write_from_ref() { # write_from_ref <src_path> <landing> <label>
   mkdir -p "$(dirname "$dest")" || { rm -f "$tmp"; fatal "cannot create $(dirname "$dest")"; }
   mv "$tmp" "$dest" || { rm -f "$tmp"; fatal "cannot write $dest"; }
   mode="$(git -C "$SRC" ls-tree "$REF" -- "$src_path" 2>/dev/null | awk '{ print $1 }')"
-  if [ "$mode" = "100755" ]; then chmod +x "$dest"; fi
+  if [ "$mode" = "100755" ]; then
+    chmod +x "$dest"
+  else
+    chmod 0644 "$dest"
+  fi
   report_apply "$label: $landing"
 }
 
@@ -279,6 +283,9 @@ while IFS= read -r line; do
   case "$landing" in
     .agents/*) ;;
     *) fatal "FILES declares a landing outside .agents/: '$landing' - refusing" ;;
+  esac
+  case "/$landing/" in
+    */../*) fatal "FILES declares a landing with a '..' component: '$landing' - refusing" ;;
   esac
   if [ "$MODE" = into ]; then
     process_into "$src_path" "$landing"
