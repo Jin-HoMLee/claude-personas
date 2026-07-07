@@ -1289,3 +1289,11 @@ Do NOT merge; the merge gate is Jin-Ho. In-session /code-review runs BEFORE the 
 - Role-tier readiness (spec section 3): install.sh operates only on declared FILES entries and never assumes a fixed number of content sources; the manifest keys are namespaced `framework_*`, leaving `role_source`-style keys free. No task hardcodes the two-axis model away.
 - Type consistency: report vocabulary defined once in Task 4 and consumed verbatim by Tasks 5-7 assertions; fixture names defined in Task 4 Step 1 and consumed by Tasks 6-8; `stage_inject_script`/`INJECT_SRC` (Task 1) are independent of the installer fixtures.
 - Known simplifications (deliberate, documented in code comments): content comparison via `$(cat)` ignores a trailing-newline-only difference; mode drift (chmod) on an otherwise identical file is not re-synced; `--into` re-runs are idempotent on identical content.
+
+### Design revision (2026-07-07, during execution)
+
+Review of Task 7's pin-hold mechanism (commit `7a33093`) found the pin was doing two separate jobs: orphan provenance and modified-detection baseline.
+Any single pin-advance rule breaks one job - always-advance loses orphan tracking forever, hold-until-resolved mis-flags a later pristine file as MODIFIED once a release both drops one file and changes another.
+Web-verified field practice (dpkg's `.list` + `md5sums`, RPM's package database, pip's `RECORD`) separates the two jobs with an install-time receipt of installed files and content hashes, kept apart from the "which release is current" pointer.
+This plan adopts that split: a new `.agents/framework-receipt` file (landing path + git blob oid per line, install-owned, written once per apply run) now carries orphan discoverability and the modified-vs-pristine baseline, and `framework_ref` (the pin) simply always advances again, exactly as it did before Task 7's hold was added.
+Tasks 4-7's code blocks above predate this revision and describe the pin-hold design that was implemented, tested, then reverted - see the Task 7 report for the implemented-and-reverted mechanism and this repo's `install.sh`/`test_install.sh` for the shipped receipt-based design.

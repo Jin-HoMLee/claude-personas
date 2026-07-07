@@ -240,6 +240,7 @@ status=$?
 assert_equal "1" "$status" "orphan present: exit 1"
 assert_contains "$out" "ORPHANED: .agents/hooks/lib/hook-x.sh" "orphan named with --prune hint"
 assert_exists "$tmp/inst/.agents/hooks/lib/hook-x.sh" "orphan NOT auto-deleted"
+assert_contains "$(cat "$tmp/inst/.agents/manifest")" "framework_ref=framework/v3" "pin advances past the pending ORPHANED landing (receipt keeps it discoverable, not the pin)"
 out="$(cd "$tmp/inst" && bash "$INSTALL" --sync --prune 2>&1)"
 assert_equal "0" "$?" "--prune run exits 0"
 assert_contains "$out" "PRUNED: .agents/hooks/lib/hook-x.sh" "prune reported"
@@ -259,6 +260,7 @@ out="$(cd "$tmp/inst" && bash "$INSTALL" --sync --prune 2>&1)"
 assert_equal "1" "$?" "modified orphan under --prune: exit 1"
 assert_contains "$out" "MODIFIED ORPHAN: .agents/hooks/lib/hook-x.sh" "modified orphan named"
 assert_equal "hand-tuned hook" "$(cat "$tmp/inst/.agents/hooks/lib/hook-x.sh")" "modified orphan kept"
+assert_contains "$(cat "$tmp/inst/.agents/manifest")" "framework_ref=framework/v3" "pin advances past the MODIFIED ORPHAN too (receipt keeps it discoverable, not the pin)"
 rm -rf "$tmp"
 
 echo "=== test_install: --ref bare SHA warns, framework/v* tag does not ==="
@@ -274,6 +276,103 @@ case "$out" in
   *"prefer a framework/v* tag"*) echo "  FAIL: tag ref warned"; TESTS_FAILED=$((TESTS_FAILED+1)) ;;
   *) echo "  PASS: tag ref does not warn" ;;
 esac
+rm -rf "$tmp"
+
+echo "=== test_install: regression - sync spanning a change + a drop in one jump does not misflag the changed file MODIFIED ==="
+tmp="$(mktemp -d)"
+make_framework_fixture "$tmp"
+make_instance_fixture "$tmp" inst
+( cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/inst" ) >/dev/null
+advance_framework_fixture "$tmp"       # v2: tool-a changes, tool-b appears
+drop_hook_framework_fixture "$tmp"     # v3 (built on v2): hook-x drops
+out="$(cd "$tmp/inst" && bash "$INSTALL" --sync 2>&1)"
+status=$?
+assert_equal "1" "$status" "sync straight from v1 to v3 (spans a change + a drop): orphan pending, exit 1"
+assert_contains "$out" "ORPHANED: .agents/hooks/lib/hook-x.sh" "hook-x reported orphaned"
+assert_contains "$out" "SYNCED: .agents/tools/tool-a.sh" "tool-a synced to the new content in the same run"
+case "$out" in
+  *"MODIFIED: .agents/tools/tool-a.sh"*) echo "  FAIL: tool-a wrongly flagged MODIFIED"; TESTS_FAILED=$((TESTS_FAILED+1)) ;;
+  *) echo "  PASS: tool-a not flagged MODIFIED" ;;
+esac
+assert_contains "$(cat "$tmp/inst/.agents/tools/tool-a.sh")" "tool-a v2" "tool-a content is the new upstream content"
+assert_contains "$(cat "$tmp/inst/.agents/manifest")" "framework_ref=framework/v3" "pin advances to v3 despite the pending orphan"
+assert_exists "$tmp/inst/.agents/hooks/lib/hook-x.sh" "hook-x still on disk (orphan kept, not deleted)"
+
+out="$(cd "$tmp/inst" && bash "$INSTALL" --sync --prune 2>&1)"
+assert_equal "0" "$?" "--sync --prune resolves the orphan (found via the receipt): exit 0"
+assert_contains "$out" "PRUNED: .agents/hooks/lib/hook-x.sh" "hook-x pruned even though the pin already moved past its FILES entry"
+assert_not_exists "$tmp/inst/.agents/hooks/lib/hook-x.sh" "hook-x removed"
+
+out="$(cd "$tmp/inst" && bash "$INSTALL" --sync 2>&1)"
+assert_equal "0" "$?" "final plain sync on the settled instance: exit 0"
+assert_contains "$(cat "$tmp/inst/.agents/tools/tool-a.sh")" "tool-a v2" "tool-a still current"
+case "$out" in
+  *"MODIFIED"*) echo "  FAIL: something got flagged MODIFIED on the settled instance"; TESTS_FAILED=$((TESTS_FAILED+1)) ;;
+  *) echo "  PASS: nothing flagged on the settled instance" ;;
+esac
+rm -rf "$tmp"
+
+echo "=== test_install: framework-receipt is created on --into (one sorted line per landing + oid); --check never touches it ==="
+tmp="$(mktemp -d)"
+make_framework_fixture "$tmp"
+make_instance_fixture "$tmp" inst
+( cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/inst" --check ) >/dev/null
+assert_not_exists "$tmp/inst/.agents/framework-receipt" "--check never creates the receipt"
+( cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/inst" ) >/dev/null
+assert_exists "$tmp/inst/.agents/framework-receipt" "receipt created by --into"
+receipt="$(cat "$tmp/inst/.agents/framework-receipt")"
+assert_contains "$receipt" "written by install.sh" "receipt carries the do-not-edit header comment"
+landing_count="$(grep -vc '^#' "$tmp/inst/.agents/framework-receipt")"
+assert_equal "3" "$landing_count" "one receipt line per installed landing"
+for landing in .agents/tools/tool-a.sh .agents/hooks/lib/hook-x.sh .agents/skills/demo-skill/SKILL.md; do
+  case "$receipt" in
+    *"$landing"$'\t'*) : ;;
+    *) echo "  FAIL: receipt missing an oid line for $landing"; TESTS_FAILED=$((TESTS_FAILED+1)) ;;
+  esac
+done
+sorted_landings="$(grep -v '^#' "$tmp/inst/.agents/framework-receipt" | cut -f1)"
+assert_equal "$(printf '%s\n' "$sorted_landings" | sort)" "$sorted_landings" "receipt lines are sorted by landing path"
+receipt_before="$receipt"
+out="$(cd "$tmp/inst" && bash "$INSTALL" --sync --check 2>&1)"
+assert_equal "$receipt_before" "$(cat "$tmp/inst/.agents/framework-receipt")" "--check on sync never modifies the receipt"
+rm -rf "$tmp"
+
+echo "=== test_install: receipt entry removed on PRUNED, kept unchanged on a MODIFIED refusal ==="
+tmp="$(mktemp -d)"
+make_framework_fixture "$tmp"
+make_instance_fixture "$tmp" inst
+( cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/inst" ) >/dev/null
+advance_framework_fixture "$tmp"
+( cd "$tmp/inst" && bash "$INSTALL" --sync ) >/dev/null
+drop_hook_framework_fixture "$tmp"
+( cd "$tmp/inst" && bash "$INSTALL" --sync --prune ) >/dev/null
+case "$(cat "$tmp/inst/.agents/framework-receipt")" in
+  *".agents/hooks/lib/hook-x.sh"*) echo "  FAIL: receipt still tracks the pruned landing"; TESTS_FAILED=$((TESTS_FAILED+1)) ;;
+  *) echo "  PASS: receipt entry removed on PRUNED" ;;
+esac
+
+printf '#!/usr/bin/env bash\necho locally hacked\n' > "$tmp/inst/.agents/tools/tool-a.sh"
+receipt_line_before="$(awk -F'\t' '$1==".agents/tools/tool-a.sh"{print}' "$tmp/inst/.agents/framework-receipt")"
+out="$(cd "$tmp/inst" && bash "$INSTALL" --sync 2>&1)"
+assert_contains "$out" "MODIFIED: .agents/tools/tool-a.sh" "tool-a.sh flagged MODIFIED"
+assert_contains "$(cat "$tmp/inst/.agents/framework-receipt")" "$receipt_line_before" "receipt entry for the MODIFIED file is kept unchanged"
+rm -rf "$tmp"
+
+echo "=== test_install: bootstrap - missing receipt falls back to the pin baseline and regenerates ==="
+tmp="$(mktemp -d)"
+make_framework_fixture "$tmp"
+make_instance_fixture "$tmp" inst
+( cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/inst" ) >/dev/null
+rm "$tmp/inst/.agents/framework-receipt"
+advance_framework_fixture "$tmp"
+out="$(cd "$tmp/inst" && bash "$INSTALL" --sync 2>&1)"
+status=$?
+assert_equal "0" "$status" "sync with no receipt falls back to the pin baseline: exits 0"
+assert_contains "$out" "SYNCED: .agents/tools/tool-a.sh" "pristine file synced via pin fallback, not flagged MODIFIED"
+assert_contains "$(cat "$tmp/inst/.agents/tools/tool-a.sh")" "tool-a v2" "tool-a now at v2 content"
+assert_exists "$tmp/inst/.agents/framework-receipt" "receipt regenerated by the sync"
+landing_count="$(grep -vc '^#' "$tmp/inst/.agents/framework-receipt")"
+assert_equal "4" "$landing_count" "regenerated receipt tracks all 4 currently-installed landings (tool-a, tool-b, hook-x, skill)"
 rm -rf "$tmp"
 
 print_summary

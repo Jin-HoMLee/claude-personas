@@ -9,24 +9,28 @@
 #
 # Refusals are report-never-clobber:
 #   SHADOWED  (--into)  destination exists and differs - kept, instance-owned
-#   MODIFIED  (--sync)  destination differs from the PINNED copy - kept,
-#                       override per file with --force-file <landing>
-#   ORPHANED  (--sync)  pinned FILES entry dropped upstream - kept, remove
-#                       with --prune (unmodified orphans only)
-#   TAINTED ORPHAN (--sync) pinned FILES entry itself is untrustworthy ('..'
-#                       component, or outside .agents/) - ignored, never
-#                       touched, not even with --prune
+#   MODIFIED  (--sync)  destination differs from install's own record of what
+#                       it last put there - kept, override per file with
+#                       --force-file <landing>
+#   ORPHANED  (--sync)  a previously-installed landing dropped upstream -
+#                       kept, remove with --prune (unmodified orphans only)
+#   TAINTED ORPHAN (--sync) a previously-installed landing is itself
+#                       untrustworthy ('..' component, or outside .agents/) -
+#                       ignored, never touched, not even with --prune
 #
-# Pin-advance-with-refusals: --sync stamps the new framework_ref even when
-# some files were refused, so nothing is lost and re-runs converge. A
-# MODIFIED refusal stays safely re-detectable regardless: its landing keeps
-# being declared in framework/FILES release over release, so it matches
-# neither the old nor the new pin and is flagged again on every future run.
-# An ORPHANED/MODIFIED ORPHAN refusal is different - its only provenance is
-# its entry in the CURRENT pin's FILES, so the pin is held at that value
-# (not advanced) until --prune or a hand delete resolves it; advancing past
-# it would erase the record needed to find it again. TAINTED ORPHAN is
-# exempt from that hold since it is never actionable by tooling anyway.
+# framework_ref (the pin, in the instance's manifest) and
+# .agents/framework-receipt (install's own record of every landing it put
+# there, one "<path><TAB><blob oid>" line per file) are deliberately separate
+# concerns - the pin says which release is current, the receipt says what
+# install did and provides the modified-vs-pristine baseline, the same split
+# dpkg's .list+md5sums and pip's RECORD use. Splitting them lets the pin
+# always advance on every apply run, refusals and all: an ORPHANED or
+# MODIFIED ORPHAN landing stays discoverable and prunable through its
+# receipt entry no matter where framework_ref currently points, and a
+# MODIFIED (non-orphan) landing stays flagged because the receipt keeps its
+# last-installed oid until --force-file overwrites it. The receipt is
+# install-owned: written atomically once at the end of an apply run, never
+# touched by --check.
 #
 # Exit: 0 clean/up-to-date; 1 refusals or pending --check changes; 2 fatal.
 
@@ -77,7 +81,6 @@ if [ -z "$MODE" ]; then usage >&2; exit 2; fi
 
 PENDING=0
 APPLIED=0
-ORPHAN_BLOCKING=0
 report_apply()   { echo "$1"; APPLIED=$((APPLIED + 1)); }
 report_pending() { echo "$1"; PENDING=$((PENDING + 1)); }
 warn()  { echo "WARN: $1" >&2; }
@@ -198,10 +201,53 @@ is_forced() {
   return 1
 }
 
+# --- framework receipt (install-owned; dpkg .list+md5sums / pip RECORD split) ---
+#
+# Loaded once into RECEIPT_TAB (bash 3.2: no assoc arrays, so this stays a
+# plain "<landing><TAB><oid>" text blob with awk-based get/set/del helpers,
+# same style as PIN_TAB/NEW_TAB above). Mutated only in memory during a run;
+# write_receipt() persists it, and is only ever called once, at the very
+# end, guarded on CHECK = 0.
+
+RECEIPT_FILE="$TARGET/.agents/framework-receipt"
+RECEIPT_TAB=""
+if [ -f "$RECEIPT_FILE" ]; then
+  RECEIPT_TAB="$(awk '/^[[:space:]]*$/ { next } /^#/ { next } { print }' "$RECEIPT_FILE")"
+fi
+
+receipt_get_oid() { # receipt_get_oid <landing> -> tracked oid, or empty
+  printf '%s\n' "$RECEIPT_TAB" | awk -F'\t' -v l="$1" 'NF == 0 { next } $1 == l { print $2; exit }'
+}
+receipt_set() { # receipt_set <landing> <oid> - record/replace, in memory only
+  local landing="$1" oid="$2"
+  RECEIPT_TAB="$(printf '%s\n' "$RECEIPT_TAB" | awk -F'\t' -v l="$landing" -v o="$oid" '
+    NF == 0 { next }
+    $1 == l { print l "\t" o; found = 1; next }
+    { print }
+    END { if (!found) print l "\t" o }
+  ')"
+}
+receipt_del() { # receipt_del <landing> - drop entry, in memory only
+  local landing="$1"
+  RECEIPT_TAB="$(printf '%s\n' "$RECEIPT_TAB" | awk -F'\t' -v l="$landing" 'NF == 0 { next } $1 != l')"
+}
+receipt_landings() { # every landing path currently tracked, one per line
+  printf '%s\n' "$RECEIPT_TAB" | awk -F'\t' 'NF { print $1 }'
+}
+write_receipt() { # persist RECEIPT_TAB atomically, sorted by landing
+  local tmp
+  tmp="$(mktemp 2>/dev/null)" || fatal "mktemp failed"
+  { echo "# framework-receipt - written by install.sh; landing path<TAB>blob oid. Do not edit."
+    printf '%s\n' "$RECEIPT_TAB" | awk -F'\t' 'NF' | sort
+  } > "$tmp" || { rm -f "$tmp"; fatal "cannot write $RECEIPT_FILE"; }
+  mkdir -p "$(dirname "$RECEIPT_FILE")" || { rm -f "$tmp"; fatal "cannot create $(dirname "$RECEIPT_FILE")"; }
+  mv "$tmp" "$RECEIPT_FILE" || { rm -f "$tmp"; fatal "cannot write $RECEIPT_FILE"; }
+}
+
 # --- copy machinery ---
 
 write_from_ref() { # write_from_ref <src_path> <landing> <label>
-  local src_path="$1" landing="$2" label="$3" dest="$TARGET/$2" tmp mode
+  local src_path="$1" landing="$2" label="$3" dest="$TARGET/$2" tmp mode new_oid
   if [ "$CHECK" = 1 ]; then
     case "$label" in
       INSTALLED) report_pending "WOULD-INSTALL: $landing (from $src_path @ $REF)" ;;
@@ -222,16 +268,24 @@ write_from_ref() { # write_from_ref <src_path> <landing> <label>
   else
     chmod 0644 "$dest"
   fi
+  new_oid="$(source_oid "$REF" "$src_path")"
+  receipt_set "$landing" "$new_oid"
   report_apply "$label: $landing"
 }
 
-blob_at() { git -C "$SRC" show "$1:$2" 2>/dev/null; }
+# Blob oids, hashed/read through $SRC so both sides compare in the SAME
+# repo's object format (the copy is byte-exact, so an installed pristine
+# file hashes to its source oid).
+current_oid() { git -C "$SRC" hash-object "$1" 2>/dev/null; }         # current_oid <dest-path>
+source_oid()  { git -C "$SRC" rev-parse "$1:$2" 2>/dev/null; }        # source_oid <ref> <src_path>
 
 process_into() { # process_into <src_path> <landing>
-  local src_path="$1" landing="$2" dest="$TARGET/$2"
+  local src_path="$1" landing="$2" dest="$TARGET/$2" new_oid
   if [ -e "$dest" ] || [ -L "$dest" ]; then
-    if [ "$(cat "$dest" 2>/dev/null)" = "$(blob_at "$REF" "$src_path")" ]; then
-      return 0   # identical content: already installed, idempotent re-run
+    new_oid="$(source_oid "$REF" "$src_path")"
+    if [ "$(current_oid "$dest")" = "$new_oid" ]; then
+      [ "$CHECK" = 1 ] || receipt_set "$landing" "$new_oid"
+      return 0   # identical content: already installed - idempotent re-run, adopts pre-existing content
     fi
     report_pending "SHADOWED: $landing exists and differs - kept, instance-owned (install never overwrites)"
   else
@@ -240,22 +294,38 @@ process_into() { # process_into <src_path> <landing>
 }
 
 process_sync() { # process_sync <src_path> <landing>
-  local src_path="$1" landing="$2" dest="$TARGET/$2" new_blob cur pin_src pinned_blob
+  local src_path="$1" landing="$2" dest="$TARGET/$2"
+  local new_oid cur_oid receipt_oid pin_src pinned_oid
   if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
     write_from_ref "$src_path" "$landing" INSTALLED
     return 0
   fi
-  new_blob="$(blob_at "$REF" "$src_path")"
-  cur="$(cat "$dest" 2>/dev/null)"
-  if [ "$cur" = "$new_blob" ]; then
+  new_oid="$(source_oid "$REF" "$src_path")"
+  cur_oid="$(current_oid "$dest")"
+  if [ "$cur_oid" = "$new_oid" ]; then
+    [ "$CHECK" = 1 ] || receipt_set "$landing" "$new_oid"
     return 0   # up to date
   fi
-  pin_src="$(pin_src_for_landing "$landing")"
-  pinned_blob=""
-  if [ -n "$pin_src" ]; then
-    pinned_blob="$(blob_at "$PIN" "$pin_src")"
+  receipt_oid="$(receipt_get_oid "$landing")"
+  if [ -n "$receipt_oid" ]; then
+    if [ "$cur_oid" = "$receipt_oid" ]; then
+      write_from_ref "$src_path" "$landing" SYNCED
+    elif is_forced "$landing"; then
+      write_from_ref "$src_path" "$landing" FORCED
+    else
+      report_pending "MODIFIED: $landing differs from the pinned copy - kept (override: --force-file $landing)"
+    fi
+    return 0
   fi
-  if [ "$cur" = "$pinned_blob" ]; then
+  # No receipt entry for this landing (bootstrap/migration: instance
+  # predates the receipt, or the file was deleted by hand): fall back to
+  # comparing against the PIN's blob, exactly as before the receipt existed.
+  pin_src="$(pin_src_for_landing "$landing")"
+  pinned_oid=""
+  if [ -n "$pin_src" ]; then
+    pinned_oid="$(source_oid "$PIN" "$pin_src")"
+  fi
+  if [ "$cur_oid" = "$pinned_oid" ]; then
     write_from_ref "$src_path" "$landing" SYNCED
   elif is_forced "$landing"; then
     write_from_ref "$src_path" "$landing" FORCED
@@ -264,20 +334,27 @@ process_sync() { # process_sync <src_path> <landing>
   fi
 }
 
+# candidate_landings: union of receipt-tracked landings and the pinned
+# FILES' landings, one per line, deduplicated - the full pool process_orphans
+# subtracts the new declared set from. A landing surviving in the receipt
+# after its pin entry ages out (or vice versa) still surfaces here.
+candidate_landings() {
+  { receipt_landings
+    printf '%s\n' "$PIN_TAB" | awk -F'\t' 'NF { print $2 }'
+  } | awk 'NF' | sort -u
+}
+
 process_orphans() {
-  local line src_path landing dest cur pinned_blob
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    src_path="${line%%$'\t'*}"
-    landing="${line##*$'\t'}"
+  local landing dest cur_oid target_oid pin_src
+  while IFS= read -r landing; do
+    [ -n "$landing" ] || continue
     if new_has_landing "$landing"; then continue; fi
-    # The pinned FILES entry is HISTORY, not the guarded current-ref walk
-    # below - a stale pin can carry a bad landing (a '..' traversal, or one
-    # outside .agents/) that was never checked at the time it was pinned.
+    # A previously-installed landing is HISTORY, not the guarded current-ref
+    # walk below - it can carry a bad path (a '..' traversal, or one outside
+    # .agents/) that was never checked at the time it was installed/pinned.
     # Report-and-skip here, not fatal: fatal would brick --sync forever on
-    # an instance whose pinned history contains one bad entry (the pin only
-    # advances when sync completes), whereas skip-and-report lets the pin
-    # advance past the poisoned FILES so the next sync is clean.
+    # an instance carrying one bad historical entry, whereas skip-and-report
+    # lets the run (and the pin) proceed cleanly.
     case "/$landing/" in
       */../*)
         report_pending "TAINTED ORPHAN: pinned FILES entry '$landing' contains a '..' component - ignored, never touched"
@@ -290,22 +367,27 @@ process_orphans() {
         continue ;;
     esac
     dest="$TARGET/$landing"
-    if [ ! -e "$dest" ]; then continue; fi
-    cur="$(cat "$dest" 2>/dev/null)"
-    pinned_blob="$(blob_at "$PIN" "$src_path")"
+    if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
+      [ "$CHECK" = 1 ] || receipt_del "$landing"
+      continue
+    fi
+    cur_oid="$(current_oid "$dest")"
+    target_oid="$(receipt_get_oid "$landing")"
+    if [ -z "$target_oid" ]; then
+      pin_src="$(pin_src_for_landing "$landing")"
+      [ -n "$pin_src" ] && target_oid="$(source_oid "$PIN" "$pin_src")"
+    fi
     if [ "$PRUNE" = 1 ] && [ "$CHECK" = 0 ]; then
-      if [ "$cur" = "$pinned_blob" ]; then
-        rm "$dest" && report_apply "PRUNED: $landing" || fatal "cannot remove $dest"
+      if [ -n "$target_oid" ] && [ "$cur_oid" = "$target_oid" ]; then
+        rm "$dest" && { report_apply "PRUNED: $landing"; receipt_del "$landing"; } || fatal "cannot remove $dest"
       else
         report_pending "MODIFIED ORPHAN: $landing differs from the pinned copy - kept, delete by hand"
-        ORPHAN_BLOCKING=$((ORPHAN_BLOCKING + 1))
       fi
     else
       report_pending "ORPHANED: $landing no longer in framework/FILES - kept (remove with --prune)"
-      ORPHAN_BLOCKING=$((ORPHAN_BLOCKING + 1))
     fi
   done <<EOF_ORPHANS
-$PIN_TAB
+$(candidate_landings)
 EOF_ORPHANS
 }
 
@@ -335,20 +417,14 @@ if [ "$MODE" = sync ]; then
   process_orphans
 fi
 
-# --- stamp the pin (never in --check; never past an unresolved orphan) ---
+# --- write the receipt, then stamp the pin (neither ever happens in --check) ---
 #
-# An ORPHANED/MODIFIED ORPHAN landing's only provenance is its entry in the
-# CURRENT pin's framework/FILES - advancing framework_ref past that entry
-# (to a ref where FILES has already dropped it) would erase the one record
-# that lets a later --sync/--prune find it again, silently un-tracking a
-# file still sitting on disk. So, unlike a MODIFIED (non-orphan) refusal -
-# whose landing stays declared in FILES release over release, so it keeps
-# getting flagged forever regardless of pin position - an orphan refusal
-# holds the pin at its current value until --prune (or a hand delete)
-# resolves it. TAINTED ORPHAN is exempt: it is never actionable by tooling
-# (--prune skips it unconditionally), so there is nothing to preserve
-# provenance for and the pin advances past it same as any other refusal.
-if [ "$CHECK" = 0 ] && [ "$ORPHAN_BLOCKING" -eq 0 ]; then
+# The receipt (not the pin) is what makes an ORPHANED/MODIFIED ORPHAN landing
+# discoverable and prunable, so the pin no longer needs to hold to preserve
+# that provenance - it always advances on an apply run, refusals and all.
+if [ "$CHECK" = 0 ]; then
+  write_receipt
+
   if [ "$MODE" = into ]; then
     if [ "$SRC" = "$TARGET" ]; then
       SOURCE_VALUE="."
@@ -373,8 +449,6 @@ if [ "$CHECK" = 0 ] && [ "$ORPHAN_BLOCKING" -eq 0 ]; then
     mv "$tmp" "$MANIFEST" || fatal "cannot write $MANIFEST"
     report_apply "PINNED: framework_ref=$REF"
   fi
-elif [ "$CHECK" = 0 ] && [ "$ORPHAN_BLOCKING" -gt 0 ]; then
-  echo "NOTE: framework_ref pin held at $PIN - resolve the orphan(s) above (--prune or delete by hand) first"
 fi
 
 if [ "$PENDING" -gt 0 ]; then
