@@ -357,3 +357,18 @@ codex_hook=.agents/hooks/hook-b.sh
 skills_mount=true
 EOF
 }
+
+# --- framework payload staging (shared by init-clone/doctor/inject tests) ---
+
+# Absolute path to the repo's real inject script. test_helpers.sh lives in
+# framework/tools/tests/, so the hooks dir is two levels up + /hooks.
+INJECT_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../hooks" && pwd)/inject-role-index.sh"
+
+# stage_inject_script <memrepo>
+# Places the inject script at the installed-payload location the wiring
+# expects (<memrepo>/.agents/hooks/lib/), executable.
+stage_inject_script() {
+  mkdir -p "$1/.agents/hooks/lib"
+  cp "$INJECT_SRC" "$1/.agents/hooks/lib/inject-role-index.sh"
+  chmod +x "$1/.agents/hooks/lib/inject-role-index.sh"
+}
