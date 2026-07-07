@@ -109,6 +109,26 @@ assert_contains() {
   esac
 }
 
+assert_not_contains() {
+  local haystack="$1"
+  local needle="$2"
+  local msg="${3:-assert_not_contains}"
+  TESTS_RUN=$((TESTS_RUN + 1))
+  case "$haystack" in
+    *"$needle"*)
+      TESTS_FAILED=$((TESTS_FAILED + 1))
+      FAILED_TESTS+=("$msg")
+      echo "${RED}  FAIL${RESET}: $msg"
+      echo "    expected NOT to find: $needle"
+      echo "    in: $haystack"
+      ;;
+    *)
+      TESTS_PASSED=$((TESTS_PASSED + 1))
+      echo "${GREEN}  PASS${RESET}: $msg"
+      ;;
+  esac
+}
+
 assert_matches() {
   local haystack="$1"
   local regex="$2"
@@ -356,4 +376,100 @@ codex_hook=.agents/hooks/hook-a.sh
 codex_hook=.agents/hooks/hook-b.sh
 skills_mount=true
 EOF
+}
+
+# --- framework payload staging (shared by init-clone/doctor/inject tests) ---
+
+# Absolute path to the repo's real inject script. test_helpers.sh lives in
+# framework/tools/tests/, so the hooks dir is two levels up + /hooks.
+INJECT_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../hooks" && pwd)/inject-role-index.sh"
+
+# stage_inject_script <memrepo>
+# Places the inject script at the installed-payload location the wiring
+# expects (<memrepo>/.agents/hooks/lib/), executable.
+stage_inject_script() {
+  mkdir -p "$1/.agents/hooks/lib"
+  cp "$INJECT_SRC" "$1/.agents/hooks/lib/inject-role-index.sh"
+  chmod +x "$1/.agents/hooks/lib/inject-role-index.sh"
+}
+
+# --- installer fixtures (test_install.sh, doctor staleness tests) ---
+
+# make_framework_fixture <dir>
+# Synthetic framework clone at <dir>/fw: 3-entry FILES (tool, hook, skill),
+# one commit, annotated tag framework/v1.
+make_framework_fixture() {
+  local fw="$1/fw"
+  mkdir -p "$fw/framework/tools" "$fw/framework/hooks" "$fw/framework/skills/demo-skill"
+  printf '#!/usr/bin/env bash\necho tool-a v1\n' > "$fw/framework/tools/tool-a.sh"
+  chmod +x "$fw/framework/tools/tool-a.sh"
+  printf '#!/usr/bin/env bash\necho hook-x v1\n' > "$fw/framework/hooks/hook-x.sh"
+  chmod +x "$fw/framework/hooks/hook-x.sh"
+  printf -- '---\nname: demo-skill\n---\nv1\n' > "$fw/framework/skills/demo-skill/SKILL.md"
+  cat > "$fw/framework/FILES" <<'EOF'
+# fixture FILES
+framework/tools/tool-a.sh -> .agents/tools/tool-a.sh
+framework/hooks/hook-x.sh -> .agents/hooks/lib/hook-x.sh
+framework/skills/demo-skill/SKILL.md -> .agents/skills/demo-skill/SKILL.md
+EOF
+  ( cd "$fw" && git init --quiet \
+    && git -c user.email=t@x -c user.name=T add -A \
+    && git -c user.email=t@x -c user.name=T commit --quiet -m "fw v1" \
+    && git -c user.email=t@x -c user.name=T tag -a framework/v1 -m v1 )
+}
+
+# advance_framework_fixture_named <dir> <clone-name>
+# Same v2 advance, for a framework clone not named fw.
+advance_framework_fixture_named() {
+  local fw="$1/$2"
+  printf '#!/usr/bin/env bash\necho tool-a v2\n' > "$fw/framework/tools/tool-a.sh"
+  printf '#!/usr/bin/env bash\necho tool-b v2\n' > "$fw/framework/tools/tool-b.sh"
+  chmod +x "$fw/framework/tools/tool-b.sh"
+  cat > "$fw/framework/FILES" <<'EOF'
+framework/tools/tool-a.sh -> .agents/tools/tool-a.sh
+framework/tools/tool-b.sh -> .agents/tools/tool-b.sh
+framework/hooks/hook-x.sh -> .agents/hooks/lib/hook-x.sh
+framework/skills/demo-skill/SKILL.md -> .agents/skills/demo-skill/SKILL.md
+EOF
+  ( cd "$fw" && git -c user.email=t@x -c user.name=T add -A \
+    && git -c user.email=t@x -c user.name=T commit --quiet -m "fw v2" \
+    && git -c user.email=t@x -c user.name=T tag -a framework/v2 -m v2 )
+}
+
+# advance_framework_fixture <dir>
+# v2: tool-a content changes, tool-b appears in FILES. hook-x stays.
+advance_framework_fixture() {
+  advance_framework_fixture_named "$1" fw
+}
+
+# drop_hook_framework_fixture <dir>
+# v3: hook-x leaves FILES (and the tree) - the orphan case.
+drop_hook_framework_fixture() {
+  local fw="$1/fw"
+  rm "$fw/framework/hooks/hook-x.sh"
+  cat > "$fw/framework/FILES" <<'EOF'
+framework/tools/tool-a.sh -> .agents/tools/tool-a.sh
+framework/tools/tool-b.sh -> .agents/tools/tool-b.sh
+framework/skills/demo-skill/SKILL.md -> .agents/skills/demo-skill/SKILL.md
+EOF
+  ( cd "$fw" && git -c user.email=t@x -c user.name=T add -A \
+    && git -c user.email=t@x -c user.name=T commit --quiet -m "fw v3" \
+    && git -c user.email=t@x -c user.name=T tag -a framework/v3 -m v3 )
+}
+
+# make_instance_fixture <dir> <name>
+# Embedded-topology instance with a committed manifest and a memory canary
+# that install/sync must never touch.
+make_instance_fixture() {
+  local inst="$1/$2"
+  mkdir -p "$inst/.agents/memory"
+  printf '# Memory Index\n- canary\n' > "$inst/.agents/memory/MEMORY.md"
+  cat > "$inst/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=embedded
+memory_layout=flat
+EOF
+  ( cd "$inst" && git init --quiet \
+    && git -c user.email=t@x -c user.name=T add -A \
+    && git -c user.email=t@x -c user.name=T commit --quiet -m "instance init" )
 }

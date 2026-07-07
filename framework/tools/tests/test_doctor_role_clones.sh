@@ -19,7 +19,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 DOCTOR="$(cd "$SCRIPT_DIR/.." && pwd)/doctor.sh"
 INIT_CLONE="$(cd "$SCRIPT_DIR/.." && pwd)/init-clone.sh"
-INJECT_SCRIPT="$(cd "$SCRIPT_DIR/../../hooks" && pwd)/inject-role-index.sh"
 
 # Runs doctor.sh with $1=HOME and the remaining args passed through; sets
 # DOCTOR_STDOUT, DOCTOR_STDERR, DOCTOR_EXIT. Never lets doctor.sh's own
@@ -77,9 +76,7 @@ setup_wired_fixture() {
   # location) so init-clone.sh's Codex adapter actually generates
   # .codex/hooks.json for every workspace below, instead of the WARN-and-skip
   # path this fixture used to hit.
-  mkdir -p "$MEMREPO/.agents/hooks/lib"
-  cp "$INJECT_SCRIPT" "$MEMREPO/.agents/hooks/lib/inject-role-index.sh"
-  chmod +x "$MEMREPO/.agents/hooks/lib/inject-role-index.sh"
+  stage_inject_script "$MEMREPO"
 
   ( cd "$MEMREPO" && \
     git -c user.email=t@x -c user.name=T add -A && \

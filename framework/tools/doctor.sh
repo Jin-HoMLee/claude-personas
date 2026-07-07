@@ -36,7 +36,7 @@ VALID_OPENCODE_VALUES="global per-clone"
 SUPPORTED_MANIFEST_VERSIONS="1"
 
 # All keys this doctor understands, regardless of topology.
-ALL_VALID_KEYS="manifest_version topology memory_layout adapter claude_hook codex_hook skills_mount opencode"
+ALL_VALID_KEYS="manifest_version topology memory_layout adapter claude_hook codex_hook skills_mount opencode framework_source framework_ref"
 
 # Keys valid only for topology=embedded.
 EMBEDDED_ONLY_KEYS="claude_hook codex_hook skills_mount"
@@ -536,6 +536,46 @@ check_hook_scripts() {
     for hook in "${CODEX_HOOKS[@]}"; do
       _check_one_hook codex_hook "$hook"
     done
+  fi
+}
+
+check_framework_staleness() {
+  # Staleness of the installed framework payload vs its pinned source
+  # (spec section 3). Being BEHIND is INFO (wiring is intact; an update is
+  # available); a pin the source cannot resolve, or an unreachable source,
+  # is DRIFT (the recorded provenance is broken). Read-only, best effort:
+  # no framework_ref key means not installed via install.sh - silent.
+  local pin src parent n
+  pin="$(manifest_get framework_ref)"
+  [ -n "$pin" ] || return 0
+  src="$(manifest_get framework_source)"
+  if [ -n "$src" ]; then
+    case "$src" in
+      /*) ;;
+      *) src="$ROOT/$src" ;;
+    esac
+  else
+    parent="$(dirname "$ROOT")"
+    if [ -f "$parent/agent-personas/framework/FILES" ]; then
+      src="$parent/agent-personas"
+    elif [ -f "$parent/claude-personas/framework/FILES" ]; then
+      src="$parent/claude-personas"
+    else
+      report_drift "framework_ref is pinned but no framework_source is set and no sibling framework clone exists - set framework_source in the manifest"
+      return 0
+    fi
+  fi
+  if [ ! -d "$src" ]; then
+    report_drift "framework_source '$src' unreachable"
+    return 0
+  fi
+  if ! git -C "$src" rev-parse --verify --quiet "$pin^{commit}" >/dev/null 2>&1; then
+    report_drift "framework_ref '$pin' not found in source $src - fetch the source or fix the pin"
+    return 0
+  fi
+  n="$(git -C "$src" rev-list --count "$pin..HEAD" 2>/dev/null || echo 0)"
+  if [ "$n" -gt 0 ]; then
+    echo "INFO: framework payload $n commit(s) behind pinned source $src (run install.sh --sync)"
   fi
 }
 
@@ -1215,6 +1255,7 @@ topology_user_tier_checks() {
 # Shared floor for every topology, run before the topology-specific catalog.
 check_payload
 check_hook_scripts
+check_framework_staleness
 
 case "$TOPOLOGY" in
   role-clones) topology_role_clones_checks ;;

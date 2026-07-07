@@ -634,9 +634,7 @@ mv "$tmp23/memory-repo" "$tmp23/claude-personas-myapp"
 mkdir -p "$tmp23/home"
 # The inject script lands in the memory repo's .agents/hooks/lib/ (installed
 # framework payload).
-mkdir -p "$tmp23/claude-personas-myapp/.agents/hooks/lib"
-cp "$(cd "$SCRIPT_DIR/../../hooks" && pwd)/inject-role-index.sh" "$tmp23/claude-personas-myapp/.agents/hooks/lib/"
-chmod +x "$tmp23/claude-personas-myapp/.agents/hooks/lib/inject-role-index.sh"
+stage_inject_script "$tmp23/claude-personas-myapp"
 
 ( cd "$tmp23/claude-personas-myapp" && \
   HOME="$tmp23/home" bash "$INIT_CLONE" developer --project-url "$tmp23/project-repo.git" )
@@ -694,9 +692,7 @@ tmp25="$(mktemp -d)"
 make_clone_test_fixture "$tmp25"
 mv "$tmp25/memory-repo" "$tmp25/claude-personas-myapp"
 mkdir -p "$tmp25/home"
-mkdir -p "$tmp25/claude-personas-myapp/.agents/hooks/lib"
-cp "$(cd "$SCRIPT_DIR/../../hooks" && pwd)/inject-role-index.sh" "$tmp25/claude-personas-myapp/.agents/hooks/lib/"
-chmod +x "$tmp25/claude-personas-myapp/.agents/hooks/lib/inject-role-index.sh"
+stage_inject_script "$tmp25/claude-personas-myapp"
 
 ( cd "$tmp25/claude-personas-myapp" && \
   HOME="$tmp25/home" bash "$INIT_CLONE" developer --project-url "$tmp25/project-repo.git" )
@@ -728,9 +724,7 @@ make_clone_test_fixture "$tmp26"
 mv "$tmp26/memory-repo" "$tmp26/claude-personas-myapp"
 mkdir -p "$tmp26/home"
 # Codex adapter is otherwise wireable: inject script present in the memory repo.
-mkdir -p "$tmp26/claude-personas-myapp/.agents/hooks/lib"
-cp "$(cd "$SCRIPT_DIR/../../hooks" && pwd)/inject-role-index.sh" "$tmp26/claude-personas-myapp/.agents/hooks/lib/"
-chmod +x "$tmp26/claude-personas-myapp/.agents/hooks/lib/inject-role-index.sh"
+stage_inject_script "$tmp26/claude-personas-myapp"
 
 # Make the PROJECT repo ship a committed .codex/hooks.json (uncommon but legal).
 seed26="$(mktemp -d)"
@@ -821,9 +815,7 @@ make_clone_test_fixture "$weird29"
 mv "$weird29/memory-repo" "$weird29/claude-personas-myapp"
 mkdir -p "$weird29/home"
 # Codex adapter is otherwise wireable: inject script present in the memory repo.
-mkdir -p "$weird29/claude-personas-myapp/.agents/hooks/lib"
-cp "$(cd "$SCRIPT_DIR/../../hooks" && pwd)/inject-role-index.sh" "$weird29/claude-personas-myapp/.agents/hooks/lib/"
-chmod +x "$weird29/claude-personas-myapp/.agents/hooks/lib/inject-role-index.sh"
+stage_inject_script "$weird29/claude-personas-myapp"
 
 weird_clone29="$weird29/we\"ird-clone"
 ( cd "$weird29/claude-personas-myapp" && \
@@ -895,9 +887,7 @@ mv "$tmp31/memory-repo" "$tmp31/claude-personas-myapp"
 mkdir -p "$tmp31/claude-personas-myapp/memory_manager"
 printf "# Memory Index - memory_manager\n" > "$tmp31/claude-personas-myapp/memory_manager/MEMORY.md"
 ( cd "$tmp31/claude-personas-myapp/memory_manager" && ln -s ../shared shared )
-mkdir -p "$tmp31/claude-personas-myapp/.agents/hooks/lib"
-cp "$(cd "$SCRIPT_DIR/../../hooks" && pwd)/inject-role-index.sh" "$tmp31/claude-personas-myapp/.agents/hooks/lib/"
-chmod +x "$tmp31/claude-personas-myapp/.agents/hooks/lib/inject-role-index.sh"
+stage_inject_script "$tmp31/claude-personas-myapp"
 ( cd "$tmp31/claude-personas-myapp" && \
   git -c user.email=t@x -c user.name=T add -A && \
   git -c user.email=t@x -c user.name=T commit --quiet -m "add memory_manager role" )
@@ -1105,9 +1095,7 @@ tmp36="$(mktemp -d)"
 make_clone_test_fixture "$tmp36"
 mkdir -p "$tmp36/home"
 mv "$tmp36/memory-repo" "$tmp36/claude-personas-myapp"
-mkdir -p "$tmp36/claude-personas-myapp/.agents/hooks/lib"
-cp "$(cd "$SCRIPT_DIR/../../hooks" && pwd)/inject-role-index.sh" "$tmp36/claude-personas-myapp/.agents/hooks/lib/"
-chmod +x "$tmp36/claude-personas-myapp/.agents/hooks/lib/inject-role-index.sh"
+stage_inject_script "$tmp36/claude-personas-myapp"
 
 # Ship a committed .codex/hooks.json so the --force backup path fires on a fresh clone.
 seed36="$(mktemp -d)"

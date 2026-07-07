@@ -10,12 +10,13 @@
 #   <source path in this repo> -> <landing path in an instance>
 # Blank lines and #-comments are ignored.
 #
-# Consumed by framework/tools/install.sh (issue #55). Spec:
+# Consumed by framework/tools/install.sh. Spec:
 # docs/superpowers/specs/2026-07-06-framework-distribution-design.md section 2.
 
 framework/tools/doctor.sh -> .agents/tools/doctor.sh
 framework/tools/memory_cliff.py -> .agents/tools/memory_cliff.py
 framework/tools/init-clone.sh -> .agents/tools/init-clone.sh
 framework/tools/list-roles.sh -> .agents/tools/list-roles.sh
+framework/tools/install.sh -> .agents/tools/install.sh
 framework/hooks/inject-role-index.sh -> .agents/hooks/lib/inject-role-index.sh
 framework/skills/load-persona-memory/SKILL.md -> .agents/skills/load-persona-memory/SKILL.md

@@ -54,16 +54,18 @@ rm ~/.claude/projects/<some-hash>/memory
 
 **Caution:** don't delete the hash dir itself (`<some-hash>/`) — Claude Code may have session JSONLs there. Only delete the `memory` symlink inside.
 
-### 4. Stage the framework payload, then run `init-clone.sh` for each role
+### 4. Install the framework payload, then run `init-clone.sh` for each role
 
-The Codex adapter needs the inject hook at the installed-payload location; stage and commit it once per memory repo (interim step until `install.sh` ships — see the framework repo's issue #55):
+The Codex adapter needs the inject hook at the installed-payload location; install and commit it once per memory repo:
 
 ```bash
 cd ~/path/to/claude-personas-<app>
-mkdir -p .agents/hooks/lib
-cp framework/hooks/inject-role-index.sh .agents/hooks/lib/
-git add .agents/hooks/lib/inject-role-index.sh && git commit -m "stage framework hook payload"
+./framework/tools/doctor.sh --init role-clones   # skip if .agents/manifest already exists
+./framework/tools/install.sh --into .
+git add .agents && git commit -m "install framework payload"
 ```
+
+This commits the payload, the manifest pin, and the installer's `.agents/framework-receipt`.
 
 Then run `init-clone.sh` once per role:
 
@@ -160,10 +162,12 @@ For an existing memory repo that pulled this change:
 
 ```bash
 cd ~/path/to/claude-personas-<app>
-mkdir -p .agents/hooks/lib
-cp framework/hooks/inject-role-index.sh .agents/hooks/lib/
-git add .agents/hooks/lib/inject-role-index.sh && git commit -m "stage framework hook payload"
+./framework/tools/doctor.sh --init role-clones   # skip if .agents/manifest already exists
+./framework/tools/install.sh --into .
+git add .agents && git commit -m "install framework payload"
 ```
+
+This commits the payload, the manifest pin, and the installer's `.agents/framework-receipt`.
 
 Then regenerate each clone's `.codex/hooks.json` (it still points at the removed `scripts/` path) with `./framework/tools/doctor.sh`, or `./framework/tools/init-clone.sh --force <role>` per clone.
 Codex will ask you to re-approve the changed hook via `/hooks` in each clone.
