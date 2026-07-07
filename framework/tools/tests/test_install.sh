@@ -375,4 +375,36 @@ landing_count="$(grep -vc '^#' "$tmp/inst/.agents/framework-receipt")"
 assert_equal "4" "$landing_count" "regenerated receipt tracks all 4 currently-installed landings (tool-a, tool-b, hook-x, skill)"
 rm -rf "$tmp"
 
+echo "=== test_install: --ref HEAD resolves to the full commit SHA, not the literal string 'HEAD' ==="
+tmp="$(mktemp -d)"
+make_framework_fixture "$tmp"
+make_instance_fixture "$tmp" inst
+head_sha="$(git -C "$tmp/fw" rev-parse HEAD)"
+out="$(cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/inst" --ref HEAD 2>&1)"
+assert_equal "0" "$?" "--ref HEAD install exits 0"
+pinned="$(awk -F= '$1=="framework_ref"{print $2}' "$tmp/inst/.agents/manifest")"
+assert_matches "$pinned" "^[0-9a-f]{40}$" "HEAD resolves to a 40-char commit SHA in the manifest"
+assert_equal "$head_sha" "$pinned" "resolved SHA matches the source clone's HEAD"
+rm -rf "$tmp"
+
+echo "=== test_install: --ref framework/v1 stays pinned verbatim as the tag name, not a SHA ==="
+tmp="$(mktemp -d)"
+make_framework_fixture "$tmp"
+make_instance_fixture "$tmp" inst
+out="$(cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/inst" --ref framework/v1 2>&1)"
+assert_equal "0" "$?" "--ref framework/v1 install exits 0"
+assert_contains "$(cat "$tmp/inst/.agents/manifest")" "framework_ref=framework/v1" "tag ref pinned verbatim, not resolved to a SHA"
+rm -rf "$tmp"
+
+echo "=== test_install: install's own state files (manifest, receipt) land mode 0644, not mktemp's 0600 ==="
+tmp="$(mktemp -d)"
+make_framework_fixture "$tmp"
+make_instance_fixture "$tmp" inst
+( cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/inst" ) >/dev/null
+manifest_mode="$(ls -l "$tmp/inst/.agents/manifest" | awk '{print $1}' | cut -c1-10)"
+receipt_mode="$(ls -l "$tmp/inst/.agents/framework-receipt" | awk '{print $1}' | cut -c1-10)"
+assert_equal "-rw-r--r--" "$manifest_mode" "manifest lands mode 0644, not mktemp's 0600"
+assert_equal "-rw-r--r--" "$receipt_mode" "receipt lands mode 0644, not mktemp's 0600"
+rm -rf "$tmp"
+
 print_summary

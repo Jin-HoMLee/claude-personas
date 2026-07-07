@@ -142,13 +142,18 @@ fi
 # --- resolve the ref to pin ---
 
 if [ -n "$REF_OVERRIDE" ]; then
-  git -C "$SRC" rev-parse --verify --quiet "$REF_OVERRIDE^{commit}" >/dev/null \
+  RESOLVED_SHA="$(git -C "$SRC" rev-parse --verify --quiet "$REF_OVERRIDE^{commit}")" \
     || fatal "ref '$REF_OVERRIDE' not found in $SRC"
   case "$REF_OVERRIDE" in
-    framework/v*) ;;
-    *) warn "pinning '$REF_OVERRIDE' - prefer a framework/v* tag" ;;
+    framework/v*) REF="$REF_OVERRIDE" ;;
+    *)
+      warn "pinning '$REF_OVERRIDE' - prefer a framework/v* tag"
+      # Symbolic refs (HEAD, branch names, short SHAs) must not become the
+      # pin verbatim - they move, which permanently zeroes doctor staleness
+      # and drifts the receipt-absent fallback baseline. Resolve to the full
+      # commit SHA instead; git show/ls-tree accept it identically to a ref.
+      REF="$RESOLVED_SHA" ;;
   esac
-  REF="$REF_OVERRIDE"
 else
   REF="$(git -C "$SRC" tag -l 'framework/v*' --sort=-v:refname | head -n 1)"
   if [ -z "$REF" ]; then
@@ -242,6 +247,7 @@ write_receipt() { # persist RECEIPT_TAB atomically, sorted by landing
   } > "$tmp" || { rm -f "$tmp"; fatal "cannot write $RECEIPT_FILE"; }
   mkdir -p "$(dirname "$RECEIPT_FILE")" || { rm -f "$tmp"; fatal "cannot create $(dirname "$RECEIPT_FILE")"; }
   mv "$tmp" "$RECEIPT_FILE" || { rm -f "$tmp"; fatal "cannot write $RECEIPT_FILE"; }
+  chmod 0644 "$RECEIPT_FILE" || fatal "cannot set mode on $RECEIPT_FILE"
 }
 
 # --- copy machinery ---
@@ -447,6 +453,7 @@ if [ "$CHECK" = 0 ]; then
     fi
     printf 'framework_ref=%s\n' "$REF" >> "$tmp"
     mv "$tmp" "$MANIFEST" || fatal "cannot write $MANIFEST"
+    chmod 0644 "$MANIFEST" || fatal "cannot set mode on $MANIFEST"
     report_apply "PINNED: framework_ref=$REF"
   fi
 fi
