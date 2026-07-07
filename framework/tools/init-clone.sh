@@ -8,7 +8,6 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 MEMORY_REPO="$( pwd )"
 PARENT_DIR="$( dirname "$MEMORY_REPO" )"
 MEMORY_REPO_NAME="$( basename "$MEMORY_REPO" )"

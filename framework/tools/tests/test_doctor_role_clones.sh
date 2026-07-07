@@ -478,4 +478,29 @@ assert_contains "$DOCTOR_STDOUT" "opencode.json regenerated for role developer" 
 assert_exists "$DEVCLONE/opencode.json" "developer per-clone opencode.json exists"
 rm -rf "$tmp"
 
+echo "=== test_doctor_role_clones: missing framework payload - matching hooks.json is a dead target (DRIFT, no rewrite); mismatched hooks.json regen REFUSED with ERROR ==="
+tmp="$(mktemp -d)"
+setup_wired_fixture "$tmp"
+# Simulate an instance whose payload was never installed (or was removed):
+# every hooks.json still carries the exact expected command string.
+rm "$MEMREPO/.agents/hooks/lib/inject-role-index.sh"
+
+run_doctor "$HOME_DIR" --check --root "$MEMREPO"
+assert_equal "1" "$DOCTOR_EXIT" "dead-target hooks.json: --check exits 1"
+assert_contains "$DOCTOR_STDOUT" "missing or not executable - install the framework payload" "DRIFT names the missing payload, not the hooks.json string"
+
+hooks_before="$(cat "$DEVCLONE/.codex/hooks.json")"
+run_doctor "$HOME_DIR" --root "$MEMREPO"
+assert_equal "1" "$DOCTOR_EXIT" "dead-target hooks.json: fix mode exits 1 (not fixable here)"
+assert_equal "$hooks_before" "$(cat "$DEVCLONE/.codex/hooks.json")" "fix mode did not rewrite hooks.json to a dangling command"
+
+# Mismatched hooks.json + missing payload: regen must REFUSE with ERROR, not
+# write a command pointing at the absent script.
+printf '{\n  "hooks": {}\n}\n' > "$PMCLONE/.codex/hooks.json"
+run_doctor "$HOME_DIR" --root "$MEMREPO"
+assert_equal "1" "$DOCTOR_EXIT" "mismatch + missing payload: fix mode exits 1"
+assert_contains "$DOCTOR_STDOUT" "not regenerated: $MEMREPO/.agents/hooks/lib/inject-role-index.sh missing or not executable" "regen refusal ERROR names the missing script"
+assert_contains "$(cat "$PMCLONE/.codex/hooks.json")" '"hooks": {}' "pm hooks.json left untouched by the refused regen"
+rm -rf "$tmp"
+
 print_summary

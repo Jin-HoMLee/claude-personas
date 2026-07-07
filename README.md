@@ -35,11 +35,12 @@ A `shared/` folder holds team-wide conventions. An `examples/` tree of patterns 
    cd ~/dev
    git clone git@github.com:<you>/claude-personas-<my-app>.git
    ```
-3. Stage the framework payload where the wiring expects it (interim step until `install.sh` ships - see issue #55):
+3. Stage the framework payload where the wiring expects it, and commit it so every clone of your memory repo ships it (interim step until `install.sh` ships - see issue #55):
    ```sh
    cd claude-personas-<my-app>
    mkdir -p .agents/hooks/lib
    cp framework/hooks/inject-role-index.sh .agents/hooks/lib/
+   git add .agents/hooks/lib/inject-role-index.sh && git commit -m "stage framework hook payload"
    ```
 4. Run `init-clone.sh` once per role you want active:
    ```sh

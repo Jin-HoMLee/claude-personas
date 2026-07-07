@@ -443,14 +443,26 @@ def render(
 # Entry point
 # --------------------------------------------------------------------------- #
 def _discover_root() -> str:
-    """Repo root = 3 levels up from this file (cwd-independent).
+    """Repo root = nearest ancestor of this file containing .git or .agents/.
 
-    Holds in both homes: framework/tools/memory_cliff.py in the framework
-    repo, .agents/tools/memory_cliff.py in an installed instance.
+    A marker walk instead of depth counting, so the tool resolves the right
+    tree from any home (framework/tools/ in the framework repo,
+    .agents/tools/ in an installed instance, a legacy scripts/ copy, or the
+    user tier's ~/.agents/tools/) - a wrong root would fail silently: zero
+    roles discovered lints vacuously green. Falls back to 3 levels up (the
+    blessed homes' depth) when no marker exists, e.g. bare test fixtures.
     """
-    return os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    )
+    here = os.path.dirname(os.path.abspath(__file__))
+    d = here
+    while True:
+        if os.path.exists(os.path.join(d, ".git")) or os.path.isdir(
+            os.path.join(d, ".agents")
+        ):
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            return os.path.dirname(os.path.dirname(here))
+        d = parent
 
 
 def main(argv=None) -> int:

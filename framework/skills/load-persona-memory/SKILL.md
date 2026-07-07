@@ -16,7 +16,7 @@ Do not mirror memory into tool-native stores (Codex `~/.codex/memories/`, etc.) 
 Resolve the memory repo and role before reading memory, in this order - first hit wins.
 
 1. Read the workspace's `.agents/memory` symlink target: the target directory name is the role, the target path is the memory repo.
-   In the memory repo itself this is the Memory Manager's self-mount (`.agents/memory -> ../memory_manager`, wired by `init-clone.sh --self`; the tool lives at `.agents/tools/init-clone.sh` in an installed instance, `framework/tools/` in the framework repo), so `memory_manager` resolves here exactly like any other role.
+   In the memory repo itself this is the Memory Manager's self-mount (`.agents/memory -> ../memory_manager`, wired by `init-clone.sh --self`; today the tool lives at `framework/tools/init-clone.sh` in the framework repo or a memory repo created from it, and will land at `.agents/tools/init-clone.sh` once the installer ships), so `memory_manager` resolves here exactly like any other role.
 2. Else read `.claude/memory` the same way (v3.1 legacy direct symlink).
 3. Else enumerate candidates: every sibling directory of the workspace (same parent dir) containing a `.claude-personas/project.txt` marker.
    Verify each by comparing the workspace's `origin` remote against that `project.txt`.
