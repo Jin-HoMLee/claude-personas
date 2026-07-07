@@ -29,19 +29,20 @@ jobs:
 
       - name: framework scripts are executable
         run: |
-          for s in framework/tools/init-clone.sh framework/tools/list-roles.sh framework/tools/memory_cliff.py \
-                   framework/hooks/inject-role-index.sh framework/tools/doctor.sh \
-                   framework/tools/tests/run_all.sh framework/tools/tests/test_memory_cliff.sh \
-                   framework/tools/tests/test_doctor_manifest.sh framework/tools/tests/test_doctor_user_tier.sh \
-                   framework/tools/tests/test_doctor_embedded.sh framework/tools/tests/test_doctor_role_clones.sh \
-                   framework/tools/tests/test_init_clone.sh framework/tools/tests/test_clone_fixture.sh \
-                   framework/tools/tests/test_inject_role_index.sh framework/tools/tests/test_list_roles.sh; do
+          # Derived, not enumerated: every tracked shell/python file under
+          # framework/ must be executable (they ship as runnable payload or
+          # test harness). A new tool added to framework/ is covered
+          # automatically - no list to forget to update.
+          fail=0
+          for s in $(git ls-files 'framework/*.sh' 'framework/*.py'); do
             if [ ! -x "$s" ]; then
               echo "FAIL: $s is not executable"
-              exit 1
+              fail=1
+            else
+              echo "OK: $s is executable"
             fi
-            echo "OK: $s is executable"
           done
+          exit $fail
 
       - name: each role has MEMORY.md
         run: |
