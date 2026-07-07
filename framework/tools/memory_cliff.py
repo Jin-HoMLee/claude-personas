@@ -8,11 +8,12 @@ Realizes issue #18 (the planned ``scripts/check-budget.sh``). Adapted from the
 working counter dogfooded in the ``claude-personas-splice-neoepitope-pipeline``
 instance (hand-off: issue #23). Read-only, stdlib-only, zero network.
 
-Usage:
-    python3 scripts/memory_cliff.py                 # report + exit 1 if over budget
-    python3 scripts/memory_cliff.py --root PATH     # lint a different repo root
-    python3 scripts/memory_cliff.py --write-baseline b.json   # snapshot current load
-    python3 scripts/memory_cliff.py --baseline b.json         # ratchet: fail on regression
+Usage (framework repo path shown; in an installed instance the tool lives at
+.agents/tools/memory_cliff.py):
+    python3 framework/tools/memory_cliff.py                 # report + exit 1 if over budget
+    python3 framework/tools/memory_cliff.py --root PATH     # lint a different repo root
+    python3 framework/tools/memory_cliff.py --write-baseline b.json   # snapshot current load
+    python3 framework/tools/memory_cliff.py --baseline b.json         # ratchet: fail on regression
 """
 from __future__ import annotations
 
@@ -442,8 +443,14 @@ def render(
 # Entry point
 # --------------------------------------------------------------------------- #
 def _discover_root() -> str:
-    """Repo root = parent of the scripts/ dir holding this file (cwd-independent)."""
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    """Repo root = 3 levels up from this file (cwd-independent).
+
+    Holds in both homes: framework/tools/memory_cliff.py in the framework
+    repo, .agents/tools/memory_cliff.py in an installed instance.
+    """
+    return os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    )
 
 
 def main(argv=None) -> int:

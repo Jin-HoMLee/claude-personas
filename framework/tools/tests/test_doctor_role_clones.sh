@@ -10,7 +10,7 @@
 # The fixture is wired by RUNNING the real init-clone.sh (never hand-rolled),
 # on top of make_clone_test_fixture, mirroring test_init_clone.sh's and
 # test_list_roles.sh's invocation pattern. The fixture ships a real
-# scripts/inject-role-index.sh (copied from this repo) so init-clone.sh's
+# .agents/hooks/lib/inject-role-index.sh (copied from this repo) so init-clone.sh's
 # Codex adapter actually wires .codex/hooks.json instead of WARN-and-skip;
 # with that in place init-clone.sh exits 0, but the runs below still tolerate
 # exit 2 defensively.
@@ -19,7 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 DOCTOR="$(cd "$SCRIPT_DIR/.." && pwd)/doctor.sh"
 INIT_CLONE="$(cd "$SCRIPT_DIR/.." && pwd)/init-clone.sh"
-INJECT_SCRIPT="$(cd "$SCRIPT_DIR/.." && pwd)/inject-role-index.sh"
+INJECT_SCRIPT="$(cd "$SCRIPT_DIR/../../hooks" && pwd)/inject-role-index.sh"
 
 # Runs doctor.sh with $1=HOME and the remaining args passed through; sets
 # DOCTOR_STDOUT, DOCTOR_STDERR, DOCTOR_EXIT. Never lets doctor.sh's own
@@ -73,12 +73,13 @@ setup_wired_fixture() {
   printf "# Memory Index - memory_manager\n" > "$MEMREPO/memory_manager/MEMORY.md"
   ( cd "$MEMREPO/memory_manager" && ln -s ../shared shared )
 
-  # Ship a real scripts/inject-role-index.sh so init-clone.sh's Codex adapter
-  # actually generates .codex/hooks.json for every workspace below, instead
-  # of the WARN-and-skip path this fixture used to hit.
-  mkdir -p "$MEMREPO/scripts"
-  cp "$INJECT_SCRIPT" "$MEMREPO/scripts/inject-role-index.sh"
-  chmod +x "$MEMREPO/scripts/inject-role-index.sh"
+  # Ship a real .agents/hooks/lib/inject-role-index.sh (the installed-payload
+  # location) so init-clone.sh's Codex adapter actually generates
+  # .codex/hooks.json for every workspace below, instead of the WARN-and-skip
+  # path this fixture used to hit.
+  mkdir -p "$MEMREPO/.agents/hooks/lib"
+  cp "$INJECT_SCRIPT" "$MEMREPO/.agents/hooks/lib/inject-role-index.sh"
+  chmod +x "$MEMREPO/.agents/hooks/lib/inject-role-index.sh"
 
   ( cd "$MEMREPO" && \
     git -c user.email=t@x -c user.name=T add -A && \
@@ -241,7 +242,7 @@ cat > "$PMCLONE/.codex/hooks.json" <<'EOF'
         "hooks": [
           {
             "type": "command",
-            "command": "'/Users/other/dev/claude-personas-myapp/scripts/inject-role-index.sh' '/Users/other/dev/claude-personas-myapp/pm'",
+            "command": "'/Users/other/dev/claude-personas-myapp/.agents/hooks/lib/inject-role-index.sh' '/Users/other/dev/claude-personas-myapp/pm'",
             "timeout": 10,
             "statusMessage": "Injecting role memory index…"
           }
@@ -268,7 +269,7 @@ assert_equal "0" "$DOCTOR_EXIT" "fix mode regenerates pm hooks.json: exit 0"
 assert_contains "$DOCTOR_STDOUT" "FIXED: $PMCLONE_ABS/.codex/hooks.json regenerated for role pm" "fix mode reports FIXED for pm hooks.json regeneration"
 assert_equal "0" "$(jq empty "$PMCLONE/.codex/hooks.json" >/dev/null 2>&1; echo $?)" "regenerated pm hooks.json is valid JSON"
 regen_cmd="$(jq -r '.hooks.SessionStart[0].hooks[0].command' "$PMCLONE/.codex/hooks.json")"
-assert_equal "'$MEMREPO/scripts/inject-role-index.sh' '$MEMREPO/pm'" "$regen_cmd" "regenerated pm hooks.json command is exact"
+assert_equal "'$MEMREPO/.agents/hooks/lib/inject-role-index.sh' '$MEMREPO/pm'" "$regen_cmd" "regenerated pm hooks.json command is exact"
 if grep -qxF '/.codex/hooks.json' "$PMCLONE/.git/info/exclude"; then
   echo "  PASS: /.codex/hooks.json exclude line present after regeneration"
 else

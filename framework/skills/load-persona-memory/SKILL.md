@@ -16,16 +16,16 @@ Do not mirror memory into tool-native stores (Codex `~/.codex/memories/`, etc.) 
 Resolve the memory repo and role before reading memory, in this order - first hit wins.
 
 1. Read the workspace's `.agents/memory` symlink target: the target directory name is the role, the target path is the memory repo.
-   In the memory repo itself this is the Memory Manager's self-mount (`.agents/memory -> ../memory_manager`, wired by `scripts/init-clone.sh --self`), so `memory_manager` resolves here exactly like any other role.
+   In the memory repo itself this is the Memory Manager's self-mount (`.agents/memory -> ../memory_manager`, wired by `init-clone.sh --self`; the tool lives at `.agents/tools/init-clone.sh` in an installed instance, `framework/tools/` in the framework repo), so `memory_manager` resolves here exactly like any other role.
 2. Else read `.claude/memory` the same way (v3.1 legacy direct symlink).
 3. Else enumerate candidates: every sibling directory of the workspace (same parent dir) containing a `.claude-personas/project.txt` marker.
    Verify each by comparing the workspace's `origin` remote against that `project.txt`.
    Normalize both sides to a canonical `owner/repo` before comparing: strip a leading `git@<host>:`, `ssh://git@<host>/`, or `https://<host>/` prefix and any trailing `.git`, so the scp-like SSH, scheme SSH, and HTTPS forms of the same remote compare equal.
    Exactly one match wins; zero or multiple matches fail with a report, never a guess.
 4. If the workspace looks like a memory repo (it has `.claude-personas/` or role dirs with `MEMORY.md` files) but steps 1-3 found no wiring, do not assume any role - not even `memory_manager`.
-   Report that this looks like an unwired memory repo and ask: if the user is the Memory Manager, they run `scripts/init-clone.sh --self` (which declares MM via the self-mount); otherwise they say which role to act as.
+   Report that this looks like an unwired memory repo and ask: if the user is the Memory Manager, they run `init-clone.sh --self` (which declares MM via the self-mount); otherwise they say which role to act as.
    Repo shape is not a role declaration; this step never resolves a role on its own.
-5. Last resort: clone-naming conventions as implemented by `scripts/init-clone.sh` - the no-suffix clone is the main role (`.claude-personas/main-role.txt` when present, else `developer`); suffix clones are `<project>-<role>`.
+5. Last resort: clone-naming conventions as implemented by `init-clone.sh` - the no-suffix clone is the main role (`.claude-personas/main-role.txt` when present, else `developer`); suffix clones are `<project>-<role>`.
 
 Validate that `<memory-repo>/<role>/MEMORY.md` exists before proceeding.
 This applies to `memory_manager` like any other role: a Memory Manager is a real role with its own `memory_manager/` directory in the memory repo, declared by the self-mount and never inferred from repo shape.

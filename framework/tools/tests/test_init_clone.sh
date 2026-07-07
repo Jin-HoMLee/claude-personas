@@ -632,10 +632,11 @@ tmp23="$(mktemp -d)"
 make_clone_test_fixture "$tmp23"
 mv "$tmp23/memory-repo" "$tmp23/claude-personas-myapp"
 mkdir -p "$tmp23/home"
-# The inject script ships in the memory repo's scripts/ (template convention).
-mkdir -p "$tmp23/claude-personas-myapp/scripts"
-cp "$(cd "$SCRIPT_DIR/.." && pwd)/inject-role-index.sh" "$tmp23/claude-personas-myapp/scripts/"
-chmod +x "$tmp23/claude-personas-myapp/scripts/inject-role-index.sh"
+# The inject script lands in the memory repo's .agents/hooks/lib/ (installed
+# framework payload).
+mkdir -p "$tmp23/claude-personas-myapp/.agents/hooks/lib"
+cp "$(cd "$SCRIPT_DIR/../../hooks" && pwd)/inject-role-index.sh" "$tmp23/claude-personas-myapp/.agents/hooks/lib/"
+chmod +x "$tmp23/claude-personas-myapp/.agents/hooks/lib/inject-role-index.sh"
 
 ( cd "$tmp23/claude-personas-myapp" && \
   HOME="$tmp23/home" bash "$INIT_CLONE" developer --project-url "$tmp23/project-repo.git" )
@@ -656,7 +657,7 @@ cmd="$(jq -r '.hooks.SessionStart[0].hooks[0].command' "$hooks")"
 # $TMPDIR (/var/folders/...) is itself a symlink to /private/var/folders/...;
 # the two forms are equally valid, OS-resolved paths, not a functional bug.
 memrepo_abs="$(cd "$tmp23/claude-personas-myapp" && pwd)"
-assert_equal "'$memrepo_abs/scripts/inject-role-index.sh' '$memrepo_abs/developer'" "$cmd" "hook command calls inject script with the role dir"
+assert_equal "'$memrepo_abs/.agents/hooks/lib/inject-role-index.sh' '$memrepo_abs/developer'" "$cmd" "hook command calls inject script with the role dir"
 if grep -qxF "/.codex/hooks.json" "$tmp23/myapp/.git/info/exclude"; then
   echo "  PASS: /.codex/hooks.json in exclude"
 else
@@ -671,7 +672,7 @@ tmp24="$(mktemp -d)"
 make_clone_test_fixture "$tmp24"
 mv "$tmp24/memory-repo" "$tmp24/claude-personas-myapp"
 mkdir -p "$tmp24/home"
-# NOTE: no scripts/inject-role-index.sh in this fixture memory repo.
+# NOTE: no .agents/hooks/lib/inject-role-index.sh in this fixture memory repo.
 
 ( cd "$tmp24/claude-personas-myapp" && \
   HOME="$tmp24/home" bash "$INIT_CLONE" developer --project-url "$tmp24/project-repo.git" ) 2>"$tmp24/stderr.log"
@@ -693,9 +694,9 @@ tmp25="$(mktemp -d)"
 make_clone_test_fixture "$tmp25"
 mv "$tmp25/memory-repo" "$tmp25/claude-personas-myapp"
 mkdir -p "$tmp25/home"
-mkdir -p "$tmp25/claude-personas-myapp/scripts"
-cp "$(cd "$SCRIPT_DIR/.." && pwd)/inject-role-index.sh" "$tmp25/claude-personas-myapp/scripts/"
-chmod +x "$tmp25/claude-personas-myapp/scripts/inject-role-index.sh"
+mkdir -p "$tmp25/claude-personas-myapp/.agents/hooks/lib"
+cp "$(cd "$SCRIPT_DIR/../../hooks" && pwd)/inject-role-index.sh" "$tmp25/claude-personas-myapp/.agents/hooks/lib/"
+chmod +x "$tmp25/claude-personas-myapp/.agents/hooks/lib/inject-role-index.sh"
 
 ( cd "$tmp25/claude-personas-myapp" && \
   HOME="$tmp25/home" bash "$INIT_CLONE" developer --project-url "$tmp25/project-repo.git" )
@@ -727,9 +728,9 @@ make_clone_test_fixture "$tmp26"
 mv "$tmp26/memory-repo" "$tmp26/claude-personas-myapp"
 mkdir -p "$tmp26/home"
 # Codex adapter is otherwise wireable: inject script present in the memory repo.
-mkdir -p "$tmp26/claude-personas-myapp/scripts"
-cp "$(cd "$SCRIPT_DIR/.." && pwd)/inject-role-index.sh" "$tmp26/claude-personas-myapp/scripts/"
-chmod +x "$tmp26/claude-personas-myapp/scripts/inject-role-index.sh"
+mkdir -p "$tmp26/claude-personas-myapp/.agents/hooks/lib"
+cp "$(cd "$SCRIPT_DIR/../../hooks" && pwd)/inject-role-index.sh" "$tmp26/claude-personas-myapp/.agents/hooks/lib/"
+chmod +x "$tmp26/claude-personas-myapp/.agents/hooks/lib/inject-role-index.sh"
 
 # Make the PROJECT repo ship a committed .codex/hooks.json (uncommon but legal).
 seed26="$(mktemp -d)"
@@ -820,9 +821,9 @@ make_clone_test_fixture "$weird29"
 mv "$weird29/memory-repo" "$weird29/claude-personas-myapp"
 mkdir -p "$weird29/home"
 # Codex adapter is otherwise wireable: inject script present in the memory repo.
-mkdir -p "$weird29/claude-personas-myapp/scripts"
-cp "$(cd "$SCRIPT_DIR/.." && pwd)/inject-role-index.sh" "$weird29/claude-personas-myapp/scripts/"
-chmod +x "$weird29/claude-personas-myapp/scripts/inject-role-index.sh"
+mkdir -p "$weird29/claude-personas-myapp/.agents/hooks/lib"
+cp "$(cd "$SCRIPT_DIR/../../hooks" && pwd)/inject-role-index.sh" "$weird29/claude-personas-myapp/.agents/hooks/lib/"
+chmod +x "$weird29/claude-personas-myapp/.agents/hooks/lib/inject-role-index.sh"
 
 weird_clone29="$weird29/we\"ird-clone"
 ( cd "$weird29/claude-personas-myapp" && \
@@ -894,9 +895,9 @@ mv "$tmp31/memory-repo" "$tmp31/claude-personas-myapp"
 mkdir -p "$tmp31/claude-personas-myapp/memory_manager"
 printf "# Memory Index - memory_manager\n" > "$tmp31/claude-personas-myapp/memory_manager/MEMORY.md"
 ( cd "$tmp31/claude-personas-myapp/memory_manager" && ln -s ../shared shared )
-mkdir -p "$tmp31/claude-personas-myapp/scripts"
-cp "$(cd "$SCRIPT_DIR/.." && pwd)/inject-role-index.sh" "$tmp31/claude-personas-myapp/scripts/"
-chmod +x "$tmp31/claude-personas-myapp/scripts/inject-role-index.sh"
+mkdir -p "$tmp31/claude-personas-myapp/.agents/hooks/lib"
+cp "$(cd "$SCRIPT_DIR/../../hooks" && pwd)/inject-role-index.sh" "$tmp31/claude-personas-myapp/.agents/hooks/lib/"
+chmod +x "$tmp31/claude-personas-myapp/.agents/hooks/lib/inject-role-index.sh"
 ( cd "$tmp31/claude-personas-myapp" && \
   git -c user.email=t@x -c user.name=T add -A && \
   git -c user.email=t@x -c user.name=T commit --quiet -m "add memory_manager role" )
@@ -944,7 +945,7 @@ else
 fi
 memrepo31_pwd="$(cd "$memrepo31" && pwd)"
 cmd31="$(jq -r '.hooks.SessionStart[0].hooks[0].command' "$hooks31")"
-assert_equal "'$memrepo31_pwd/scripts/inject-role-index.sh' '$memrepo31_pwd/memory_manager'" "$cmd31" "hook command injects the memory_manager index"
+assert_equal "'$memrepo31_pwd/.agents/hooks/lib/inject-role-index.sh' '$memrepo31_pwd/memory_manager'" "$cmd31" "hook command injects the memory_manager index"
 
 # No clone-mode side effects: nothing cloned, no project.txt invented.
 assert_not_exists "$tmp31/myapp" "no clone created by --self"
@@ -1104,9 +1105,9 @@ tmp36="$(mktemp -d)"
 make_clone_test_fixture "$tmp36"
 mkdir -p "$tmp36/home"
 mv "$tmp36/memory-repo" "$tmp36/claude-personas-myapp"
-mkdir -p "$tmp36/claude-personas-myapp/scripts"
-cp "$(cd "$SCRIPT_DIR/.." && pwd)/inject-role-index.sh" "$tmp36/claude-personas-myapp/scripts/"
-chmod +x "$tmp36/claude-personas-myapp/scripts/inject-role-index.sh"
+mkdir -p "$tmp36/claude-personas-myapp/.agents/hooks/lib"
+cp "$(cd "$SCRIPT_DIR/../../hooks" && pwd)/inject-role-index.sh" "$tmp36/claude-personas-myapp/.agents/hooks/lib/"
+chmod +x "$tmp36/claude-personas-myapp/.agents/hooks/lib/inject-role-index.sh"
 
 # Ship a committed .codex/hooks.json so the --force backup path fires on a fresh clone.
 seed36="$(mktemp -d)"

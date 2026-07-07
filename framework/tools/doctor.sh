@@ -194,8 +194,8 @@ adapter=codex
 adapter=opencode
 
 # Optional keys for topology=embedded:
-# claude_hook=scripts/some-hook.sh   # repeatable; repo-relative script path
-# codex_hook=scripts/some-hook.sh    # repeatable; repo-relative script path
+# claude_hook=.agents/hooks/some-hook.sh   # repeatable; repo-relative script path
+# codex_hook=.agents/hooks/some-hook.sh    # repeatable; repo-relative script path
 # skills_mount=true                  # or: false (default)
 EOF
 }
@@ -651,7 +651,7 @@ _role_clones_regen_codex_hooks_json() {
     report_error "$out not regenerated: memory-repo path contains a quote or backslash - cannot embed safely in hooks.json; wire it by hand (init-clone.sh refuses the same path)"
     return 0 ;;
   esac
-  cmd_value="'$memrepo_logical/scripts/inject-role-index.sh' '$memrepo_logical/$role'"
+  cmd_value="'$memrepo_logical/.agents/hooks/lib/inject-role-index.sh' '$memrepo_logical/$role'"
   tmp_json="$(mktemp 2>/dev/null)"
   if [ -z "$tmp_json" ]; then
     report_error "could not create temp file for $out regeneration"
@@ -679,7 +679,7 @@ _role_clones_regen_codex_hooks_json() {
 _role_clones_check_codex_hooks_json() {
   # _role_clones_check_codex_hooks_json <memrepo_logical> <workspace> <role>
   # Per-workspace .codex/hooks.json: the single SessionStart command must be
-  # exactly '<memrepo_logical>/scripts/inject-role-index.sh'
+  # exactly '<memrepo_logical>/.agents/hooks/lib/inject-role-index.sh'
   # '<memrepo_logical>/<role>' - grep -qxF whole-line exact match, never
   # substring (a copied-from-elsewhere hooks.json with a plausible shape but
   # another machine's absolute prefix must still be named DRIFT). Missing is
@@ -694,7 +694,7 @@ _role_clones_check_codex_hooks_json() {
   fi
 
   local hooks="$workspace/.codex/hooks.json" cmds expected
-  expected="'$memrepo_logical/scripts/inject-role-index.sh' '$memrepo_logical/$role'"
+  expected="'$memrepo_logical/.agents/hooks/lib/inject-role-index.sh' '$memrepo_logical/$role'"
   if [ -f "$hooks" ]; then
     cmds="$(jq -r '.hooks.SessionStart[]?.hooks[]?.command' "$hooks" 2>/dev/null)"
   else

@@ -58,10 +58,10 @@ rm ~/.claude/projects/<some-hash>/memory
 
 ```bash
 cd ~/path/to/claude-personas-<app>
-./scripts/init-clone.sh developer --project-url <project-repo-url>
-./scripts/init-clone.sh pm
-./scripts/init-clone.sh designer
-./scripts/init-clone.sh scientist     # if you ship the scientist role
+./framework/tools/init-clone.sh developer --project-url <project-repo-url>
+./framework/tools/init-clone.sh pm
+./framework/tools/init-clone.sh designer
+./framework/tools/init-clone.sh scientist     # if you ship the scientist role
 ```
 
 The first run persists the project URL to `.claude-personas/project.txt` — subsequent runs read it automatically.
@@ -82,7 +82,7 @@ Result:
 ### 5. Verify
 
 ```bash
-./scripts/list-roles.sh
+./framework/tools/list-roles.sh
 ```
 
 Expected: all roles reported `OK`. Open each clone in Claude Code, confirm:
@@ -130,7 +130,7 @@ v3.1 moves the role-memory symlink from `<clone>/memory` to `<clone>/.claude/mem
 For each role clone (run from inside your `claude-personas-<app>/` memory repo):
 
 ```bash
-scripts/init-clone.sh --force <role>
+framework/tools/init-clone.sh --force <role>
 ```
 
 `--force` detects the legacy v3.0 layout, backs up the old root-level `memory/` symlink to `<clone>/.claude/memory.legacy-backup-<timestamp>`, removes the stale `/memory/` line from the clone's `.gitignore`, and writes the new `.claude/memory/` symlink + `/.claude/memory/` gitignore entry.
