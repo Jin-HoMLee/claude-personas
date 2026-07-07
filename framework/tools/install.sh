@@ -17,6 +17,17 @@
 #                       component, or outside .agents/) - ignored, never
 #                       touched, not even with --prune
 #
+# Pin-advance-with-refusals: --sync stamps the new framework_ref even when
+# some files were refused, so nothing is lost and re-runs converge. A
+# MODIFIED refusal stays safely re-detectable regardless: its landing keeps
+# being declared in framework/FILES release over release, so it matches
+# neither the old nor the new pin and is flagged again on every future run.
+# An ORPHANED/MODIFIED ORPHAN refusal is different - its only provenance is
+# its entry in the CURRENT pin's FILES, so the pin is held at that value
+# (not advanced) until --prune or a hand delete resolves it; advancing past
+# it would erase the record needed to find it again. TAINTED ORPHAN is
+# exempt from that hold since it is never actionable by tooling anyway.
+#
 # Exit: 0 clean/up-to-date; 1 refusals or pending --check changes; 2 fatal.
 
 set -u
@@ -66,6 +77,7 @@ if [ -z "$MODE" ]; then usage >&2; exit 2; fi
 
 PENDING=0
 APPLIED=0
+ORPHAN_BLOCKING=0
 report_apply()   { echo "$1"; APPLIED=$((APPLIED + 1)); }
 report_pending() { echo "$1"; PENDING=$((PENDING + 1)); }
 warn()  { echo "WARN: $1" >&2; }
@@ -286,9 +298,11 @@ process_orphans() {
         rm "$dest" && report_apply "PRUNED: $landing" || fatal "cannot remove $dest"
       else
         report_pending "MODIFIED ORPHAN: $landing differs from the pinned copy - kept, delete by hand"
+        ORPHAN_BLOCKING=$((ORPHAN_BLOCKING + 1))
       fi
     else
       report_pending "ORPHANED: $landing no longer in framework/FILES - kept (remove with --prune)"
+      ORPHAN_BLOCKING=$((ORPHAN_BLOCKING + 1))
     fi
   done <<EOF_ORPHANS
 $PIN_TAB
@@ -321,9 +335,20 @@ if [ "$MODE" = sync ]; then
   process_orphans
 fi
 
-# --- stamp the pin (never in --check) ---
-
-if [ "$CHECK" = 0 ]; then
+# --- stamp the pin (never in --check; never past an unresolved orphan) ---
+#
+# An ORPHANED/MODIFIED ORPHAN landing's only provenance is its entry in the
+# CURRENT pin's framework/FILES - advancing framework_ref past that entry
+# (to a ref where FILES has already dropped it) would erase the one record
+# that lets a later --sync/--prune find it again, silently un-tracking a
+# file still sitting on disk. So, unlike a MODIFIED (non-orphan) refusal -
+# whose landing stays declared in FILES release over release, so it keeps
+# getting flagged forever regardless of pin position - an orphan refusal
+# holds the pin at its current value until --prune (or a hand delete)
+# resolves it. TAINTED ORPHAN is exempt: it is never actionable by tooling
+# (--prune skips it unconditionally), so there is nothing to preserve
+# provenance for and the pin advances past it same as any other refusal.
+if [ "$CHECK" = 0 ] && [ "$ORPHAN_BLOCKING" -eq 0 ]; then
   if [ "$MODE" = into ]; then
     if [ "$SRC" = "$TARGET" ]; then
       SOURCE_VALUE="."
@@ -348,6 +373,8 @@ if [ "$CHECK" = 0 ]; then
     mv "$tmp" "$MANIFEST" || fatal "cannot write $MANIFEST"
     report_apply "PINNED: framework_ref=$REF"
   fi
+elif [ "$CHECK" = 0 ] && [ "$ORPHAN_BLOCKING" -gt 0 ]; then
+  echo "NOTE: framework_ref pin held at $PIN - resolve the orphan(s) above (--prune or delete by hand) first"
 fi
 
 if [ "$PENDING" -gt 0 ]; then

@@ -208,4 +208,72 @@ assert_equal "2" "$?" "no source resolvable exits 2"
 assert_contains "$out" "no framework_source" "error explains the fix"
 rm -rf "$tmp"
 
+echo "=== test_install: --sync keeps a locally-modified framework file; --force-file overrides ==="
+tmp="$(mktemp -d)"
+make_framework_fixture "$tmp"
+make_instance_fixture "$tmp" inst
+( cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/inst" ) >/dev/null
+printf '#!/usr/bin/env bash\necho locally hacked\n' > "$tmp/inst/.agents/tools/tool-a.sh"
+advance_framework_fixture "$tmp"
+out="$(cd "$tmp/inst" && bash "$INSTALL" --sync 2>&1)"
+status=$?
+assert_equal "1" "$status" "modified file: sync exits 1"
+assert_contains "$out" "MODIFIED: .agents/tools/tool-a.sh" "modified file named with the override hint"
+assert_contains "$(cat "$tmp/inst/.agents/tools/tool-a.sh")" "locally hacked" "modified file kept"
+assert_contains "$(cat "$tmp/inst/.agents/manifest")" "framework_ref=framework/v2" "pin still advances (modified file stays flagged next run)"
+out="$(cd "$tmp/inst" && bash "$INSTALL" --sync --force-file .agents/tools/tool-a.sh 2>&1)"
+assert_equal "0" "$?" "--force-file run exits 0"
+assert_contains "$out" "FORCED: .agents/tools/tool-a.sh" "forced overwrite reported"
+assert_contains "$(cat "$tmp/inst/.agents/tools/tool-a.sh")" "tool-a v2" "forced file now upstream content"
+rm -rf "$tmp"
+
+echo "=== test_install: orphan reported not deleted; --prune deletes unmodified only ==="
+tmp="$(mktemp -d)"
+make_framework_fixture "$tmp"
+make_instance_fixture "$tmp" inst
+( cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/inst" ) >/dev/null
+advance_framework_fixture "$tmp"
+( cd "$tmp/inst" && bash "$INSTALL" --sync ) >/dev/null
+drop_hook_framework_fixture "$tmp"
+out="$(cd "$tmp/inst" && bash "$INSTALL" --sync 2>&1)"
+status=$?
+assert_equal "1" "$status" "orphan present: exit 1"
+assert_contains "$out" "ORPHANED: .agents/hooks/lib/hook-x.sh" "orphan named with --prune hint"
+assert_exists "$tmp/inst/.agents/hooks/lib/hook-x.sh" "orphan NOT auto-deleted"
+out="$(cd "$tmp/inst" && bash "$INSTALL" --sync --prune 2>&1)"
+assert_equal "0" "$?" "--prune run exits 0"
+assert_contains "$out" "PRUNED: .agents/hooks/lib/hook-x.sh" "prune reported"
+assert_not_exists "$tmp/inst/.agents/hooks/lib/hook-x.sh" "orphan removed by --prune"
+rm -rf "$tmp"
+
+echo "=== test_install: --prune refuses a modified orphan ==="
+tmp="$(mktemp -d)"
+make_framework_fixture "$tmp"
+make_instance_fixture "$tmp" inst
+( cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/inst" ) >/dev/null
+advance_framework_fixture "$tmp"
+( cd "$tmp/inst" && bash "$INSTALL" --sync ) >/dev/null
+drop_hook_framework_fixture "$tmp"
+printf 'hand-tuned hook\n' > "$tmp/inst/.agents/hooks/lib/hook-x.sh"
+out="$(cd "$tmp/inst" && bash "$INSTALL" --sync --prune 2>&1)"
+assert_equal "1" "$?" "modified orphan under --prune: exit 1"
+assert_contains "$out" "MODIFIED ORPHAN: .agents/hooks/lib/hook-x.sh" "modified orphan named"
+assert_equal "hand-tuned hook" "$(cat "$tmp/inst/.agents/hooks/lib/hook-x.sh")" "modified orphan kept"
+rm -rf "$tmp"
+
+echo "=== test_install: --ref bare SHA warns, framework/v* tag does not ==="
+tmp="$(mktemp -d)"
+make_framework_fixture "$tmp"
+make_instance_fixture "$tmp" inst
+sha="$(git -C "$tmp/fw" rev-parse HEAD)"
+out="$(cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/inst" --ref "$sha" 2>&1)"
+assert_equal "0" "$?" "SHA-pinned install exits 0"
+assert_contains "$out" "prefer a framework/v* tag" "bare SHA warns"
+out="$(cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/inst" --ref framework/v1 2>&1)"
+case "$out" in
+  *"prefer a framework/v* tag"*) echo "  FAIL: tag ref warned"; TESTS_FAILED=$((TESTS_FAILED+1)) ;;
+  *) echo "  PASS: tag ref does not warn" ;;
+esac
+rm -rf "$tmp"
+
 print_summary
