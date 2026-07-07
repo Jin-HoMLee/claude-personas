@@ -28,6 +28,14 @@ Hook configurations for `settings.json` that prevent specific failure modes at t
 
 See `hooks/README.md` for when to prefer a hook over a memory rule (and the [four-tier visibility ladder in CONVENTIONS.md](../CONVENTIONS.md#the-visibility-ladder--four-tiers-not-two) for the broader framing).
 
+### skills/ - operational rituals (copy-once examples)
+
+Skill examples for workflows that are too procedural to leave as memory prose alone.
+Use these when a rule has trigger conditions, ordered steps, and verification checks.
+See `skills/README.md` for discovery notes across Claude Code, Codex, and OpenCode.
+
+- `skills/morning-routine/` - PM morning warm-up: board recap -> standup -> triage
+
 ### shared/ — universal patterns (apply to any role)
 
 **Claude behavior:**
