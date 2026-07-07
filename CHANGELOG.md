@@ -1,5 +1,11 @@
 # Changelog
 
+## [frozen] - 2026-07-07
+
+This file versioned the template era and ends here.
+The repo is now an installable framework: payload changes are tracked in [framework/CHANGELOG.md](framework/CHANGELOG.md) against `framework/v*` tags (a disjoint namespace from the template-era `v1.0`-`v3.1.0` tags, which remain).
+Post-switch changes outside the payload (examples, docs) are not changelogged; git history suffices.
+
 ## [3.1.0] — 2026-05-18
 
 ### Breaking changes

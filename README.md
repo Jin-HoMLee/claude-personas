@@ -35,13 +35,15 @@ A `shared/` folder holds team-wide conventions. An `examples/` tree of patterns 
    cd ~/dev
    git clone git@github.com:<you>/claude-personas-<my-app>.git
    ```
-3. Stage the framework payload where the wiring expects it, and commit it so every clone of your memory repo ships it (interim step until `install.sh` ships - see issue #55):
+3. Declare the topology and install the framework payload (once per memory repo):
    ```sh
    cd claude-personas-<my-app>
-   mkdir -p .agents/hooks/lib
-   cp framework/hooks/inject-role-index.sh .agents/hooks/lib/
-   git add .agents/hooks/lib/inject-role-index.sh && git commit -m "stage framework hook payload"
+   ./framework/tools/doctor.sh --init role-clones   # writes .agents/manifest
+   ./framework/tools/install.sh --into .            # installs the payload + stamps the pin
+   git add .agents && git commit -m "install framework payload"
    ```
+   This commits the payload, the manifest pin, and the installer's `.agents/framework-receipt`.
+   Later updates: `./framework/tools/install.sh --sync` (or `.agents/tools/install.sh --sync` once installed), then re-run the doctor.
 4. Run `init-clone.sh` once per role you want active:
    ```sh
    ./framework/tools/init-clone.sh developer --project-url git@github.com:<you>/<my-app>.git
@@ -135,7 +137,7 @@ What it creates per clone (all untracked via `.git/info/exclude` - your project 
 
 - `.agents/memory -> ../../<memory-repo>/<role>` - the vendor-neutral mount and the single role signal.
 - `.claude/memory -> ../.agents/memory` - the Claude Code hop, plus an external `~/.claude/projects/<slug>/memory` symlink that Claude Code's auto-memory loader actually reads.
-- `.codex/hooks.json` - a generated SessionStart hook that injects the role index via the memory repo's `.agents/hooks/lib/inject-role-index.sh` (the installed framework payload; see the quick start's staging step), mirroring Claude Code's native role-file auto-load (role index only, bounded by CC's native ~200-line/~25 KB size guard; shared is loaded on demand via the `load-persona-memory` skill, with a one-line pointer in the payload).
+- `.codex/hooks.json` - a generated SessionStart hook that injects the role index via the memory repo's `.agents/hooks/lib/inject-role-index.sh` (the installed framework payload; see the quick start's install step), mirroring Claude Code's native role-file auto-load (role index only, bounded by CC's native ~200-line/~25 KB size guard; shared is loaded on demand via the `load-persona-memory` skill, with a one-line pointer in the payload).
 
 One-time steps per machine that the script cannot perform (it prints them):
 
