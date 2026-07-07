@@ -564,4 +564,51 @@ assert_equal "0" "$jq_present_rc" "require_jq: returns 0 when jq is present"
 assert_equal "0" "$DRIFT_COUNT" "require_jq: does not increment DRIFT_COUNT when jq is present"
 rm -f "$jq_outfile"
 
+# --- Task 8: framework_source/framework_ref manifest keys + staleness line ---
+
+echo "=== test_doctor_manifest: framework_source/framework_ref are valid keys ==="
+# Minimal hand-wired embedded instance (no adapter= lines, so none of the
+# adapter-gated - and $HOME-touching - embedded checks run; mirrors the
+# "check_hook_scripts - existing + executable hooks are clean" fixture
+# above). base/ holds the instance and the framework fixture as siblings, so
+# the manifest's framework_source=../fw resolves relative to the instance root.
+base="$(mktemp -d)"
+tmp="$base/embedded-repo"
+mkdir -p "$tmp/.agents/memory" "$tmp/.claude"
+echo "# index" > "$tmp/.agents/memory/MEMORY.md"
+echo "# AGENTS" > "$tmp/AGENTS.md"
+( cd "$tmp" && ln -s AGENTS.md CLAUDE.md )
+( cd "$tmp/.claude" && ln -s ../.agents/memory memory )
+make_framework_fixture "$base"
+cat > "$tmp/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=embedded
+memory_layout=flat
+framework_source=../fw
+framework_ref=framework/v1
+EOF
+run_doctor --check --root "$tmp"
+assert_not_contains "$DOCTOR_STDERR" "unknown manifest key 'framework_source'" "framework_source accepted"
+assert_not_contains "$DOCTOR_STDERR" "unknown manifest key 'framework_ref'" "framework_ref accepted"
+assert_equal "0" "$DOCTOR_EXIT" "framework keys + pin at source HEAD: fully clean instance exits 0"
+
+echo "=== test_doctor_manifest: staleness INFO when pin is behind source HEAD ==="
+advance_framework_fixture "$base"
+run_doctor --check --root "$tmp"
+assert_contains "$DOCTOR_STDOUT" "commit(s) behind pinned source" "staleness line printed"
+assert_equal "0" "$DOCTOR_EXIT" "staleness alone is INFO, not DRIFT (exit 0 when wiring is clean)"
+
+echo "=== test_doctor_manifest: DRIFT when the pin is not found in the source ==="
+cat > "$tmp/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=embedded
+memory_layout=flat
+framework_source=../fw
+framework_ref=framework/v9999
+EOF
+run_doctor --check --root "$tmp"
+assert_contains "$DOCTOR_STDOUT" "not found in source" "bad pin named"
+assert_equal "1" "$DOCTOR_EXIT" "bad pin is DRIFT (exit 1)"
+rm -rf "$base"
+
 print_summary

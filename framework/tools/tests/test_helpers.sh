@@ -109,6 +109,26 @@ assert_contains() {
   esac
 }
 
+assert_not_contains() {
+  local haystack="$1"
+  local needle="$2"
+  local msg="${3:-assert_not_contains}"
+  TESTS_RUN=$((TESTS_RUN + 1))
+  case "$haystack" in
+    *"$needle"*)
+      TESTS_FAILED=$((TESTS_FAILED + 1))
+      FAILED_TESTS+=("$msg")
+      echo "${RED}  FAIL${RESET}: $msg"
+      echo "    expected NOT to find: $needle"
+      echo "    in: $haystack"
+      ;;
+    *)
+      TESTS_PASSED=$((TESTS_PASSED + 1))
+      echo "${GREEN}  PASS${RESET}: $msg"
+      ;;
+  esac
+}
+
 assert_matches() {
   local haystack="$1"
   local regex="$2"
