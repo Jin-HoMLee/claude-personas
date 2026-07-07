@@ -127,4 +127,33 @@ assert_equal "bait" "$(cat "$tmp/inst_taint/escaped.txt" 2>/dev/null)" "escaped 
 assert_contains "$(cat "$tmp/inst_taint/.agents/manifest")" "framework_ref=framework/v3" "pin still advances to the clean ref despite the tainted orphan"
 rm -rf "$tmp"
 
+echo "=== test_install: --into refuses a shadowing file (kept, exit 1) ==="
+tmp="$(mktemp -d)"
+make_framework_fixture "$tmp"
+make_instance_fixture "$tmp" inst
+mkdir -p "$tmp/inst/.agents/tools"
+printf 'instance-owned tool-a\n' > "$tmp/inst/.agents/tools/tool-a.sh"
+out="$(cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/inst" 2>&1)"
+status=$?
+assert_equal "1" "$status" "shadowed install exits 1"
+assert_contains "$out" "SHADOWED: .agents/tools/tool-a.sh" "names the shadowed landing"
+assert_equal "instance-owned tool-a" "$(cat "$tmp/inst/.agents/tools/tool-a.sh")" "shadowed file kept byte-identical"
+assert_exists "$tmp/inst/.agents/hooks/lib/hook-x.sh" "non-shadowed files still installed"
+rm -rf "$tmp"
+
+echo "=== test_install: --into --check reports, writes nothing, stamps nothing ==="
+tmp="$(mktemp -d)"
+make_framework_fixture "$tmp"
+make_instance_fixture "$tmp" inst
+out="$(cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/inst" --check 2>&1)"
+status=$?
+assert_equal "1" "$status" "--check with pending installs exits 1"
+assert_contains "$out" "WOULD-INSTALL: .agents/tools/tool-a.sh" "dry-run names pending installs"
+assert_not_exists "$tmp/inst/.agents/tools/tool-a.sh" "--check wrote no files"
+case "$(cat "$tmp/inst/.agents/manifest")" in
+  *framework_ref*) echo "  FAIL: --check stamped the pin"; TESTS_FAILED=$((TESTS_FAILED+1)) ;;
+  *) echo "  PASS: --check did not stamp the pin" ;;
+esac
+rm -rf "$tmp"
+
 print_summary
