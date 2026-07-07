@@ -10,7 +10,7 @@
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
-INJECT="$(cd "$SCRIPT_DIR/.." && pwd)/inject-role-index.sh"
+INJECT="$(cd "$SCRIPT_DIR/../../hooks" && pwd)/inject-role-index.sh"
 
 echo "=== test_inject_role_index happy path (role index only, shared pointer) ==="
 tmp="$(mktemp -d)"

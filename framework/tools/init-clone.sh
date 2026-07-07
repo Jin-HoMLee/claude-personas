@@ -8,7 +8,6 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 MEMORY_REPO="$( pwd )"
 PARENT_DIR="$( dirname "$MEMORY_REPO" )"
 MEMORY_REPO_NAME="$( basename "$MEMORY_REPO" )"
@@ -384,7 +383,7 @@ wire_cc_external_hop
 # /hooks review, re-triggered whenever the generated file changes.
 CODEX_WIRED=0
 wire_codex_adapter() {
-  local inject="$MEMORY_REPO/scripts/inject-role-index.sh"
+  local inject="$MEMORY_REPO/.agents/hooks/lib/inject-role-index.sh"
   local hooks="$TARGET/.codex/hooks.json"
   # Refuse-and-warn: $inject and $ROLE_DIR are embedded verbatim in the JSON
   # below with no escaper (jq dependency deliberately avoided) - a quote or
@@ -395,7 +394,7 @@ wire_codex_adapter() {
     return 0 ;;
   esac
   if [[ ! -x "$inject" ]]; then
-    vendor_warn "Codex: $inject missing or not executable (update the memory repo from the template) - .codex/hooks.json not generated"
+    vendor_warn "Codex: $inject missing or not executable (install/update the framework payload in the memory repo) - .codex/hooks.json not generated"
     return 0
   fi
   if [[ -e "$hooks" && "$FORCE" -ne 1 ]]; then

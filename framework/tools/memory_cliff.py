@@ -8,11 +8,12 @@ Realizes issue #18 (the planned ``scripts/check-budget.sh``). Adapted from the
 working counter dogfooded in the ``claude-personas-splice-neoepitope-pipeline``
 instance (hand-off: issue #23). Read-only, stdlib-only, zero network.
 
-Usage:
-    python3 scripts/memory_cliff.py                 # report + exit 1 if over budget
-    python3 scripts/memory_cliff.py --root PATH     # lint a different repo root
-    python3 scripts/memory_cliff.py --write-baseline b.json   # snapshot current load
-    python3 scripts/memory_cliff.py --baseline b.json         # ratchet: fail on regression
+Usage (framework repo path shown; in an installed instance the tool lives at
+.agents/tools/memory_cliff.py):
+    python3 framework/tools/memory_cliff.py                 # report + exit 1 if over budget
+    python3 framework/tools/memory_cliff.py --root PATH     # lint a different repo root
+    python3 framework/tools/memory_cliff.py --write-baseline b.json   # snapshot current load
+    python3 framework/tools/memory_cliff.py --baseline b.json         # ratchet: fail on regression
 """
 from __future__ import annotations
 
@@ -442,8 +443,26 @@ def render(
 # Entry point
 # --------------------------------------------------------------------------- #
 def _discover_root() -> str:
-    """Repo root = parent of the scripts/ dir holding this file (cwd-independent)."""
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    """Repo root = nearest ancestor of this file containing .git or .agents/.
+
+    A marker walk instead of depth counting, so the tool resolves the right
+    tree from any home (framework/tools/ in the framework repo,
+    .agents/tools/ in an installed instance, a legacy scripts/ copy, or the
+    user tier's ~/.agents/tools/) - a wrong root would fail silently: zero
+    roles discovered lints vacuously green. Falls back to 3 levels up (the
+    blessed homes' depth) when no marker exists, e.g. bare test fixtures.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    d = here
+    while True:
+        if os.path.exists(os.path.join(d, ".git")) or os.path.isdir(
+            os.path.join(d, ".agents")
+        ):
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            return os.path.dirname(os.path.dirname(here))
+        d = parent
 
 
 def main(argv=None) -> int:

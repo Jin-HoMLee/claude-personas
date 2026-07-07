@@ -54,14 +54,24 @@ rm ~/.claude/projects/<some-hash>/memory
 
 **Caution:** don't delete the hash dir itself (`<some-hash>/`) — Claude Code may have session JSONLs there. Only delete the `memory` symlink inside.
 
-### 4. Run `init-clone.sh` for each role
+### 4. Stage the framework payload, then run `init-clone.sh` for each role
+
+The Codex adapter needs the inject hook at the installed-payload location; stage and commit it once per memory repo (interim step until `install.sh` ships — see the framework repo's issue #55):
 
 ```bash
 cd ~/path/to/claude-personas-<app>
-./scripts/init-clone.sh developer --project-url <project-repo-url>
-./scripts/init-clone.sh pm
-./scripts/init-clone.sh designer
-./scripts/init-clone.sh scientist     # if you ship the scientist role
+mkdir -p .agents/hooks/lib
+cp framework/hooks/inject-role-index.sh .agents/hooks/lib/
+git add .agents/hooks/lib/inject-role-index.sh && git commit -m "stage framework hook payload"
+```
+
+Then run `init-clone.sh` once per role:
+
+```bash
+./framework/tools/init-clone.sh developer --project-url <project-repo-url>
+./framework/tools/init-clone.sh pm
+./framework/tools/init-clone.sh designer
+./framework/tools/init-clone.sh scientist     # if you ship the scientist role
 ```
 
 The first run persists the project URL to `.claude-personas/project.txt` — subsequent runs read it automatically.
@@ -82,7 +92,7 @@ Result:
 ### 5. Verify
 
 ```bash
-./scripts/list-roles.sh
+./framework/tools/list-roles.sh
 ```
 
 Expected: all roles reported `OK`. Open each clone in Claude Code, confirm:
@@ -130,7 +140,7 @@ v3.1 moves the role-memory symlink from `<clone>/memory` to `<clone>/.claude/mem
 For each role clone (run from inside your `claude-personas-<app>/` memory repo):
 
 ```bash
-scripts/init-clone.sh --force <role>
+framework/tools/init-clone.sh --force <role>
 ```
 
 `--force` detects the legacy v3.0 layout, backs up the old root-level `memory/` symlink to `<clone>/.claude/memory.legacy-backup-<timestamp>`, removes the stale `/memory/` line from the clone's `.gitignore`, and writes the new `.claude/memory/` symlink + `/.claude/memory/` gitignore entry.
@@ -142,3 +152,19 @@ Verification:
 - Restart Claude Code in the clone; the next session-start memory load should resolve `.claude/memory/MEMORY.md`.
 
 After all clones are migrated, you can delete the `.claude/memory.legacy-backup-*` directories.
+
+## scripts/ → framework/ layout (2026-07)
+
+The template's payload moved from `scripts/` (and root `skills/`) to `framework/{tools,hooks,skills}/`, and the wiring now expects the inject hook at the memory repo's `.agents/hooks/lib/inject-role-index.sh` instead of `scripts/inject-role-index.sh`.
+For an existing memory repo that pulled this change:
+
+```bash
+cd ~/path/to/claude-personas-<app>
+mkdir -p .agents/hooks/lib
+cp framework/hooks/inject-role-index.sh .agents/hooks/lib/
+git add .agents/hooks/lib/inject-role-index.sh && git commit -m "stage framework hook payload"
+```
+
+Then regenerate each clone's `.codex/hooks.json` (it still points at the removed `scripts/` path) with `./framework/tools/doctor.sh`, or `./framework/tools/init-clone.sh --force <role>` per clone.
+Codex will ask you to re-approve the changed hook via `/hooks` in each clone.
+Symptoms of a half-done migration: `init-clone.sh` warns `inject-role-index.sh missing or not executable`, or `doctor.sh` reports the hooks.json DRIFT naming the old path.

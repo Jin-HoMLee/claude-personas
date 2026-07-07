@@ -27,15 +27,15 @@ jobs:
             echo "OK: $role/shared -> $target"
           done
 
-      - name: scripts are executable
+      - name: framework scripts are executable
         run: |
-          for s in scripts/init-clone.sh scripts/list-roles.sh scripts/memory_cliff.py \
-                   scripts/inject-role-index.sh scripts/doctor.sh \
-                   scripts/tests/run_all.sh scripts/tests/test_memory_cliff.sh \
-                   scripts/tests/test_doctor_manifest.sh scripts/tests/test_doctor_user_tier.sh \
-                   scripts/tests/test_doctor_embedded.sh scripts/tests/test_doctor_role_clones.sh \
-                   scripts/tests/test_init_clone.sh scripts/tests/test_clone_fixture.sh \
-                   scripts/tests/test_inject_role_index.sh scripts/tests/test_list_roles.sh; do
+          for s in framework/tools/init-clone.sh framework/tools/list-roles.sh framework/tools/memory_cliff.py \
+                   framework/hooks/inject-role-index.sh framework/tools/doctor.sh \
+                   framework/tools/tests/run_all.sh framework/tools/tests/test_memory_cliff.sh \
+                   framework/tools/tests/test_doctor_manifest.sh framework/tools/tests/test_doctor_user_tier.sh \
+                   framework/tools/tests/test_doctor_embedded.sh framework/tools/tests/test_doctor_role_clones.sh \
+                   framework/tools/tests/test_init_clone.sh framework/tools/tests/test_clone_fixture.sh \
+                   framework/tools/tests/test_inject_role_index.sh framework/tools/tests/test_list_roles.sh; do
             if [ ! -x "$s" ]; then
               echo "FAIL: $s is not executable"
               exit 1
@@ -58,7 +58,7 @@ jobs:
           # Fails CI if any role's always-loaded load (role + shared) crosses the
           # documented cliff (14 rules / 200 lines / 4000 tokens). See CONVENTIONS.md
           # and issue #18.
-          python3 scripts/memory_cliff.py
+          python3 framework/tools/memory_cliff.py
 
       - name: run tests
-        run: bash scripts/tests/run_all.sh
+        run: bash framework/tools/tests/run_all.sh

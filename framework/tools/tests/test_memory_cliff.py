@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout, redirect_stderr
 
-# Import the module under test from the sibling scripts/ dir.
+# Import the module under test from the parent framework/tools/ dir.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import memory_cliff as mc  # noqa: E402
 

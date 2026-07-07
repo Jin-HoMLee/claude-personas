@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Shim so run_all.sh (which globs test_*.sh) runs the Python unittest suite for
-# scripts/memory_cliff.py, PLUS a handful of CLI-level (subprocess, not import)
+# framework/tools/memory_cliff.py, PLUS a handful of CLI-level (subprocess, not import)
 # checks for Task 9's --layout flat / manifest-driven flat behavior - the same
 # split test_doctor_*.sh uses (Python-internal logic vs. actually invoking the
 # script). Requires python3 (stdlib only); bash-3.2 compatible (no associative

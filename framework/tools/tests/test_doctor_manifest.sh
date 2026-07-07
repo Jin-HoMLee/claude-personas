@@ -17,7 +17,7 @@ run_doctor() {
   rm -f "$errfile"
 }
 
-# assert_contains lives in test_helpers.sh (shared across scripts/tests/*.sh).
+# assert_contains lives in test_helpers.sh (shared across framework/tools/tests/*.sh).
 
 echo "=== test_doctor_manifest: no manifest refuses, names all 3 topologies + --init ==="
 tmp="$(mktemp -d)"

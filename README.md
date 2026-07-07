@@ -35,17 +35,23 @@ A `shared/` folder holds team-wide conventions. An `examples/` tree of patterns 
    cd ~/dev
    git clone git@github.com:<you>/claude-personas-<my-app>.git
    ```
-3. Run `init-clone.sh` once per role you want active:
+3. Stage the framework payload where the wiring expects it, and commit it so every clone of your memory repo ships it (interim step until `install.sh` ships - see issue #55):
    ```sh
    cd claude-personas-<my-app>
-   ./scripts/init-clone.sh developer --project-url git@github.com:<you>/<my-app>.git
-   ./scripts/init-clone.sh pm
-   ./scripts/init-clone.sh designer
-   ./scripts/init-clone.sh scientist
+   mkdir -p .agents/hooks/lib
+   cp framework/hooks/inject-role-index.sh .agents/hooks/lib/
+   git add .agents/hooks/lib/inject-role-index.sh && git commit -m "stage framework hook payload"
+   ```
+4. Run `init-clone.sh` once per role you want active:
+   ```sh
+   ./framework/tools/init-clone.sh developer --project-url git@github.com:<you>/<my-app>.git
+   ./framework/tools/init-clone.sh pm
+   ./framework/tools/init-clone.sh designer
+   ./framework/tools/init-clone.sh scientist
    ```
    First call persists the project URL — subsequent calls don't need `--project-url`.
-4. Open any role's clone (e.g. `~/dev/my-app-pm/`) in Claude Code → role's MEMORY.md auto-loads via `.claude/memory/MEMORY.md`.
-5. Browse `examples/` for patterns; copy what fits into your role's `feedback_*.md` files (then commit + push from your memory repo).
+5. Open any role's clone (e.g. `~/dev/my-app-pm/`) in Claude Code → role's MEMORY.md auto-loads via `.claude/memory/MEMORY.md`.
+6. Browse `examples/` for patterns; copy what fits into your role's `feedback_*.md` files (then commit + push from your memory repo).
 
 **Default no-suffix slot:** `developer` claims the `<project>/` (no-suffix) path. Override with `--main` on another role or by writing the role name into `.claude-personas/main-role.txt`.
 
@@ -75,7 +81,7 @@ A `shared/` folder holds team-wide conventions. An `examples/` tree of patterns 
     ├── shared/                              (canonical shared layer)
     │   └── MEMORY.md
     ├── examples/   (cribbable patterns)
-    └── scripts/    init-clone.sh, list-roles.sh
+    └── framework/  (distributable payload: tools/, hooks/, skills/ - see framework/FILES)
 ```
 
 When you open `my-app-pm/` in Claude Code, the auto-memory loader reads `my-app-pm/.claude/memory/MEMORY.md` — which resolves through the symlink to `claude-personas-my-app/pm/MEMORY.md`. References to `.claude/memory/shared/MEMORY.md` resolve through a second symlink (`pm/shared -> ../shared`) to the canonical shared layer.
@@ -115,11 +121,11 @@ For each role, the script:
 7. On first run, persists the project URL to `.claude-personas/project.txt`.
 
 **Memory Manager (optional):** if your project has a Memory Manager, its workspace is the memory repo itself, not a project clone.
-Create a real `memory_manager/` role dir (own `MEMORY.md` + `shared -> ../shared`), then run `./scripts/init-clone.sh --self` from inside the memory repo.
+Create a real `memory_manager/` role dir (own `MEMORY.md` + `shared -> ../shared`), then run `./framework/tools/init-clone.sh --self` from inside the memory repo.
 This wires the same untracked mounts self-referentially - `.agents/memory -> ../memory_manager`, the `.claude/memory` hop, the external Claude Code hop, and the Codex/OpenCode adapters - with no clone created.
 The mount is untracked on purpose: role identity belongs to the workspace instance, so cloning the memory repo does not make anyone the MM.
 
-**Audit:** run `./scripts/list-roles.sh` from inside your memory repo to see which clones exist, which are wired correctly, and which need fixing - the MM self-mount is audited like any other role.
+**Audit:** run `./framework/tools/list-roles.sh` from inside your memory repo to see which clones exist, which are wired correctly, and which need fixing - the MM self-mount is audited like any other role.
 
 ## Multi-vendor wiring (Claude Code, Codex, OpenCode)
 
@@ -129,7 +135,7 @@ What it creates per clone (all untracked via `.git/info/exclude` - your project 
 
 - `.agents/memory -> ../../<memory-repo>/<role>` - the vendor-neutral mount and the single role signal.
 - `.claude/memory -> ../.agents/memory` - the Claude Code hop, plus an external `~/.claude/projects/<slug>/memory` symlink that Claude Code's auto-memory loader actually reads.
-- `.codex/hooks.json` - a generated SessionStart hook that injects the role index via the memory repo's `scripts/inject-role-index.sh`, mirroring Claude Code's native role-file auto-load (role index only, bounded by CC's native ~200-line/~25 KB size guard; shared is loaded on demand via the `load-persona-memory` skill, with a one-line pointer in the payload).
+- `.codex/hooks.json` - a generated SessionStart hook that injects the role index via the memory repo's `.agents/hooks/lib/inject-role-index.sh` (the installed framework payload; see the quick start's staging step), mirroring Claude Code's native role-file auto-load (role index only, bounded by CC's native ~200-line/~25 KB size guard; shared is loaded on demand via the `load-persona-memory` skill, with a one-line pointer in the payload).
 
 One-time steps per machine that the script cannot perform (it prints them):
 
@@ -138,8 +144,8 @@ One-time steps per machine that the script cannot perform (it prints them):
 - Skill install (all three tools): symlink the skill once into your user-level skill dirs:
 
   ```bash
-  ln -s "$(pwd)/skills/load-persona-memory" ~/.agents/skills/load-persona-memory   # Codex + OpenCode
-  ln -s "$(pwd)/skills/load-persona-memory" ~/.claude/skills/load-persona-memory   # Claude Code
+  ln -s "$(pwd)/framework/skills/load-persona-memory" ~/.agents/skills/load-persona-memory   # Codex + OpenCode
+  ln -s "$(pwd)/framework/skills/load-persona-memory" ~/.claude/skills/load-persona-memory   # Claude Code
   ```
 
 Sharp edges per vendor (trust layers, symlink bugs, context ceilings) live in [docs/vendor-caveats.md](docs/vendor-caveats.md).
@@ -177,27 +183,27 @@ Role-clone constellation (run from the memory repo):
 
 ```sh
 cd claude-personas-<my-app>
-./scripts/doctor.sh --init role-clones
-./scripts/doctor.sh --check
-./scripts/doctor.sh
+./framework/tools/doctor.sh --init role-clones
+./framework/tools/doctor.sh --check
+./framework/tools/doctor.sh
 ```
 
 Embedded (a single repo carrying `.agents/` alongside its own project code):
 
 ```sh
 cd <your-repo>
-./scripts/doctor.sh --init embedded
-./scripts/doctor.sh --check
-./scripts/doctor.sh
+./framework/tools/doctor.sh --init embedded
+./framework/tools/doctor.sh --check
+./framework/tools/doctor.sh
 ```
 
 User tier (a global `<owner>/user-memory` repo - see [User-memory tier](#user-memory-tier) above):
 
 ```sh
 cd user-memory
-./scripts/doctor.sh --init user-tier
-./scripts/doctor.sh --check
-./scripts/doctor.sh
+./framework/tools/doctor.sh --init user-tier
+./framework/tools/doctor.sh --check
+./framework/tools/doctor.sh
 ```
 
 `--init <topology>` writes a commented starter manifest for that topology and exits; it refuses to overwrite an existing one.
@@ -228,7 +234,7 @@ Skills packaging and distribution are out of scope here, tracked separately as [
 
 ### `memory_cliff.py` and the manifest
 
-`scripts/memory_cliff.py --layout flat` lints a flat-layout instance's single `MEMORY.md` as one always-loaded unit, since a flat instance has no shared file to add and no role/shared split to subtract.
+`framework/tools/memory_cliff.py --layout flat` lints a flat-layout instance's single `MEMORY.md` as one always-loaded unit, since a flat instance has no shared file to add and no role/shared split to subtract.
 With no `--layout` flag, it reads `memory_layout` from `.agents/manifest` when one is present, and falls back to the original role-discovery behavior when there is no manifest at all - so the template repo and any pre-manifest instance keep working unchanged.
 
 ## Windows

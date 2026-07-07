@@ -52,7 +52,7 @@ These are **observed inflection points, not hard limits**. Your session may diff
 
 Growing a memory directory organically over weeks naturally hits the first cliff before you've built enough material to need a four-tier structure. When you do hit it: audit, demote where possible, then re-grow.
 
-> **Enforcement:** [`scripts/memory_cliff.py`](scripts/memory_cliff.py) lints each role's effective always-loaded load (role + shared) against these thresholds and exits non-zero past any of them; it runs in CI (`validate.yml`). Run it locally with `python3 scripts/memory_cliff.py`, or snapshot a baseline and ratchet against regressions with `--write-baseline` / `--baseline`. The companion `check-tool-docstring-overlap` check (flagging the "delete entirely" verdict) is still planned - see [issue #18](https://github.com/Jin-HoMLee/claude-personas/issues/18).
+> **Enforcement:** [`framework/tools/memory_cliff.py`](framework/tools/memory_cliff.py) lints each role's effective always-loaded load (role + shared) against these thresholds and exits non-zero past any of them; it runs in CI (`validate.yml`). Run it locally with `python3 framework/tools/memory_cliff.py`, or snapshot a baseline and ratchet against regressions with `--write-baseline` / `--baseline`. The companion `check-tool-docstring-overlap` check (flagging the "delete entirely" verdict) is still planned - see [issue #18](https://github.com/Jin-HoMLee/claude-personas/issues/18).
 
 ### Tier 1 — Always in effect
 
@@ -145,6 +145,6 @@ The `.claude/memory/` symlink in each project clone (`<project-clone>/.claude/me
 
 ## Getting started
 
-See the [Quick start in README.md](README.md#quick-start-10-minutes-per-project) — `scripts/init-clone.sh` automates the clone creation + symlink wiring. Once a role is wired, open Claude Code in the role's clone and it auto-loads the matching `MEMORY.md`.
+See the [Quick start in README.md](README.md#quick-start-10-minutes-per-project) — `framework/tools/init-clone.sh` automates the clone creation + symlink wiring. Once a role is wired, open Claude Code in the role's clone and it auto-loads the matching `MEMORY.md`.
 
 Then: browse `examples/` for patterns to adopt, and start writing rules into your role's `MEMORY.md` (in your memory repo, then commit and push).
