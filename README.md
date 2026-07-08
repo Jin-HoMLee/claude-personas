@@ -102,7 +102,7 @@ Rules start in Reference and get promoted to Always-in-effect when they keep bei
 One more tier sits above role and project: **user memory** - one private repo per human (`<owner>/user-memory`), same substrate format, holding rules that apply in every project regardless of role. Precedence on conflict: role > project > user (more specific wins).
 
 - Naming: `<scope>-memory`, e.g. `Jin-HoMLee/user-memory`.
-- Mounting: the canonical `~/AGENTS.md` lives in that repo and is symlinked back; each tool's native global file symlinks onward - Claude Code `~/.claude/CLAUDE.md`, Codex `~/.codex/AGENTS.md`, OpenCode `~/.config/opencode/AGENTS.md`. `tools/sync.sh --check` in that repo doctors the wiring.
+- Mounting: the canonical `~/AGENTS.md` lives in that repo and is symlinked back; each tool's native global file symlinks onward - Claude Code `~/.claude/CLAUDE.md`, Codex `~/.codex/AGENTS.md`, OpenCode `~/.config/opencode/AGENTS.md`. `.agents/tools/doctor.sh --check` in that repo doctors the wiring.
 - Design spec: [`2026-07-02-knowledge-consolidation-two-module-design.md`](docs/superpowers/specs/2026-07-02-knowledge-consolidation-two-module-design.md).
 - Headless caveat: non-interactive invocations may need extra flags to read memory outside the invocation cwd - Claude Code `-p` needs `--add-dir <path>` for lazy reads, OpenCode non-interactive needs `--auto` to approve the cross-directory read prompt, Codex outside a trusted git dir needs `--skip-git-repo-check`.
 

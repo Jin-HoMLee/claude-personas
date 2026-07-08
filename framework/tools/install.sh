@@ -86,6 +86,11 @@ report_pending() { echo "$1"; PENDING=$((PENDING + 1)); }
 warn()  { echo "WARN: $1" >&2; }
 fatal() { echo "ERROR: $1" >&2; exit 2; }
 
+if [ "$MODE" = into ]; then
+  [ "$PRUNE" = 0 ] || fatal "--prune is only valid with --sync"
+  [ "${#FORCE_FILES[@]}" -eq 0 ] || fatal "--force-file is only valid with --sync"
+fi
+
 # --- resolve source clone (SRC) and instance (TARGET) ---
 
 if [ "$MODE" = into ]; then
@@ -241,11 +246,15 @@ receipt_landings() { # every landing path currently tracked, one per line
 }
 write_receipt() { # persist RECEIPT_TAB atomically, sorted by landing
   local tmp
-  tmp="$(mktemp 2>/dev/null)" || fatal "mktemp failed"
+  mkdir -p "$(dirname "$RECEIPT_FILE")" || fatal "cannot create $(dirname "$RECEIPT_FILE")"
+  tmp="$(mktemp "$(dirname "$RECEIPT_FILE")/.framework-receipt.XXXXXX" 2>/dev/null)" || fatal "mktemp failed"
   { echo "# framework-receipt - written by install.sh; landing path<TAB>blob oid. Do not edit."
     printf '%s\n' "$RECEIPT_TAB" | awk -F'\t' 'NF' | sort
   } > "$tmp" || { rm -f "$tmp"; fatal "cannot write $RECEIPT_FILE"; }
-  mkdir -p "$(dirname "$RECEIPT_FILE")" || { rm -f "$tmp"; fatal "cannot create $(dirname "$RECEIPT_FILE")"; }
+  if [ -f "$RECEIPT_FILE" ] && cmp -s "$tmp" "$RECEIPT_FILE"; then
+    rm -f "$tmp"
+    return 0
+  fi
   mv "$tmp" "$RECEIPT_FILE" || { rm -f "$tmp"; fatal "cannot write $RECEIPT_FILE"; }
   chmod 0644 "$RECEIPT_FILE" || fatal "cannot set mode on $RECEIPT_FILE"
 }
@@ -261,12 +270,12 @@ write_from_ref() { # write_from_ref <src_path> <landing> <label>
     esac
     return 0
   fi
-  tmp="$(mktemp 2>/dev/null)" || fatal "mktemp failed"
+  mkdir -p "$(dirname "$dest")" || fatal "cannot create $(dirname "$dest")"
+  tmp="$(mktemp "$(dirname "$dest")/.install.$(basename "$dest").XXXXXX" 2>/dev/null)" || fatal "mktemp failed"
   if ! git -C "$SRC" show "$REF:$src_path" > "$tmp" 2>/dev/null; then
     rm -f "$tmp"
     fatal "cannot read '$src_path' at '$REF' from $SRC (is it in framework/FILES but not committed?)"
   fi
-  mkdir -p "$(dirname "$dest")" || { rm -f "$tmp"; fatal "cannot create $(dirname "$dest")"; }
   mv "$tmp" "$dest" || { rm -f "$tmp"; fatal "cannot write $dest"; }
   mode="$(git -C "$SRC" ls-tree "$REF" -- "$src_path" 2>/dev/null | awk '{ print $1 }')"
   if [ "$mode" = "100755" ]; then
@@ -283,12 +292,13 @@ write_from_ref() { # write_from_ref <src_path> <landing> <label>
 # repo's object format (the copy is byte-exact, so an installed pristine
 # file hashes to its source oid).
 current_oid() { git -C "$SRC" hash-object "$1" 2>/dev/null; }         # current_oid <dest-path>
-source_oid()  { git -C "$SRC" rev-parse "$1:$2" 2>/dev/null; }        # source_oid <ref> <src_path>
+source_oid()  { git -C "$SRC" rev-parse --verify --quiet "$1:$2"; }   # source_oid <ref> <src_path>
 
 process_into() { # process_into <src_path> <landing>
   local src_path="$1" landing="$2" dest="$TARGET/$2" new_oid
+  new_oid="$(source_oid "$REF" "$src_path")"
+  [ -n "$new_oid" ] || fatal "cannot read '$src_path' at '$REF' from $SRC (is it in framework/FILES but not committed?)"
   if [ -e "$dest" ] || [ -L "$dest" ]; then
-    new_oid="$(source_oid "$REF" "$src_path")"
     if [ "$(current_oid "$dest")" = "$new_oid" ]; then
       [ "$CHECK" = 1 ] || receipt_set "$landing" "$new_oid"
       return 0   # identical content: already installed - idempotent re-run, adopts pre-existing content
@@ -389,6 +399,12 @@ process_orphans() {
       else
         report_pending "MODIFIED ORPHAN: $landing differs from the pinned copy - kept, delete by hand"
       fi
+    elif [ "$PRUNE" = 1 ] && [ "$CHECK" = 1 ]; then
+      if [ -n "$target_oid" ] && [ "$cur_oid" = "$target_oid" ]; then
+        report_pending "WOULD-PRUNE: $landing no longer in framework/FILES"
+      else
+        report_pending "MODIFIED ORPHAN: $landing differs from the pinned copy - kept, delete by hand"
+      fi
     else
       report_pending "ORPHANED: $landing no longer in framework/FILES - kept (remove with --prune)"
     fi
@@ -442,7 +458,7 @@ if [ "$CHECK" = 0 ]; then
   fi
   if [ "$(manifest_get framework_ref)" != "$REF" ] \
      || { [ "$MODE" = into ] && [ "$(manifest_get framework_source)" != "${SOURCE_VALUE:-}" ]; }; then
-    tmp="$(mktemp 2>/dev/null)" || fatal "mktemp failed"
+    tmp="$(mktemp "$(dirname "$MANIFEST")/.manifest.XXXXXX" 2>/dev/null)" || fatal "mktemp failed"
     awk -F= -v mode="$MODE" '
       $1 == "framework_ref" { next }
       $1 == "framework_source" && mode == "into" { next }
