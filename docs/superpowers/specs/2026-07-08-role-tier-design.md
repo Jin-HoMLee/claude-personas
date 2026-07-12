@@ -13,6 +13,7 @@ The role tier gives each role a home that outlives any single project: `role@use
 
 The model behind it is two-axis: **scope** (user / project / repo) x **plane** (shared / role).
 Bare tier names denote the shared plane; `role@<scope>` denotes the identity plane.
+"Shared" widens with scope: project-shared spans that project's roles, user-shared spans roles and projects.
 Five of the six grid cells are instantiated; `role@repo` stays reserved with no use case (addable without redesign).
 
 This spec covers the model, the `role@user` home, mount wiring, manifest/doctor support, promotion rules, and the repo tier's definition.
