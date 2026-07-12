@@ -16,7 +16,7 @@ Bare tier names denote the shared plane; `role@<scope>` denotes the identity pla
 "Shared" widens with scope: project-shared spans that project's roles, user-shared spans roles and projects.
 Five of the six grid cells are instantiated; `role@repo` stays reserved with no use case (addable without redesign).
 
-This spec covers the model, the `role@user` home, mount wiring, manifest/doctor support, promotion rules, and the repo tier's definition.
+This spec covers the model, the `role@user` home, mount wiring, manifest/doctor support, promotion rules (the complete routing model; its org-scope destinations are forward references to #66), and the repo tier's definition.
 It deliberately does not cover the org tier (#66) or the memory layer axis (#65); see section 10.
 
 ## 2. The scope model and precedence chain
@@ -156,6 +156,9 @@ Each recurrence differing in one coordinate releases that coordinate; the destin
 
 This is inductive generalization; the existing 2-strike rule becomes a special case rather than being discarded.
 
+The table states the complete routing model; its org-scope destinations are forward references.
+The org tier has no home yet (section 8, #66), so those rows become exercisable only once #66 defines the tier - until then, a fact routed to an org cell is recorded on #66 rather than written.
+
 **The unobservable coordinate.**
 With one human, the human coordinate can never be released by evidence.
 Until human #2 arrives, `role@user` vs `role@org` is a judgment test: "would the second human need this?" (yes -> role@org, tracked in #66; no -> role@user).
@@ -216,7 +219,7 @@ Behavior-gated, not documentation-gated:
 - [ ] After the user-memory migration commit, the user tier still loads: the import chain resolves and a session can quote a user-tier fact without manual steps.
 - [ ] In a role clone with a materialized `user/` symlink, a Claude Code session follows the index pointer and quotes a role@user fact on demand (the #67 run extends this to Codex and OpenCode).
 - [ ] A role subagent defined by the framework recalls a deep (beyond-2KB-offset) role fact via the SubagentStart pointer hook + Read, and refuses another role's fact.
-- [ ] The promotion docs route each row of the coordinate-release table to its destination in a worked example.
+- [ ] The two org-free routing paths fire on real facts: a declared role preference is written directly into role@user (the section-6 seeding path), and a discovered lesson's second bite in a different project promotes into role@user. Rows with org-scope destinations gate in #66, not here.
 
 ## 12. Sequencing
 
