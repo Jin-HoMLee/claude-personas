@@ -1273,6 +1273,40 @@ topology_user_tier_checks() {
   fi
 }
 
+check_role_tier_readiness() {
+  # Role-tier readiness (claude-personas#49 spec section 5): active only
+  # when the manifest declares role_source (validated in Task 1: never on
+  # user-tier, never absolute). Target checks: the path resolves, is a git
+  # repo, and its manifest declares memory_layout=roles - a flat target
+  # means the pointer was wired before the user-memory migration (spec
+  # section 3) and is an ERROR, not a fixable drift.
+  [ -n "$ROLE_SOURCE" ] || return 0
+
+  local src_abs target_layout
+  src_abs="$(cd "$ROOT/$ROLE_SOURCE" 2>/dev/null && pwd)"
+  if [ -z "$src_abs" ]; then
+    report_error "role_source '$ROLE_SOURCE' unreachable from $ROOT"
+    return 0
+  fi
+  if [ ! -d "$src_abs/.git" ]; then
+    report_error "role_source '$ROLE_SOURCE' ($src_abs) is not a git repo"
+    return 0
+  fi
+  target_layout="$(grep -v '^[[:space:]]*#' "$src_abs/.agents/manifest" 2>/dev/null \
+    | grep '^memory_layout=' | head -n1 | cut -d= -f2-)"
+  if [ "$target_layout" != "roles" ]; then
+    report_error "role_source '$ROLE_SOURCE' declares memory_layout='${target_layout:-MISSING}', expected 'roles' - wire role_source only after the user-memory migration (claude-personas#49 spec section 3)"
+    return 0
+  fi
+
+  _role_tier_check_roles "$src_abs"
+}
+
+_role_tier_check_roles() {
+  # Per-role symlink checks land in Task 3; stub keeps Task 2 green.
+  :
+}
+
 # Shared floor for every topology, run before the topology-specific catalog.
 check_payload
 check_hook_scripts
@@ -1283,6 +1317,8 @@ case "$TOPOLOGY" in
   embedded) topology_embedded_checks ;;
   user-tier) topology_user_tier_checks ;;
 esac
+
+check_role_tier_readiness
 
 if [ "$DRIFT_COUNT" -gt 0 ]; then
   exit 1
