@@ -651,4 +651,58 @@ assert_contains "$DOCTOR_STDOUT" "framework_source '" "unreachable explicit sour
 assert_contains "$DOCTOR_STDOUT" "unreachable" "unreachable explicit source names the failure"
 rm -rf "$base"
 
+echo "=== test_doctor_manifest: role_source scoping (claude-personas#49 role tier) ==="
+# (a) role_source on topology=user-tier: hard error, exit 2.
+tmp="$(mktemp -d)"
+mkdir -p "$tmp/.agents/memory"
+echo "# idx" > "$tmp/.agents/memory/MEMORY.md"
+cat > "$tmp/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=user-tier
+memory_layout=flat
+role_source=../user-memory
+EOF
+run_doctor --check --root "$tmp"
+assert_equal "2" "$DOCTOR_EXIT" "role_source on user-tier: exit 2"
+assert_contains "$DOCTOR_STDERR" "role_source" "user-tier error names role_source"
+rm -rf "$tmp"
+
+# (b) absolute role_source: hard error, exit 2.
+tmp="$(mktemp -d)"
+mkdir -p "$tmp/.agents/memory"
+echo "# idx" > "$tmp/.agents/memory/MEMORY.md"
+echo "# agents" > "$tmp/AGENTS.md"
+cat > "$tmp/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=embedded
+memory_layout=flat
+role_source=/abs/user-memory
+EOF
+run_doctor --check --root "$tmp"
+assert_equal "2" "$DOCTOR_EXIT" "absolute role_source: exit 2"
+assert_contains "$DOCTOR_STDERR" "repo-relative" "absolute error says repo-relative"
+rm -rf "$tmp"
+
+# (c) relative role_source on embedded, target is a roles-layout git repo:
+# manifest accepted (doctor proceeds past validation; fix mode exits 0).
+tmp="$(mktemp -d)"
+mkdir -p "$tmp/inst/.agents/memory" "$tmp/user-memory/.git" "$tmp/user-memory/.agents" "$tmp/user-memory/shared"
+echo "# idx" > "$tmp/inst/.agents/memory/MEMORY.md"
+echo "# agents" > "$tmp/inst/AGENTS.md"
+cat > "$tmp/inst/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=embedded
+memory_layout=flat
+role_source=../user-memory
+EOF
+cat > "$tmp/user-memory/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=user-tier
+memory_layout=roles
+EOF
+echo "# shared" > "$tmp/user-memory/shared/MEMORY.md"
+run_doctor --root "$tmp/inst"
+assert_equal "0" "$DOCTOR_EXIT" "valid role_source on embedded: exit 0"
+rm -rf "$tmp"
+
 print_summary

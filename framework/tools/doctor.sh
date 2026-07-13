@@ -36,7 +36,7 @@ VALID_OPENCODE_VALUES="global per-clone"
 SUPPORTED_MANIFEST_VERSIONS="1"
 
 # All keys this doctor understands, regardless of topology.
-ALL_VALID_KEYS="manifest_version topology memory_layout adapter claude_hook codex_hook skills_mount opencode framework_source framework_ref"
+ALL_VALID_KEYS="manifest_version topology memory_layout adapter claude_hook codex_hook skills_mount opencode framework_source framework_ref role_source"
 
 # Keys valid only for topology=embedded.
 EMBEDDED_ONLY_KEYS="claude_hook codex_hook skills_mount"
@@ -392,6 +392,25 @@ validate_manifest_semantics() {
       esac
     done < <(manifest_get_all "$k")
   done
+
+  # role_source (optional, consumer-side, claude-personas#49): points a
+  # role-clones or embedded instance at the user-scope roles instance.
+  # Hard error on user-tier (self-reference: the user-tier instance IS the
+  # role tier's home). Must be repo-relative: the committed <role>/user
+  # symlinks are derived from it and encode the sibling-layout assumption.
+  v="$(manifest_get role_source)"
+  if [ -n "$v" ]; then
+    if [ "$topology" = "user-tier" ]; then
+      echo "ERROR: key 'role_source' is not valid for topology=user-tier (the user-tier instance is the role tier's home, not a consumer of it) in $MANIFEST" >&2
+      exit 2
+    fi
+    case "$v" in
+      /*)
+        echo "ERROR: role_source '$v' in $MANIFEST must be a repo-relative path, not absolute" >&2
+        exit 2
+        ;;
+    esac
+  fi
 }
 
 validate_manifest_syntax
@@ -422,6 +441,8 @@ SKILLS_MOUNT="$(manifest_get skills_mount)"
 
 OPENCODE_MODE="$(manifest_get opencode)"
 [ -n "$OPENCODE_MODE" ] || OPENCODE_MODE="global"
+
+ROLE_SOURCE="$(manifest_get role_source)"
 
 # --- shared check core (Task 2): counters, reporters, link/payload/hook checks ---
 
