@@ -157,4 +157,36 @@ assert_equal "0" "$( bash "$INJECT" "/nonexistent/role/dir" >/dev/null 2>&1; ech
 assert_equal "0" "$( bash "$INJECT" >/dev/null 2>&1; echo $? )" "exits 0 with no argument"
 assert_equal "" "$( bash "$INJECT" "/nonexistent/role/dir" 2>/dev/null )" "prints nothing on missing role dir"
 
+echo "=== test_inject_role_index: role@user pointer (claude-personas#49) ==="
+INJECT_HOOK="$(cd "$SCRIPT_DIR/../.." && pwd)/hooks/inject-role-index.sh"
+
+# (a) user/MEMORY.md present: pointer line appears, AFTER the shared pointer.
+tmp="$(mktemp -d)"
+mkdir -p "$tmp/dev/shared" "$tmp/dev/user"
+echo "# dev index" > "$tmp/dev/MEMORY.md"
+echo "# shared index" > "$tmp/dev/shared/MEMORY.md"
+echo "# dev@user index" > "$tmp/dev/user/MEMORY.md"
+ctx="$(bash "$INJECT_HOOK" "$tmp/dev" | jq -r '.hookSpecificOutput.additionalContext')"
+assert_contains "$ctx" "# Role user-tier memory index (loaded on demand): read $tmp/dev/user/MEMORY.md" "user pointer line present"
+shared_line_no="$(printf '%s\n' "$ctx" | grep -n 'Shared memory index' | cut -d: -f1)"
+user_line_no="$(printf '%s\n' "$ctx" | grep -n 'user-tier memory index' | cut -d: -f1)"
+if [ -n "$shared_line_no" ] && [ -n "$user_line_no" ] && [ "$user_line_no" -gt "$shared_line_no" ]; then
+  assert_equal "ordered" "ordered" "user pointer comes after shared pointer"
+else
+  assert_equal "ordered" "unordered" "user pointer comes after shared pointer"
+fi
+rm -rf "$tmp"
+
+# (b) no user/MEMORY.md: no user pointer line (lazy - never point at nothing).
+tmp="$(mktemp -d)"
+mkdir -p "$tmp/dev/shared"
+echo "# dev index" > "$tmp/dev/MEMORY.md"
+echo "# shared index" > "$tmp/dev/shared/MEMORY.md"
+ctx="$(bash "$INJECT_HOOK" "$tmp/dev" | jq -r '.hookSpecificOutput.additionalContext')"
+case "$ctx" in
+  *"user-tier memory index"*) assert_equal "absent" "present" "no user pointer without user/MEMORY.md" ;;
+  *) assert_equal "absent" "absent" "no user pointer without user/MEMORY.md" ;;
+esac
+rm -rf "$tmp"
+
 print_summary
