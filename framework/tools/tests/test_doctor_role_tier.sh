@@ -117,6 +117,10 @@ ln -s "../../elsewhere/developer" "$tmp/inst/developer/user"
 run_doctor --check --root "$tmp/inst"
 assert_equal "1" "$DOCTOR_EXIT" "wrong-target symlink: exit 1"
 assert_contains "$DOCTOR_STDOUT" "DRIFT: developer/user -> ../../elsewhere/developer, expected ../../user-memory/developer" "wrong target named"
+case "$DOCTOR_STDOUT" in
+  *"dangles"*) assert_equal "no-dangle-line" "dangle-line" "wrong-target check emits no second (dangling) DRIFT line" ;;
+  *) assert_equal "no-dangle-line" "no-dangle-line" "wrong-target check emits no second (dangling) DRIFT line" ;;
+esac
 run_doctor --root "$tmp/inst"
 assert_symlink "$tmp/inst/developer/user" "../../user-memory/developer" "fix repoints the symlink"
 rm -rf "$tmp"

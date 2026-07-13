@@ -1328,7 +1328,7 @@ _role_tier_check_roles() {
 
     if [ -L "$link_path" ]; then
       need_link "$link_path" "$expected_target" "$n/user"
-      if [ -L "$link_path" ] && [ ! -e "$link_path" ]; then
+      if [ -L "$link_path" ] && [ ! -e "$link_path" ] && [ "$(readlink "$link_path")" = "$expected_target" ]; then
         report_drift "$n/user -> $(readlink "$link_path") dangles - role@user dir missing at $src_abs/$n (restore it there or remove the symlink)"
       fi
     elif [ -e "$link_path" ]; then
