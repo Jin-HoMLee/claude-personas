@@ -19,4 +19,5 @@ framework/tools/init-clone.sh -> .agents/tools/init-clone.sh
 framework/tools/list-roles.sh -> .agents/tools/list-roles.sh
 framework/tools/install.sh -> .agents/tools/install.sh
 framework/hooks/inject-role-index.sh -> .agents/hooks/lib/inject-role-index.sh
+framework/hooks/inject-subagent-role-pointer.sh -> .agents/hooks/lib/inject-subagent-role-pointer.sh
 framework/skills/load-persona-memory/SKILL.md -> .agents/skills/load-persona-memory/SKILL.md
