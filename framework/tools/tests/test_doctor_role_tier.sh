@@ -91,4 +91,54 @@ assert_equal "0" "$DOCTOR_EXIT" "lazy state: fix mode exit 0 (no target role dir
 assert_equal "" "$(readlink "$tmp/inst/developer/user" 2>/dev/null)" "lazy state: no symlink created"
 rm -rf "$tmp"
 
+echo "=== test_doctor_role_tier: (5) target role dir exists - fix mode materializes, check mode stays silent ==="
+tmp="$(mktemp -d)"
+make_consumer "$tmp"
+make_target "$tmp" roles
+mkdir -p "$tmp/user-memory/developer"
+echo "# dev@user idx" > "$tmp/user-memory/developer/MEMORY.md"
+run_doctor --check --root "$tmp/inst"
+assert_equal "0" "$DOCTOR_EXIT" "missing symlink is not drift even when target exists: --check exit 0"
+run_doctor --root "$tmp/inst"
+assert_equal "0" "$DOCTOR_EXIT" "fix mode materializes: exit 0"
+assert_contains "$DOCTOR_STDOUT" "FIXED: developer/user -> ../../user-memory/developer" "fix mode reports the materialized symlink"
+assert_symlink "$tmp/inst/developer/user" "../../user-memory/developer" "symlink target is ../<role_source>/<role>"
+run_doctor --check --root "$tmp/inst"
+assert_equal "0" "$DOCTOR_EXIT" "re-check after materialization: clean"
+rm -rf "$tmp"
+
+echo "=== test_doctor_role_tier: (6) wrong-target symlink - DRIFT in check, repaired in fix ==="
+tmp="$(mktemp -d)"
+make_consumer "$tmp"
+make_target "$tmp" roles
+mkdir -p "$tmp/user-memory/developer"
+echo "# dev@user idx" > "$tmp/user-memory/developer/MEMORY.md"
+ln -s "../../elsewhere/developer" "$tmp/inst/developer/user"
+run_doctor --check --root "$tmp/inst"
+assert_equal "1" "$DOCTOR_EXIT" "wrong-target symlink: exit 1"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: developer/user -> ../../elsewhere/developer, expected ../../user-memory/developer" "wrong target named"
+run_doctor --root "$tmp/inst"
+assert_symlink "$tmp/inst/developer/user" "../../user-memory/developer" "fix repoints the symlink"
+rm -rf "$tmp"
+
+echo "=== test_doctor_role_tier: (7) dangling symlink (target role dir gone) is DRIFT, report-only ==="
+tmp="$(mktemp -d)"
+make_consumer "$tmp"
+make_target "$tmp" roles
+ln -s "../../user-memory/developer" "$tmp/inst/developer/user"
+run_doctor --check --root "$tmp/inst"
+assert_equal "1" "$DOCTOR_EXIT" "dangling symlink: exit 1"
+assert_contains "$DOCTOR_STDOUT" "dangles" "dangling symlink named in DRIFT"
+rm -rf "$tmp"
+
+echo "=== test_doctor_role_tier: (8) real dir at <role>/user - DRIFT, never touched ==="
+tmp="$(mktemp -d)"
+make_consumer "$tmp"
+make_target "$tmp" roles
+mkdir -p "$tmp/inst/developer/user"
+run_doctor --root "$tmp/inst"
+assert_equal "1" "$DOCTOR_EXIT" "real dir at <role>/user: exit 1 even in fix mode"
+assert_contains "$DOCTOR_STDOUT" "not a symlink" "real dir named, refused"
+rm -rf "$tmp"
+
 print_summary

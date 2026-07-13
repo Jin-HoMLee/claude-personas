@@ -1303,8 +1303,40 @@ check_role_tier_readiness() {
 }
 
 _role_tier_check_roles() {
-  # Per-role symlink checks land in Task 3; stub keeps Task 2 green.
-  :
+  # _role_tier_check_roles <src_abs>
+  # Per-role <role>/user mount checks (claude-personas#49 spec sections 4d
+  # + 5). Role discovery: same rule as check_payload / list-roles.sh - a
+  # root-level dir with MEMORY.md, excluding shared and examples.
+  # Lazy by design: NO symlink and NO target role dir is the normal state
+  # (silent in both modes); fix mode materializes the symlink only once the
+  # target role dir exists; --check never flags a missing symlink (creation
+  # is fix-mode's job, not a drift). An EXISTING symlink is held to the
+  # full standard: exact ../<role_source>/<role> target text AND resolving.
+  local src_abs="$1"
+  local d n link_path expected_target
+
+  for d in "$ROOT"/*/; do
+    [ -d "$d" ] || continue
+    n="$(basename "$d")"
+    [ -f "$d/MEMORY.md" ] || continue
+    if [ "$n" = "shared" ] || [ "$n" = "examples" ]; then
+      continue
+    fi
+
+    link_path="$ROOT/$n/user"
+    expected_target="../$ROLE_SOURCE/$n"
+
+    if [ -L "$link_path" ]; then
+      need_link "$link_path" "$expected_target" "$n/user"
+      if [ -L "$link_path" ] && [ ! -e "$link_path" ]; then
+        report_drift "$n/user -> $(readlink "$link_path") dangles - role@user dir missing at $src_abs/$n (restore it there or remove the symlink)"
+      fi
+    elif [ -e "$link_path" ]; then
+      report_drift "$n/user exists and is not a symlink (refusing to touch)"
+    elif [ -f "$src_abs/$n/MEMORY.md" ] && [ "$CHECK" != 1 ]; then
+      need_link "$link_path" "$expected_target" "$n/user"
+    fi
+  done
 }
 
 # Shared floor for every topology, run before the topology-specific catalog.
