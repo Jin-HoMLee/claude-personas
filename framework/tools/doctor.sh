@@ -470,40 +470,83 @@ report_error() {
   DRIFT_COUNT=$((DRIFT_COUNT + 1))
 }
 
+_symlink_would_loop() {
+  # _symlink_would_loop <path> <target> - true when a symlink <path> -> <target>
+  # resolves back through <path> itself, i.e. the link is (or would be) part
+  # of an ELOOP cycle. Follows the target's symlink chain hop by hop,
+  # comparing physical identities (resolved parent + basename), so it catches
+  # the 1-hop parent-alias loop of #78 (.agents/memory -> ../.agents/memory
+  # under .claude -> .agents) as well as leaf cycles (CLAUDE.md -> AGENTS.md
+  # -> CLAUDE.md) and mirror-aliased 2-hop cycles. Returns false when the
+  # chain leaves <path>'s identity and terminates, or when a parent dir is
+  # unresolvable (no claim - the caller's ordinary branches take over).
+  # Chain depth is capped; exhausting the cap counts as a loop (conservative:
+  # doctor never writes into a chain it cannot see the end of).
+  local p="$1" tgt="$2" hops=0
+  local p_id cur cur_dir hop_dir hop_id
+
+  cur_dir="$(cd "$(dirname "$p")" 2>/dev/null && pwd -P)" || return 1
+  p_id="$cur_dir/$(basename "$p")"
+  cur="$tgt"
+  while [ "$hops" -lt 8 ]; do
+    case "$cur" in
+      /*) hop_dir="$(cd "$(dirname "$cur")" 2>/dev/null && pwd -P)" || return 1 ;;
+      *)  hop_dir="$(cd "$cur_dir/$(dirname "$cur")" 2>/dev/null && pwd -P)" || return 1 ;;
+    esac
+    hop_id="$hop_dir/$(basename "$cur")"
+    if [ "$hop_id" = "$p_id" ]; then
+      return 0
+    fi
+    if [ -L "$hop_id" ]; then
+      cur="$(readlink "$hop_id")" || return 1
+      cur_dir="$hop_dir"
+      hops=$((hops + 1))
+    else
+      return 1
+    fi
+  done
+  return 0
+}
+
 need_link() {
   # need_link <path> <target> <label>
   #
-  # Correct symlink (right target): silent, does nothing.
+  # Correct symlink (right target) that resolves: silent, does nothing.
+  # Self-referential expectation - <target> resolves back to <path> itself,
+  # which happens when two parent dirs alias one physical dir (a consumer
+  # canonicalizes on .agents/ and symlinks .claude -> .agents, #78): if
+  # <path> resolves anyway the expectation is satisfied transitively through
+  # the alias - silent; if it does not resolve, ERROR in both modes. Writing
+  # the requested link would ELOOP the mount, and an already-written
+  # self-loop must never read as "correct".
   # Real (non-symlink) file or dir at <path>: DRIFT, never touched in either
   # mode - that path is owned by something else.
   # Wrong or missing symlink: --check reports drift; default (fix) mode
   # mkdir -p's the parent then ln -sfn's the target.
-  # Target that resolves back to <path> itself (possible when two parent
-  # dirs alias one physical dir, e.g. .claude -> .agents, #78): ERROR in
-  # both modes - writing it would ELOOP the mount, and an already-written
-  # self-loop must never read as "correct". Checked before the
-  # correct-symlink early-return for exactly that reason.
   local p="$1" tgt="$2" label="$3"
 
-  local pdir_phys tgt_phys
-  pdir_phys="$(cd "$(dirname "$p")" 2>/dev/null && pwd -P)" || pdir_phys=""
-  if [ -n "$pdir_phys" ]; then
-    case "$tgt" in
-      /*) tgt_phys="$(cd "$(dirname "$tgt")" 2>/dev/null && pwd -P)" || tgt_phys="" ;;
-      *)  tgt_phys="$(cd "$pdir_phys/$(dirname "$tgt")" 2>/dev/null && pwd -P)" || tgt_phys="" ;;
-    esac
-    if [ -n "$tgt_phys" ] && [ "$tgt_phys/$(basename "$tgt")" = "$pdir_phys/$(basename "$p")" ]; then
-      report_error "$label -> $tgt resolves to the link itself - refusing to write a self-referential symlink"
-      return 0
-    fi
+  if [ -L "$p" ] && [ "$(readlink "$p")" = "$tgt" ] && [ -e "$p" ]; then
+    return 0
   fi
 
-  if [ -L "$p" ] && [ "$(readlink "$p")" = "$tgt" ]; then
+  # Only not-plainly-correct states reach the (subshell-heavy) loop walk.
+  if _symlink_would_loop "$p" "$tgt"; then
+    if [ -e "$p" ]; then
+      return 0
+    fi
+    report_error "$label -> $tgt resolves back to the link itself and nothing resolves there - refusing to write a self-referential symlink (aliased parent dirs?)"
     return 0
   fi
 
   if [ -e "$p" ] && [ ! -L "$p" ]; then
     report_drift "$label exists and is not a symlink (refusing to touch)"
+    return 0
+  fi
+
+  # Correct link text that dangles without looping (target not created yet):
+  # accepted, matching the pre-#78 contract - the missing target is some
+  # other check's drift to report.
+  if [ -L "$p" ] && [ "$(readlink "$p")" = "$tgt" ]; then
     return 0
   fi
 
@@ -517,14 +560,22 @@ need_link() {
 }
 
 same_physical_dir() {
-  # same_physical_dir <a> <b> - true when both exist and resolve (pwd -P)
-  # to one physical directory; false when either is missing. Detects the
-  # aliased layout where a consumer canonicalizes on .agents/ and symlinks
-  # .claude -> .agents (one dir, two names - see #78).
-  local a_phys b_phys
-  a_phys="$(cd "$1" 2>/dev/null && pwd -P)" || return 1
-  b_phys="$(cd "$2" 2>/dev/null && pwd -P)" || return 1
-  [ "$a_phys" = "$b_phys" ]
+  # same_physical_dir <a> <b> - true when both exist and are one physical
+  # file/dir (device+inode, symlinks followed); false when either is
+  # missing. Detects the aliased layout where a consumer canonicalizes on
+  # .agents/ and symlinks .claude -> .agents (one dir, two names - see #78).
+  [ "$1" -ef "$2" ]
+}
+
+claude_aliases_agents() {
+  # claude_aliases_agents <dir> - true when <dir>/.claude is an alias of
+  # <dir>/.agents: either both resolve to one physical dir, or .claude is a
+  # committed '.claude -> .agents' symlink that merely dangles because
+  # .agents/ is not materialized yet (fresh clone). On an aliased workspace
+  # the .claude/memory hop has no existence of its own - it is satisfied
+  # transitively by the .agents/memory mount, and must never be written.
+  same_physical_dir "$1/.claude" "$1/.agents" && return 0
+  [ -L "$1/.claude" ] && [ "$(readlink "$1/.claude")" = ".agents" ]
 }
 
 require_jq() {
@@ -938,11 +989,13 @@ _role_clones_check_role() {
   # .agents/memory: the hop is satisfied transitively by the mount above,
   # and writing ../.agents/memory onto the shared inode would replace that
   # mount with a self-loop (#78). Supported layout - skip, don't clobber.
-  if ! same_physical_dir "$workspace/.claude" "$workspace/.agents"; then
+  # The '/.claude/memory' exclude line is skipped for the same reason: on an
+  # aliased clone that path never exists as its own git entry.
+  lines=("/.agents/memory")
+  if ! claude_aliases_agents "$workspace"; then
     need_link "$workspace/.claude/memory" "../.agents/memory" "$workspace/.claude/memory"
+    lines+=("/.claude/memory")
   fi
-
-  lines=("/.agents/memory" "/.claude/memory")
   if [ -f "$workspace/.codex/hooks.json" ]; then
     lines+=("/.codex/hooks.json")
   fi
@@ -1139,6 +1192,14 @@ _sweep_orphan_external_hops() {
     [ ! -e "$p" ] || continue
 
     target="$(readlink "$p")"
+    if [ -L "$target" ] || [ -e "$target" ]; then
+      # The hop's immediate target is still on disk - the clone exists but
+      # its mount chain does not resolve (e.g. a self-looped mount, #78's
+      # aftermath). Reaping would erase the last pointer to the broken
+      # clone, so this is DRIFT in both modes, never a removal.
+      report_drift "external hop $p -> $target does not resolve but the target still exists (broken mount chain, not a moved clone) - repair the clone's mount; doctor will not reap"
+      continue
+    fi
     if [ "$CHECK" = 1 ]; then
       report_drift "orphan external hop $p -> $target (target gone - moved or deleted clone)"
     elif rm -f "$p" 2>/dev/null; then

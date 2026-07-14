@@ -521,14 +521,40 @@ assert_equal "$mount_head_before" "$(head -1 "$DEVCLONE/.agents/memory/MEMORY.md
 
 run_doctor "$HOME_DIR" --check --root "$MEMREPO"
 assert_equal "0" "$DOCTOR_EXIT" "aliased clone: --check after fix exit 0"
-case "$DOCTOR_STDOUT" in
-  *"DRIFT:"*) echo "  FAIL: unexpected DRIFT on the aliased layout:"; echo "$DOCTOR_STDOUT" | grep "DRIFT:"; exit 1 ;;
-  *) echo "  PASS: no DRIFT lines on the aliased layout" ;;
-esac
-case "$DOCTOR_STDOUT" in
-  *"INFO: role developer - no workspace wired"*) echo "  FAIL: aliased developer clone lost its role claim after fix mode"; exit 1 ;;
-  *) echo "  PASS: developer role still claimed by the aliased clone" ;;
-esac
+assert_not_contains "$DOCTOR_STDOUT" "DRIFT:" "no DRIFT lines on the aliased layout"
+assert_not_contains "$DOCTOR_STDOUT" "INFO: role developer - no workspace wired" "developer role still claimed by the aliased clone"
+
+# An aliased clone adopted without init-clone.sh never had a '/.claude/memory'
+# exclude line (the path has no git entry of its own) - doctor must not
+# demand one there, while still requiring '/.agents/memory'.
+grep -vxF '/.claude/memory' "$DEVCLONE/.git/info/exclude" > "$DEVCLONE/.git/info/exclude.tmp" \
+  && mv "$DEVCLONE/.git/info/exclude.tmp" "$DEVCLONE/.git/info/exclude"
+run_doctor "$HOME_DIR" --check --root "$MEMREPO"
+assert_equal "0" "$DOCTOR_EXIT" "aliased clone without a /.claude/memory exclude line: --check exit 0"
+rm -rf "$tmp"
+
+echo "=== test_doctor_role_clones: aliased clone (j) already-destroyed #78 state (.agents/memory self-loop) - LOUD in both modes, external hop never reaped, nothing erased ==="
+tmp="$(mktemp -d)"
+setup_wired_fixture "$tmp"
+rm -rf "$DEVCLONE/.claude"
+ln -s .agents "$DEVCLONE/.claude"
+# The post-incident state a pre-fix doctor run leaves behind: the mount
+# overwritten with the self-referential hop target. Role discovery cannot
+# re-claim this clone (the target no longer names the role), so doctor
+# cannot heal it - but it must say so loudly and must not reap the external
+# hop, the last pointer to the broken clone.
+ln -sfn ../.agents/memory "$DEVCLONE/.agents/memory"
+dev_ext="$HOME_DIR/.claude/projects/$(compute_hash "$DEVCLONE_ABS")/memory"
+
+run_doctor "$HOME_DIR" --check --root "$MEMREPO"
+assert_equal "1" "$DOCTOR_EXIT" "destroyed aliased clone: --check exit 1 (never silently OK)"
+assert_contains "$DOCTOR_STDOUT" "broken mount chain, not a moved clone" "--check names the broken mount chain instead of calling the hop an orphan"
+
+run_doctor "$HOME_DIR" --root "$MEMREPO"
+assert_equal "1" "$DOCTOR_EXIT" "destroyed aliased clone: fix mode exit 1 (broken chain is not auto-fixable)"
+assert_contains "$DOCTOR_STDOUT" "broken mount chain, not a moved clone" "fix mode reports the broken chain too"
+assert_symlink "$dev_ext" "$DEVCLONE_ABS/.claude/memory" "fix mode did NOT reap the external hop of the broken clone"
+assert_symlink "$DEVCLONE/.agents/memory" "../.agents/memory" "fix mode left the broken clone's mount untouched (repair is a human call)"
 rm -rf "$tmp"
 
 print_summary

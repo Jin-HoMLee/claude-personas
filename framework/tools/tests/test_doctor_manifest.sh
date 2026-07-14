@@ -452,9 +452,12 @@ assert_contains "$need_link_src" "need_link" "extract_function finds need_link i
 report_drift_src="$(extract_function report_drift "$DOCTOR")"
 report_fixed_src="$(extract_function report_fixed "$DOCTOR")"
 report_error_src="$(extract_function report_error "$DOCTOR")"
+# need_link's self-loop refusal (#78) delegates to this helper.
+symlink_would_loop_src="$(extract_function _symlink_would_loop "$DOCTOR")"
 eval "$report_drift_src"
 eval "$report_fixed_src"
 eval "$report_error_src"
+eval "$symlink_would_loop_src"
 eval "$need_link_src"
 
 nl_tmp="$(mktemp -d)"
