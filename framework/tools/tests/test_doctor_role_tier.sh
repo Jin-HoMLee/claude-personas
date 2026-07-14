@@ -71,6 +71,17 @@ assert_equal "1" "$DOCTOR_EXIT" "non-git target: exit 1"
 assert_contains "$DOCTOR_STDOUT" "not a git repo" "non-git target named in ERROR"
 rm -rf "$tmp"
 
+echo "=== test_doctor_role_tier: (2b) worktree checkout (.git is a file) is a valid git target ==="
+tmp="$(mktemp -d)"
+make_consumer "$tmp"
+make_target "$tmp" roles
+rm -rf "$tmp/user-memory/.git"
+echo "gitdir: /somewhere/.git/worktrees/user-memory" > "$tmp/user-memory/.git"
+run_doctor --check --root "$tmp/inst"
+assert_equal "0" "$DOCTOR_EXIT" "worktree target: exit 0"
+assert_not_contains "$DOCTOR_STDOUT" "not a git repo" "worktree target not flagged as non-git"
+rm -rf "$tmp"
+
 echo "=== test_doctor_role_tier: (3) flat target is ERROR (wired before migration) ==="
 tmp="$(mktemp -d)"
 make_consumer "$tmp"
@@ -78,6 +89,15 @@ make_target "$tmp" flat
 run_doctor --check --root "$tmp/inst"
 assert_equal "1" "$DOCTOR_EXIT" "flat target: exit 1"
 assert_contains "$DOCTOR_STDOUT" "memory_layout='flat', expected 'roles'" "flat target names the layout mismatch"
+rm -rf "$tmp"
+
+echo "=== test_doctor_role_tier: (3b) target with no manifest at all is ERROR (MISSING fallback) ==="
+tmp="$(mktemp -d)"
+make_consumer "$tmp"
+mkdir -p "$tmp/user-memory/.git"
+run_doctor --check --root "$tmp/inst"
+assert_equal "1" "$DOCTOR_EXIT" "manifest-less target: exit 1"
+assert_contains "$DOCTOR_STDOUT" "memory_layout='MISSING', expected 'roles'" "manifest-less target reports the MISSING fallback"
 rm -rf "$tmp"
 
 echo "=== test_doctor_role_tier: (4) roles target, lazy state (no symlink, no target role dir): clean ==="
@@ -105,6 +125,21 @@ assert_contains "$DOCTOR_STDOUT" "FIXED: developer/user -> ../../user-memory/dev
 assert_symlink "$tmp/inst/developer/user" "../../user-memory/developer" "symlink target is ../<role_source>/<role>"
 run_doctor --check --root "$tmp/inst"
 assert_equal "0" "$DOCTOR_EXIT" "re-check after materialization: clean"
+rm -rf "$tmp"
+
+echo "=== test_doctor_role_tier: (5b) trailing-slash role_source is normalized ==="
+tmp="$(mktemp -d)"
+make_consumer "$tmp" "../user-memory/"
+make_target "$tmp" roles
+mkdir -p "$tmp/user-memory/developer"
+echo "# dev@user idx" > "$tmp/user-memory/developer/MEMORY.md"
+run_doctor --root "$tmp/inst"
+assert_equal "0" "$DOCTOR_EXIT" "trailing-slash role_source: fix mode exit 0"
+assert_symlink "$tmp/inst/developer/user" "../../user-memory/developer" "materialized symlink text carries no double slash"
+rm -f "$tmp/inst/developer/user"
+ln -s "../../user-memory/developer" "$tmp/inst/developer/user"
+run_doctor --check --root "$tmp/inst"
+assert_equal "0" "$DOCTOR_EXIT" "hand-created clean link under trailing-slash manifest: --check exit 0"
 rm -rf "$tmp"
 
 echo "=== test_doctor_role_tier: (6) wrong-target symlink - DRIFT in check, repaired in fix ==="
@@ -143,6 +178,52 @@ mkdir -p "$tmp/inst/developer/user"
 run_doctor --root "$tmp/inst"
 assert_equal "1" "$DOCTOR_EXIT" "real dir at <role>/user: exit 1 even in fix mode"
 assert_contains "$DOCTOR_STDOUT" "not a symlink" "real dir named, refused"
+rm -rf "$tmp"
+
+echo "=== test_doctor_role_tier: (9) flat consumer - target checks run, per-role discovery is gated off ==="
+# On a flat instance, root-level dirs are code, not roles; a dir that
+# happens to carry a MEMORY.md must not grow a user symlink (#72).
+tmp="$(mktemp -d)"
+mkdir -p "$tmp/inst/.agents/memory" "$tmp/inst/.claude" "$tmp/inst/developer"
+echo "# flat idx" > "$tmp/inst/.agents/memory/MEMORY.md"
+echo "# stray code-dir readme-ish index" > "$tmp/inst/developer/MEMORY.md"
+echo "# agents" > "$tmp/inst/AGENTS.md"
+ln -s ../.agents/memory "$tmp/inst/.claude/memory"
+ln -s AGENTS.md "$tmp/inst/CLAUDE.md"
+cat > "$tmp/inst/.agents/manifest" <<EOF
+manifest_version=1
+topology=embedded
+memory_layout=flat
+role_source=../user-memory
+EOF
+make_target "$tmp" roles
+mkdir -p "$tmp/user-memory/developer"
+echo "# dev@user idx" > "$tmp/user-memory/developer/MEMORY.md"
+run_doctor --root "$tmp/inst"
+assert_equal "0" "$DOCTOR_EXIT" "flat consumer: fix mode exit 0"
+assert_contains "$DOCTOR_STDOUT" "INFO: role_source declared with memory_layout=flat" "skip announced as INFO"
+assert_not_exists "$tmp/inst/developer/user" "no user symlink materialized into a stray root dir"
+run_doctor --check --root "$tmp/inst"
+assert_equal "0" "$DOCTOR_EXIT" "flat consumer: --check exit 0"
+rm -rf "$tmp"
+
+echo "=== test_doctor_role_tier: (9b) flat consumer target checks still fire (flat target stays ERROR) ==="
+tmp="$(mktemp -d)"
+mkdir -p "$tmp/inst/.agents/memory" "$tmp/inst/.claude"
+echo "# flat idx" > "$tmp/inst/.agents/memory/MEMORY.md"
+echo "# agents" > "$tmp/inst/AGENTS.md"
+ln -s ../.agents/memory "$tmp/inst/.claude/memory"
+ln -s AGENTS.md "$tmp/inst/CLAUDE.md"
+cat > "$tmp/inst/.agents/manifest" <<EOF
+manifest_version=1
+topology=embedded
+memory_layout=flat
+role_source=../user-memory
+EOF
+make_target "$tmp" flat
+run_doctor --check --root "$tmp/inst"
+assert_equal "1" "$DOCTOR_EXIT" "flat consumer + flat target: exit 1"
+assert_contains "$DOCTOR_STDOUT" "memory_layout='flat', expected 'roles'" "target-layout ERROR not swallowed by the gate"
 rm -rf "$tmp"
 
 print_summary

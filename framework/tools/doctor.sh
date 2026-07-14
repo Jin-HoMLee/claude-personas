@@ -443,6 +443,9 @@ OPENCODE_MODE="$(manifest_get opencode)"
 [ -n "$OPENCODE_MODE" ] || OPENCODE_MODE="global"
 
 ROLE_SOURCE="$(manifest_get role_source)"
+# Trailing slash would embed a double slash in the derived <role>/user
+# symlink text, permanently text-mismatching a clean hand-created link.
+ROLE_SOURCE="${ROLE_SOURCE%/}"
 
 # --- shared check core (Task 2): counters, reporters, link/payload/hook checks ---
 
@@ -1288,7 +1291,8 @@ check_role_tier_readiness() {
     report_error "role_source '$ROLE_SOURCE' unreachable from $ROOT"
     return 0
   fi
-  if [ ! -d "$src_abs/.git" ]; then
+  # -e, not -d: in a worktree or submodule checkout .git is a file.
+  if [ ! -e "$src_abs/.git" ]; then
     report_error "role_source '$ROLE_SOURCE' ($src_abs) is not a git repo"
     return 0
   fi
@@ -1296,6 +1300,15 @@ check_role_tier_readiness() {
     | grep '^memory_layout=' | head -n1 | cut -d= -f2-)"
   if [ "$target_layout" != "roles" ]; then
     report_error "role_source '$ROLE_SOURCE' declares memory_layout='${target_layout:-MISSING}', expected 'roles' - wire role_source only after the user-memory migration (claude-personas#49 spec section 3)"
+    return 0
+  fi
+
+  # Per-role discovery walks root-level dirs, which are roles only under
+  # memory_layout=roles; on a flat instance they are code dirs, and fix
+  # mode could materialize user symlinks into a stray dir that happens to
+  # carry a MEMORY.md (claude-personas#72). Target checks above still ran.
+  if [ "$MEMORY_LAYOUT" != "roles" ]; then
+    echo "INFO: role_source declared with memory_layout=$MEMORY_LAYOUT - per-role <role>/user checks skipped (root-level dirs are roles only under memory_layout=roles)"
     return 0
   fi
 
