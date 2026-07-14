@@ -97,7 +97,7 @@ for role in "${ROLES[@]}"; do
   fi
 
   # Relative path to clone
-  rel="${found_clone#$PARENT_DIR/}"
+  rel="${found_clone#"$PARENT_DIR"/}"
   printf "%-12s  %-40s  %-25s  %s\n" "$role" "$rel/" "$sym_status" "$git_status"
 done
 

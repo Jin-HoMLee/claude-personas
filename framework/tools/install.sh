@@ -57,7 +57,7 @@ Usage:
 EOF
 }
 
-MODE= TARGET= CHECK=0 PRUNE=0 REF_OVERRIDE= REF=
+MODE='' TARGET='' CHECK=0 PRUNE=0 REF_OVERRIDE='' REF=''
 FORCE_FILES=()
 while [ $# -gt 0 ]; do
   case "$1" in

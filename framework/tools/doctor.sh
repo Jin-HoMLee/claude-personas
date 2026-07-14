@@ -1367,6 +1367,7 @@ topology_user_tier_checks() {
   [ -f "$ROOT/AGENTS.md" ] || report_drift "AGENTS.md missing"
 
   # Canonical home hop: unconditional, not gated on any adapter declaration.
+  # shellcheck disable=SC2088  # the "~/..." strings here and in the adapter arms below are display LABELS, never paths - the tilde is meant literally
   need_link "$HOME/AGENTS.md" "$ROOT/AGENTS.md" "~/AGENTS.md"
 
   # Per-tool global adapters, each gated on its adapter= declaration.
@@ -1377,12 +1378,15 @@ topology_user_tier_checks() {
     for a in "${ADAPTERS[@]}"; do
       case "$a" in
         claude-code)
+          # shellcheck disable=SC2088  # display label
           need_link "$HOME/.claude/CLAUDE.md" "$HOME/AGENTS.md" "~/.claude/CLAUDE.md"
           ;;
         codex)
+          # shellcheck disable=SC2088  # display label
           need_link "$HOME/.codex/AGENTS.md" "$HOME/AGENTS.md" "~/.codex/AGENTS.md"
           ;;
         opencode)
+          # shellcheck disable=SC2088  # display label
           need_link "$HOME/.config/opencode/AGENTS.md" "$HOME/AGENTS.md" "~/.config/opencode/AGENTS.md"
           ;;
       esac

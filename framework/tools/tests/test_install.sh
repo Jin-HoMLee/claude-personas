@@ -44,7 +44,7 @@ extra="$(find "$tmp/inst/.agents/tools" -type f | grep -cv 'tool-a.sh')"
 assert_equal "0" "$extra" "exactly the declared set landed in .agents/tools/"
 
 echo "=== test_install: second --into run is idempotent (identical content = up to date) ==="
-out2="$(cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/inst" 2>&1)"
+( cd "$tmp/fw" && bash "$INSTALL" --into "$tmp/inst" ) >/dev/null 2>&1
 assert_equal "0" "$?" "re-install on identical content exits 0"
 rm -rf "$tmp"
 

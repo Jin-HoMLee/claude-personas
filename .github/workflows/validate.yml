@@ -44,6 +44,17 @@ jobs:
           done
           exit $fail
 
+      - name: shellcheck (warning-severity gate on the shell payload + tests)
+        run: |
+          # Gate at warning severity: the payload must be warning-clean, with
+          # intentional patterns carrying inline disable-with-rationale
+          # directives. Info-level findings stay advisory (run shellcheck
+          # locally without --severity to see them). -x follows source'd
+          # helpers (test_helpers.sh).
+          shellcheck --version
+          shellcheck -x --severity=warning \
+            framework/tools/*.sh framework/hooks/*.sh framework/tools/tests/*.sh
+
       - name: each role has MEMORY.md
         run: |
           for role in developer pm designer scientist shared; do
