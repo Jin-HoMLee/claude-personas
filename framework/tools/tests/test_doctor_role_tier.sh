@@ -41,6 +41,24 @@ role_source=$src
 EOF
 }
 
+# make_flat_consumer <base> - embedded instance with memory_layout=flat
+# (memory under .agents/memory, NO role dirs at root) + role_source
+# declared. The flat sibling of make_consumer for the gate scenarios.
+make_flat_consumer() {
+  local base="$1"
+  mkdir -p "$base/inst/.agents/memory" "$base/inst/.claude"
+  echo "# flat idx" > "$base/inst/.agents/memory/MEMORY.md"
+  echo "# agents" > "$base/inst/AGENTS.md"
+  ln -s ../.agents/memory "$base/inst/.claude/memory"
+  ln -s AGENTS.md "$base/inst/CLAUDE.md"
+  cat > "$base/inst/.agents/manifest" <<EOF
+manifest_version=1
+topology=embedded
+memory_layout=flat
+role_source=../user-memory
+EOF
+}
+
 # make_target <base> <layout> - sibling user-memory repo fixture.
 make_target() {
   local base="$1" layout="$2"
@@ -127,19 +145,17 @@ run_doctor --check --root "$tmp/inst"
 assert_equal "0" "$DOCTOR_EXIT" "re-check after materialization: clean"
 rm -rf "$tmp"
 
-echo "=== test_doctor_role_tier: (5b) trailing-slash role_source is normalized ==="
+echo "=== test_doctor_role_tier: (5b) trailing slashes in role_source are normalized (all of them) ==="
 tmp="$(mktemp -d)"
-make_consumer "$tmp" "../user-memory/"
+make_consumer "$tmp" "../user-memory//"
 make_target "$tmp" roles
 mkdir -p "$tmp/user-memory/developer"
 echo "# dev@user idx" > "$tmp/user-memory/developer/MEMORY.md"
 run_doctor --root "$tmp/inst"
 assert_equal "0" "$DOCTOR_EXIT" "trailing-slash role_source: fix mode exit 0"
 assert_symlink "$tmp/inst/developer/user" "../../user-memory/developer" "materialized symlink text carries no double slash"
-rm -f "$tmp/inst/developer/user"
-ln -s "../../user-memory/developer" "$tmp/inst/developer/user"
 run_doctor --check --root "$tmp/inst"
-assert_equal "0" "$DOCTOR_EXIT" "hand-created clean link under trailing-slash manifest: --check exit 0"
+assert_equal "0" "$DOCTOR_EXIT" "clean link under trailing-slash manifest: --check exit 0"
 rm -rf "$tmp"
 
 echo "=== test_doctor_role_tier: (6) wrong-target symlink - DRIFT in check, repaired in fix ==="
@@ -184,18 +200,9 @@ echo "=== test_doctor_role_tier: (9) flat consumer - target checks run, per-role
 # On a flat instance, root-level dirs are code, not roles; a dir that
 # happens to carry a MEMORY.md must not grow a user symlink (#72).
 tmp="$(mktemp -d)"
-mkdir -p "$tmp/inst/.agents/memory" "$tmp/inst/.claude" "$tmp/inst/developer"
-echo "# flat idx" > "$tmp/inst/.agents/memory/MEMORY.md"
+make_flat_consumer "$tmp"
+mkdir -p "$tmp/inst/developer"
 echo "# stray code-dir readme-ish index" > "$tmp/inst/developer/MEMORY.md"
-echo "# agents" > "$tmp/inst/AGENTS.md"
-ln -s ../.agents/memory "$tmp/inst/.claude/memory"
-ln -s AGENTS.md "$tmp/inst/CLAUDE.md"
-cat > "$tmp/inst/.agents/manifest" <<EOF
-manifest_version=1
-topology=embedded
-memory_layout=flat
-role_source=../user-memory
-EOF
 make_target "$tmp" roles
 mkdir -p "$tmp/user-memory/developer"
 echo "# dev@user idx" > "$tmp/user-memory/developer/MEMORY.md"
@@ -209,17 +216,7 @@ rm -rf "$tmp"
 
 echo "=== test_doctor_role_tier: (9b) flat consumer target checks still fire (flat target stays ERROR) ==="
 tmp="$(mktemp -d)"
-mkdir -p "$tmp/inst/.agents/memory" "$tmp/inst/.claude"
-echo "# flat idx" > "$tmp/inst/.agents/memory/MEMORY.md"
-echo "# agents" > "$tmp/inst/AGENTS.md"
-ln -s ../.agents/memory "$tmp/inst/.claude/memory"
-ln -s AGENTS.md "$tmp/inst/CLAUDE.md"
-cat > "$tmp/inst/.agents/manifest" <<EOF
-manifest_version=1
-topology=embedded
-memory_layout=flat
-role_source=../user-memory
-EOF
+make_flat_consumer "$tmp"
 make_target "$tmp" flat
 run_doctor --check --root "$tmp/inst"
 assert_equal "1" "$DOCTOR_EXIT" "flat consumer + flat target: exit 1"

@@ -66,6 +66,11 @@ out="$(printf '{"agent_type":"shared"}' | bash "$HOOK" "$tmp")"
 assert_equal "" "$out" "agent_type 'shared' emits nothing despite top-level shared/MEMORY.md"
 out="$(printf '{"agent_type":"examples"}' | bash "$HOOK" "$tmp")"
 assert_equal "" "$out" "agent_type 'examples' emits nothing"
+# Case variant: only bites on a case-insensitive filesystem (macOS APFS
+# default), where Shared/MEMORY.md resolves to shared/MEMORY.md - trivially
+# green on case-sensitive CI, red on a dev Mac without the tr fold.
+out="$(printf '{"agent_type":"Shared"}' | bash "$HOOK" "$tmp")"
+assert_equal "" "$out" "agent_type 'Shared' emits nothing (case-insensitive filesystems)"
 rm -rf "$tmp"
 
 echo "=== inject-subagent-role-pointer: traversal-shaped agent_type is silent ==="

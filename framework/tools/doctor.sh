@@ -443,9 +443,12 @@ OPENCODE_MODE="$(manifest_get opencode)"
 [ -n "$OPENCODE_MODE" ] || OPENCODE_MODE="global"
 
 ROLE_SOURCE="$(manifest_get role_source)"
-# Trailing slash would embed a double slash in the derived <role>/user
+# Trailing slashes would embed a double slash in the derived <role>/user
 # symlink text, permanently text-mismatching a clean hand-created link.
-ROLE_SOURCE="${ROLE_SOURCE%/}"
+# Loop: ${VAR%/} strips exactly one slash per expansion.
+while [ "${ROLE_SOURCE%/}" != "$ROLE_SOURCE" ]; do
+  ROLE_SOURCE="${ROLE_SOURCE%/}"
+done
 
 # --- shared check core (Task 2): counters, reporters, link/payload/hook checks ---
 
