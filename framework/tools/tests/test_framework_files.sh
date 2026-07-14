@@ -93,4 +93,27 @@ EOF
 assert_equal "0" "$(files_manifest_inject_count "$tmp/no-inject-FILES")" "inject-count helper handles zero inject entries"
 rm -rf "$tmp"
 
+echo "=== test_framework_files: reserved-name set identical in every component that inlines it (#76) ==="
+# The shared/examples non-role exclusion is deliberately inlined in four
+# standalone payload files (the inject hook is distributed as a byte-exact
+# copy and may not source a lib at runtime). Each copy must express it as a
+# case-folded case arm; this extracts the ACTUAL arm from each file and
+# asserts every one matches the canonical set, so adding a reserved name in
+# one place fails loudly here instead of silently desyncing role discovery.
+reserved_arm_of() {
+  # All case arms that name 'shared', normalized: names sorted, one line.
+  grep -hE '^[[:space:]]*[a-z0-9_|-]*shared[a-z0-9_|-]*\)' "$1" \
+    | sed -E 's/^[[:space:]]*//; s/\).*$//' \
+    | tr '|' '\n' | sort -u | paste -sd'|' -
+}
+reserved_canonical="examples|shared"
+for f in \
+  framework/tools/doctor.sh \
+  framework/tools/list-roles.sh \
+  framework/tools/init-clone.sh \
+  framework/hooks/inject-subagent-role-pointer.sh; do
+  assert_equal "$reserved_canonical" "$(reserved_arm_of "$REPO_ROOT/$f")" \
+    "reserved-name case arm in $f matches the canonical set"
+done
+
 print_summary
