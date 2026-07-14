@@ -557,4 +557,15 @@ assert_symlink "$dev_ext" "$DEVCLONE_ABS/.claude/memory" "fix mode did NOT reap 
 assert_symlink "$DEVCLONE/.agents/memory" "../.agents/memory" "fix mode left the broken clone's mount untouched (repair is a human call)"
 rm -rf "$tmp"
 
+echo "=== test_doctor_role_clones: reserved-name exclusion is case-folded in role discovery - Examples/ never becomes a role (#76) ==="
+tmp="$(mktemp -d)"
+setup_wired_fixture "$tmp"
+mkdir -p "$MEMREPO/Examples"
+printf "# not a role\n" > "$MEMREPO/Examples/MEMORY.md"
+
+run_doctor "$HOME_DIR" --check --root "$MEMREPO"
+assert_equal "0" "$DOCTOR_EXIT" "Examples/ present: --check still exit 0"
+assert_not_contains "$DOCTOR_STDOUT" "role Examples" "doctor's role discovery never treats Examples/ as a role"
+rm -rf "$tmp"
+
 print_summary

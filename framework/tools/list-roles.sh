@@ -25,7 +25,13 @@ fi
 ROLES=()
 for d in "$MEMORY_REPO"/*/; do
   n="$(basename "$d")"
-  if [[ -f "$d/MEMORY.md" && "$n" != "shared" && "$n" != "examples" ]]; then
+  # Reserved non-role names, case-folded (APFS treats Examples/ as
+  # examples/). Keep in sync with doctor.sh is_reserved_name -
+  # tests/test_framework_files.sh greps every copy and fails on desync.
+  case "$(printf '%s' "$n" | tr '[:upper:]' '[:lower:]')" in
+    shared|examples) continue ;;
+  esac
+  if [[ -f "$d/MEMORY.md" ]]; then
     ROLES+=("$n")
   fi
 done

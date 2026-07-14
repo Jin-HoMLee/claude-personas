@@ -105,4 +105,18 @@ assert_matches "$output" "developer.*OK" "developer clone still reported OK alon
 
 cleanup_clone_test_fixture "$tmp5"
 
+echo "=== test_list_roles: reserved-name exclusion is case-folded - Examples/ with a MEMORY.md is not a role (#76) ==="
+# On a case-insensitive filesystem (macOS APFS default) Examples/ IS
+# examples/; a case-sensitive exclusion would list it as a role there and
+# desync from the (already folded) subagent pointer hook.
+tmp6="$(mktemp -d)"
+make_clone_test_fixture "$tmp6"
+mv "$tmp6/memory-repo" "$tmp6/claude-personas-myapp"
+mkdir -p "$tmp6/claude-personas-myapp/Examples"
+printf "# not a role\n" > "$tmp6/claude-personas-myapp/Examples/MEMORY.md"
+output="$( cd "$tmp6/claude-personas-myapp" && bash "$LIST_ROLES" 2>&1 || true )"
+assert_not_contains "$output" "Examples" "case-folded reserved name Examples/ is not listed as a role"
+assert_contains "$output" "developer" "real roles still listed alongside the excluded Examples/"
+cleanup_clone_test_fixture "$tmp6"
+
 print_summary

@@ -567,6 +567,20 @@ same_physical_dir() {
   [ "$1" -ef "$2" ]
 }
 
+is_reserved_name() {
+  # is_reserved_name <name> - true when <name> is a reserved non-role dir
+  # name, folded to lowercase: on a case-insensitive filesystem (macOS APFS
+  # default) Examples/ IS examples/. THE reserved-name set for this file;
+  # the standalone payload copies (list-roles.sh, init-clone.sh,
+  # inject-subagent-role-pointer.sh) inline the same case arm because the
+  # hook may not source a lib at runtime - test_framework_files.sh greps
+  # all four and fails on any desync (#76).
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    shared|examples) return 0 ;;
+  esac
+  return 1
+}
+
 claude_aliases_agents() {
   # claude_aliases_agents <dir> - true when <dir>/.claude is an alias of
   # <dir>/.agents: either both resolve to one physical dir, or .claude is a
@@ -605,7 +619,7 @@ check_payload() {
       for d in "$ROOT"/*/; do
         [ -d "$d" ] || continue
         n="$(basename "$d")"
-        if [ -f "$d/MEMORY.md" ] && [ "$n" != "shared" ] && [ "$n" != "examples" ]; then
+        if [ -f "$d/MEMORY.md" ] && ! is_reserved_name "$n"; then
           role_count=$((role_count + 1))
         fi
       done
@@ -1062,7 +1076,7 @@ topology_role_clones_checks() {
   for d in "$root_abs"/*/; do
     [ -d "$d" ] || continue
     n="$(basename "$d")"
-    if [ -f "$d/MEMORY.md" ] && [ "$n" != "shared" ] && [ "$n" != "examples" ]; then
+    if [ -f "$d/MEMORY.md" ] && ! is_reserved_name "$n"; then
       roles+=("$n")
     fi
   done
@@ -1432,7 +1446,7 @@ _role_tier_check_roles() {
     [ -d "$d" ] || continue
     n="$(basename "$d")"
     [ -f "$d/MEMORY.md" ] || continue
-    if [ "$n" = "shared" ] || [ "$n" = "examples" ]; then
+    if is_reserved_name "$n"; then
       continue
     fi
 
