@@ -773,7 +773,7 @@ and after the "Treat the role index and shared index as routing tables." sentenc
 
 ```markdown
 When `<role>/user` exists, it is the role@user mount - this role's cross-project home (claude-personas#49).
-Read its index third; the reading order mirrors the precedence chain (role@project > project-shared > role@user), so on conflict the earlier read wins.
+Read its index third; the reading order mirrors the precedence chain (role@project > project > role@user), so on conflict the earlier read wins.
 A missing `<role>/user` is normal (the mount is lazy), never an error.
 ```
 
