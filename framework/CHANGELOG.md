@@ -3,6 +3,15 @@
 One entry per `framework/v*` tag: what breaks / what to do.
 The payload = the file set declared in [FILES](FILES); instances consume it via `install.sh` against the recorded `framework_ref` pin.
 
+## framework/v1.1.3 - 2026-07-15
+
+Patch: completes the `.claude -> .agents` aliased-layout support that v1.1.2 started (doctor), closing the two remaining tool gaps plus a lint hardening pass.
+init-clone.sh: on an aliased clone the unguarded hop write silently planted a stray `memory -> ../.agents/memory` symlink INSIDE the memory repo's committed role dir (claude-personas#81, PR #84 - live repro corrected the issue's original EEXIST narrative; that mode only fired on re-runs); now the alias is detected before wiring (materialized or committed-but-dangling), the hop and its `/.claude/memory` exclude line are skipped as transitively satisfied, only one mount point is backed up under `--force`, and both mount writes use `ln -sn` so any symlink-to-dir destination fails loudly instead of descending.
+Reserved-name set consolidated (claude-personas#76, PR #83): doctor.sh gets a single case-folded `is_reserved_name` helper, list-roles.sh/init-clone.sh inline the same case arm, and a consistency test greps all four copies (incl. the subagent pointer hook) and fails on desync; case-folding is now uniform, so `Examples/` is excluded on case-insensitive filesystems everywhere.
+Lint (PR #85): shellcheck warning-severity gate added to CI over the whole shell payload + tests; pre-existing warnings cleared (real fixes in install.sh/list-roles.sh/init-clone.sh, disable-with-rationale on intentional patterns).
+Breaks: nothing.
+Do: bump `framework_ref=framework/v1.1.3` and run `install.sh --sync`, then `doctor.sh`. The v1.1.2 "Known gap" about init-clone.sh on aliased clones is resolved by this release.
+
 ## framework/v1.1.2 - 2026-07-14
 
 Patch: doctor.sh fix mode destroyed the memory mount of any role clone whose `.claude` is a symlink to `.agents`, then reported OK (claude-personas#78, PR #80; fired live against three flagship clones).
