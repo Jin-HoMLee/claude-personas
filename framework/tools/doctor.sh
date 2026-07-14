@@ -478,7 +478,25 @@ need_link() {
   # mode - that path is owned by something else.
   # Wrong or missing symlink: --check reports drift; default (fix) mode
   # mkdir -p's the parent then ln -sfn's the target.
+  # Target that resolves back to <path> itself (possible when two parent
+  # dirs alias one physical dir, e.g. .claude -> .agents, #78): ERROR in
+  # both modes - writing it would ELOOP the mount, and an already-written
+  # self-loop must never read as "correct". Checked before the
+  # correct-symlink early-return for exactly that reason.
   local p="$1" tgt="$2" label="$3"
+
+  local pdir_phys tgt_phys
+  pdir_phys="$(cd "$(dirname "$p")" 2>/dev/null && pwd -P)" || pdir_phys=""
+  if [ -n "$pdir_phys" ]; then
+    case "$tgt" in
+      /*) tgt_phys="$(cd "$(dirname "$tgt")" 2>/dev/null && pwd -P)" || tgt_phys="" ;;
+      *)  tgt_phys="$(cd "$pdir_phys/$(dirname "$tgt")" 2>/dev/null && pwd -P)" || tgt_phys="" ;;
+    esac
+    if [ -n "$tgt_phys" ] && [ "$tgt_phys/$(basename "$tgt")" = "$pdir_phys/$(basename "$p")" ]; then
+      report_error "$label -> $tgt resolves to the link itself - refusing to write a self-referential symlink"
+      return 0
+    fi
+  fi
 
   if [ -L "$p" ] && [ "$(readlink "$p")" = "$tgt" ]; then
     return 0
@@ -496,6 +514,17 @@ need_link() {
   else
     report_error "could not create $label -> $tgt"
   fi
+}
+
+same_physical_dir() {
+  # same_physical_dir <a> <b> - true when both exist and resolve (pwd -P)
+  # to one physical directory; false when either is missing. Detects the
+  # aliased layout where a consumer canonicalizes on .agents/ and symlinks
+  # .claude -> .agents (one dir, two names - see #78).
+  local a_phys b_phys
+  a_phys="$(cd "$1" 2>/dev/null && pwd -P)" || return 1
+  b_phys="$(cd "$2" 2>/dev/null && pwd -P)" || return 1
+  [ "$a_phys" = "$b_phys" ]
 }
 
 require_jq() {
@@ -904,7 +933,14 @@ _role_clones_check_role() {
   fi
 
   need_link "$workspace/.agents/memory" "$expected_mount" "$workspace/.agents/memory"
-  need_link "$workspace/.claude/memory" "../.agents/memory" "$workspace/.claude/memory"
+  # When .claude is an alias of .agents (the workspace canonicalized on the
+  # vendor-neutral dir and symlinked .claude -> .agents), .claude/memory IS
+  # .agents/memory: the hop is satisfied transitively by the mount above,
+  # and writing ../.agents/memory onto the shared inode would replace that
+  # mount with a self-loop (#78). Supported layout - skip, don't clobber.
+  if ! same_physical_dir "$workspace/.claude" "$workspace/.agents"; then
+    need_link "$workspace/.claude/memory" "../.agents/memory" "$workspace/.claude/memory"
+  fi
 
   lines=("/.agents/memory" "/.claude/memory")
   if [ -f "$workspace/.codex/hooks.json" ]; then

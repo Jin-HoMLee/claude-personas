@@ -500,4 +500,35 @@ assert_contains "$DOCTOR_STDOUT" "not regenerated: $MEMREPO/.agents/hooks/lib/in
 assert_contains "$(cat "$PMCLONE/.codex/hooks.json")" '"hooks": {}' "pm hooks.json left untouched by the refused regen"
 rm -rf "$tmp"
 
+echo "=== test_doctor_role_clones: aliased clone (i) developer canonicalized on .agents with .claude -> .agents (#78) - a WORKING mount survives fix mode, --check stays clean, never a self-loop ==="
+tmp="$(mktemp -d)"
+setup_wired_fixture "$tmp"
+
+# Re-shape the developer clone to the flagship consumer's committed layout:
+# one real .agents/ dir, .claude a compatibility symlink to it. Both hop
+# paths are then ONE inode, so doctor's two per-workspace link expectations
+# collapse onto the same file - the #78 trigger. Starting state is a
+# CORRECT, working mount; doctor must never degrade it.
+rm -rf "$DEVCLONE/.claude"
+ln -s .agents "$DEVCLONE/.claude"
+mount_head_before="$(head -1 "$DEVCLONE/.agents/memory/MEMORY.md")"
+assert_contains "$mount_head_before" "developer" "aliased developer clone starts with a WORKING mount"
+
+run_doctor "$HOME_DIR" --root "$MEMREPO"
+assert_equal "0" "$DOCTOR_EXIT" "aliased clone: fix mode exit 0 (nothing to fix)"
+assert_symlink "$DEVCLONE/.agents/memory" "../../claude-personas-myapp/developer" "fix mode left the .agents/memory mount on the role dir (no self-loop)"
+assert_equal "$mount_head_before" "$(head -1 "$DEVCLONE/.agents/memory/MEMORY.md" 2>/dev/null || echo UNREADABLE)" "mount still RESOLVES after fix mode (no ELOOP)"
+
+run_doctor "$HOME_DIR" --check --root "$MEMREPO"
+assert_equal "0" "$DOCTOR_EXIT" "aliased clone: --check after fix exit 0"
+case "$DOCTOR_STDOUT" in
+  *"DRIFT:"*) echo "  FAIL: unexpected DRIFT on the aliased layout:"; echo "$DOCTOR_STDOUT" | grep "DRIFT:"; exit 1 ;;
+  *) echo "  PASS: no DRIFT lines on the aliased layout" ;;
+esac
+case "$DOCTOR_STDOUT" in
+  *"INFO: role developer - no workspace wired"*) echo "  FAIL: aliased developer clone lost its role claim after fix mode"; exit 1 ;;
+  *) echo "  PASS: developer role still claimed by the aliased clone" ;;
+esac
+rm -rf "$tmp"
+
 print_summary

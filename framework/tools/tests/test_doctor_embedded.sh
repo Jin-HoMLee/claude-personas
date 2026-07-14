@@ -376,4 +376,38 @@ assert_contains "$DOCTOR_STDOUT" "cannot embed safely in hooks.json" "refusal ER
 assert_not_exists "$repo/.codex/hooks.json" "no hooks.json written under an unembeddable path"
 rm -rf "$tmp"
 
+echo "=== test_doctor_embedded: need_link self-loop guard (#78) - .claude aliased onto .agents with an externalized memory mount: both modes REFUSE with ERROR, the mount is never overwritten ==="
+tmp="$(mktemp -d)"
+make_embedded_fixture "$tmp"
+repo="$tmp/embedded-repo"
+home="$tmp/home"
+run_doctor "$home" --root "$repo"   # wire the external hop first: only the guard scenario stays in play below
+
+# Contrive the one state where '.claude/memory -> ../.agents/memory' is only
+# satisfiable as a self-loop: the memory payload externalized behind an
+# .agents/memory symlink, and .claude aliased onto .agents (one dir, two
+# names). Writing the expected target onto that shared inode would ELOOP the
+# mount - need_link must refuse, in fix AND check mode, and never call it
+# correct. skills_mount is dropped so the equally-aliased .claude/skills hop
+# does not add a second refusal to the output under test.
+mv "$repo/.agents/memory" "$tmp/external-memory"
+ln -s ../../external-memory "$repo/.agents/memory"
+mv "$repo/.claude/settings.json" "$repo/.agents/settings.json"
+rm -rf "$repo/.claude"
+ln -s .agents "$repo/.claude"
+grep -v '^skills_mount=' "$repo/.agents/manifest" > "$repo/.agents/manifest.tmp" \
+  && mv "$repo/.agents/manifest.tmp" "$repo/.agents/manifest"
+assert_contains "$(head -1 "$repo/.agents/memory/MEMORY.md")" "Memory Index" "externalized mount starts WORKING"
+
+run_doctor "$home" --root "$repo"
+assert_equal "1" "$DOCTOR_EXIT" "self-loop state: fix mode exit 1 (refused, not repaired)"
+assert_contains "$DOCTOR_STDOUT" "ERROR: .claude/memory -> ../.agents/memory resolves to the link itself - refusing to write a self-referential symlink" "fix mode prints the self-loop refusal ERROR"
+assert_symlink "$repo/.agents/memory" "../../external-memory" "fix mode never overwrote the externalized mount"
+assert_contains "$(head -1 "$repo/.agents/memory/MEMORY.md" 2>/dev/null || echo UNREADABLE)" "Memory Index" "mount still RESOLVES after the refused fix"
+
+run_doctor "$home" --check --root "$repo"
+assert_equal "1" "$DOCTOR_EXIT" "self-loop state: --check exit 1"
+assert_contains "$DOCTOR_STDOUT" "ERROR: .claude/memory -> ../.agents/memory resolves to the link itself - refusing to write a self-referential symlink" "check mode prints the same refusal ERROR (never a DRIFT inviting the self-loop by hand)"
+rm -rf "$tmp"
+
 print_summary
