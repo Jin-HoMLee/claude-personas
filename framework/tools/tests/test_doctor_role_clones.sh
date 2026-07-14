@@ -30,6 +30,7 @@ run_doctor() {
   errfile="$(mktemp)"
   DOCTOR_STDOUT="$(HOME="$home" bash "$DOCTOR" "$@" 2>"$errfile")"
   DOCTOR_EXIT=$?
+  # shellcheck disable=SC2034  # DOCTOR_STDERR is part of run_doctor's documented contract; consumed ad hoc when debugging failures
   DOCTOR_STDERR="$(cat "$errfile")"
   rm -f "$errfile"
 }

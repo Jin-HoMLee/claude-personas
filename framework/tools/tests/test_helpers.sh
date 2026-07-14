@@ -12,10 +12,13 @@ FAILED_TESTS=()
 if [ -t 1 ]; then
   RED=$'\033[0;31m'
   GREEN=$'\033[0;32m'
+  # shellcheck disable=SC2034  # YELLOW completes the palette; reserved for future assertions
   YELLOW=$'\033[0;33m'
   RESET=$'\033[0m'
 else
-  RED=''; GREEN=''; YELLOW=''; RESET=''
+  RED=''; GREEN=''; RESET=''
+  # shellcheck disable=SC2034  # palette parity with the branch above
+  YELLOW=''
 fi
 
 assert_equal() {

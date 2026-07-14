@@ -90,7 +90,7 @@ if [[ ! -d "$ROLE_DIR" || ! -f "$ROLE_DIR/MEMORY.md" ]]; then
     echo "Error: no memory_manager/ role directory with MEMORY.md in $MEMORY_REPO." >&2
     echo "A Memory Manager is a real role dir; create it first:" >&2
     echo "  mkdir memory_manager" >&2
-    echo "  printf '# Memory Index - memory_manager\\n' > memory_manager/MEMORY.md" >&2
+    printf '%s\n' "  printf '# Memory Index - memory_manager\\n' > memory_manager/MEMORY.md" >&2
     echo "  ln -s ../shared memory_manager/shared" >&2
     exit 1
   fi
