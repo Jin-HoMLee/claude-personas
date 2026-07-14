@@ -376,4 +376,65 @@ assert_contains "$DOCTOR_STDOUT" "cannot embed safely in hooks.json" "refusal ER
 assert_not_exists "$repo/.codex/hooks.json" "no hooks.json written under an unembeddable path"
 rm -rf "$tmp"
 
+echo "=== test_doctor_embedded: aliased layout (#78) - .claude -> .agents with the ordinary real payload dirs is a CLEAN, supported layout in both modes ==="
+tmp="$(mktemp -d)"
+make_embedded_fixture "$tmp"
+repo="$tmp/embedded-repo"
+home="$tmp/home"
+run_doctor "$home" --root "$repo"   # wire the external hop while the fixture is stock
+
+# Canonicalize on .agents/ with .claude as a compatibility alias (the same
+# committed layout #78's flagship role clones use, applied to an embedded
+# repo). Every .claude/* expectation is then satisfied transitively through
+# the alias: memory and skills hit the real payload dirs, settings.json is
+# reachable at its aliased path. Doctor must treat this as clean, not as
+# drift or a refusal.
+mv "$repo/.claude/settings.json" "$repo/.agents/settings.json"
+rm -rf "$repo/.claude"
+ln -s .agents "$repo/.claude"
+
+run_doctor "$home" --root "$repo"
+assert_equal "0" "$DOCTOR_EXIT" "aliased embedded repo: fix mode exit 0 (nothing to fix)"
+assert_not_contains "$DOCTOR_STDOUT" "ERROR:" "no refusal ERROR on the aliased layout"
+assert_not_contains "$DOCTOR_STDOUT" "FIXED: .claude/memory" "fix mode never writes the transitively-satisfied hop"
+run_doctor "$home" --check --root "$repo"
+assert_equal "0" "$DOCTOR_EXIT" "aliased embedded repo: --check exit 0"
+assert_not_contains "$DOCTOR_STDOUT" "DRIFT:" "no DRIFT lines on the aliased layout"
+
+echo "=== test_doctor_embedded: destroyed #78 state (.agents/memory self-loop under the alias) - ERROR in both modes, never silently correct, mount untouched ==="
+# Plant the post-incident state: the payload dir replaced by the
+# self-referential hop target. Its link text equals the expected
+# '../.agents/memory' exactly, so a text-only comparison would call it
+# correct - doctor must ERROR instead, in both modes, and never touch it.
+rm -rf "$repo/.agents/memory"
+ln -s ../.agents/memory "$repo/.agents/memory"
+
+run_doctor "$home" --check --root "$repo"
+assert_equal "1" "$DOCTOR_EXIT" "self-looped mount: --check exit 1"
+assert_contains "$DOCTOR_STDOUT" "refusing to write a self-referential symlink" "--check names the self-loop as ERROR, not as satisfiable drift"
+
+run_doctor "$home" --root "$repo"
+assert_equal "1" "$DOCTOR_EXIT" "self-looped mount: fix mode exit 1 (not repairable here)"
+assert_symlink "$repo/.agents/memory" "../.agents/memory" "fix mode left the self-loop for human repair instead of compounding it"
+rm -rf "$tmp"
+
+echo "=== test_doctor_embedded: leaf-cycle refusal (#78 hardening) - CLAUDE.md missing while AGENTS.md dangles onto it: fix mode refuses to close the 2-link cycle ==="
+tmp="$(mktemp -d)"
+make_embedded_fixture "$tmp"
+repo="$tmp/embedded-repo"
+home="$tmp/home"
+run_doctor "$home" --root "$repo"
+# AGENTS.md becomes a dangling symlink to CLAUDE.md (its real content gone).
+# The expected 'CLAUDE.md -> AGENTS.md' link would close a 2-link ELOOP
+# cycle; a parent-dir-only self-loop check misses this (both files share one
+# parent), so it exercises the chain walk.
+rm "$repo/AGENTS.md" "$repo/CLAUDE.md"
+ln -s CLAUDE.md "$repo/AGENTS.md"
+
+run_doctor "$home" --root "$repo"
+assert_equal "1" "$DOCTOR_EXIT" "leaf cycle: fix mode exit 1"
+assert_contains "$DOCTOR_STDOUT" "CLAUDE.md -> AGENTS.md resolves back to the link itself" "refusal ERROR names the would-be cycle"
+assert_not_exists "$repo/CLAUDE.md" "fix mode never created the cycle-closing CLAUDE.md link"
+rm -rf "$tmp"
+
 print_summary

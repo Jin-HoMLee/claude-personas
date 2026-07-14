@@ -500,4 +500,61 @@ assert_contains "$DOCTOR_STDOUT" "not regenerated: $MEMREPO/.agents/hooks/lib/in
 assert_contains "$(cat "$PMCLONE/.codex/hooks.json")" '"hooks": {}' "pm hooks.json left untouched by the refused regen"
 rm -rf "$tmp"
 
+echo "=== test_doctor_role_clones: aliased clone (i) developer canonicalized on .agents with .claude -> .agents (#78) - a WORKING mount survives fix mode, --check stays clean, never a self-loop ==="
+tmp="$(mktemp -d)"
+setup_wired_fixture "$tmp"
+
+# Re-shape the developer clone to the flagship consumer's committed layout:
+# one real .agents/ dir, .claude a compatibility symlink to it. Both hop
+# paths are then ONE inode, so doctor's two per-workspace link expectations
+# collapse onto the same file - the #78 trigger. Starting state is a
+# CORRECT, working mount; doctor must never degrade it.
+rm -rf "$DEVCLONE/.claude"
+ln -s .agents "$DEVCLONE/.claude"
+mount_head_before="$(head -1 "$DEVCLONE/.agents/memory/MEMORY.md")"
+assert_contains "$mount_head_before" "developer" "aliased developer clone starts with a WORKING mount"
+
+run_doctor "$HOME_DIR" --root "$MEMREPO"
+assert_equal "0" "$DOCTOR_EXIT" "aliased clone: fix mode exit 0 (nothing to fix)"
+assert_symlink "$DEVCLONE/.agents/memory" "../../claude-personas-myapp/developer" "fix mode left the .agents/memory mount on the role dir (no self-loop)"
+assert_equal "$mount_head_before" "$(head -1 "$DEVCLONE/.agents/memory/MEMORY.md" 2>/dev/null || echo UNREADABLE)" "mount still RESOLVES after fix mode (no ELOOP)"
+
+run_doctor "$HOME_DIR" --check --root "$MEMREPO"
+assert_equal "0" "$DOCTOR_EXIT" "aliased clone: --check after fix exit 0"
+assert_not_contains "$DOCTOR_STDOUT" "DRIFT:" "no DRIFT lines on the aliased layout"
+assert_not_contains "$DOCTOR_STDOUT" "INFO: role developer - no workspace wired" "developer role still claimed by the aliased clone"
+
+# An aliased clone adopted without init-clone.sh never had a '/.claude/memory'
+# exclude line (the path has no git entry of its own) - doctor must not
+# demand one there, while still requiring '/.agents/memory'.
+grep -vxF '/.claude/memory' "$DEVCLONE/.git/info/exclude" > "$DEVCLONE/.git/info/exclude.tmp" \
+  && mv "$DEVCLONE/.git/info/exclude.tmp" "$DEVCLONE/.git/info/exclude"
+run_doctor "$HOME_DIR" --check --root "$MEMREPO"
+assert_equal "0" "$DOCTOR_EXIT" "aliased clone without a /.claude/memory exclude line: --check exit 0"
+rm -rf "$tmp"
+
+echo "=== test_doctor_role_clones: aliased clone (j) already-destroyed #78 state (.agents/memory self-loop) - LOUD in both modes, external hop never reaped, nothing erased ==="
+tmp="$(mktemp -d)"
+setup_wired_fixture "$tmp"
+rm -rf "$DEVCLONE/.claude"
+ln -s .agents "$DEVCLONE/.claude"
+# The post-incident state a pre-fix doctor run leaves behind: the mount
+# overwritten with the self-referential hop target. Role discovery cannot
+# re-claim this clone (the target no longer names the role), so doctor
+# cannot heal it - but it must say so loudly and must not reap the external
+# hop, the last pointer to the broken clone.
+ln -sfn ../.agents/memory "$DEVCLONE/.agents/memory"
+dev_ext="$HOME_DIR/.claude/projects/$(compute_hash "$DEVCLONE_ABS")/memory"
+
+run_doctor "$HOME_DIR" --check --root "$MEMREPO"
+assert_equal "1" "$DOCTOR_EXIT" "destroyed aliased clone: --check exit 1 (never silently OK)"
+assert_contains "$DOCTOR_STDOUT" "broken mount chain, not a moved clone" "--check names the broken mount chain instead of calling the hop an orphan"
+
+run_doctor "$HOME_DIR" --root "$MEMREPO"
+assert_equal "1" "$DOCTOR_EXIT" "destroyed aliased clone: fix mode exit 1 (broken chain is not auto-fixable)"
+assert_contains "$DOCTOR_STDOUT" "broken mount chain, not a moved clone" "fix mode reports the broken chain too"
+assert_symlink "$dev_ext" "$DEVCLONE_ABS/.claude/memory" "fix mode did NOT reap the external hop of the broken clone"
+assert_symlink "$DEVCLONE/.agents/memory" "../.agents/memory" "fix mode left the broken clone's mount untouched (repair is a human call)"
+rm -rf "$tmp"
+
 print_summary
