@@ -36,16 +36,20 @@ If validation fails (dangling mount, missing role dir), report that and ask whic
 Every time persona memory is needed, issue fresh file-read tool calls.
 Do not rely on prior same-session reads.
 
-Read these two indices first:
+Read these indices first:
 
 ```text
 <memory-repo>/<role>/MEMORY.md
 <memory-repo>/<role>/shared/MEMORY.md
+<memory-repo>/<role>/user/MEMORY.md   (only when the user mount exists)
 ```
 
 This includes `memory_manager` - its role directory is standard (own `MEMORY.md`, own `shared` symlink), so no special read order applies.
 
 Treat the role index and shared index as routing tables.
+When `<role>/user` exists, it is the role@user mount - this role's cross-project home (claude-personas#49).
+Read its index third; the reading order mirrors the precedence chain (role@project > project > role@user), so on conflict the earlier read wins.
+A missing `<role>/user` is normal (the mount is lazy), never an error.
 Read linked files only when relevant to the current task.
 
 ## Path Rules
@@ -56,6 +60,7 @@ Persona memory paths are file-relative.
 - A `shared/<file>` link from `<role>/MEMORY.md` resolves through `<role>/shared`, which points at `../shared`.
 - A bare filename in `shared/MEMORY.md` resolves inside `shared/`.
 - `<!-- src: ... -->` annotations follow the same file-relative rule.
+- A `user/<file>` link from `<role>/MEMORY.md` resolves through `<role>/user`, which points at this role's dir in the user-scope roles instance (the manifest's `role_source`).
 
 Do not invent paths under tool-native memory stores when the repo-backed path is available.
 
@@ -69,6 +74,7 @@ If editing is requested, respect the memory repo governance:
 - A role session may edit its own `<role>/` directory and `shared/` when explicitly requested.
 - If the project has a Memory Manager, the Memory Manager is the sole committer and pusher of the memory repo.
 - Do not touch another role's directory from a role session unless the user explicitly asks and the change is mechanical or stewardship-oriented.
+- The `<role>/user` mount is read-only by convention: a promotion to role@user is an explicit write into the user-scope roles instance (`role_source` target), committed in THAT repo - never through the symlink as part of a project-memory commit.
 
 If the memory repo has unrelated dirty changes, leave them alone.
 
@@ -78,4 +84,4 @@ If the memory repo has unrelated dirty changes, leave them alone.
 - Codex: the lazy-read complement to the SessionStart index injection, and the fallback when the `.codex/` hooks layer is not yet trusted.
 - OpenCode: the lazy-read complement to the `instructions`-loaded index.
 
-For a memory freshness check: fresh-read the role and shared indices, report only meaningful changes, and respond exactly `Memory check complete` when no meaningful changes are found.
+For a memory freshness check: fresh-read the role and shared indices (and the user index when the mount exists), report only meaningful changes, and respond exactly `Memory check complete` when no meaningful changes are found.

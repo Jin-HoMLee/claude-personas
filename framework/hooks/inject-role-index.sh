@@ -75,6 +75,14 @@ if [ -r "$role_dir/shared/MEMORY.md" ]; then
 # Shared memory index (loaded on demand): read $role_dir/shared/MEMORY.md"
 fi
 
+# role@user index (claude-personas#49): pointer only, and only when the lazy
+# mount exists - reading order mirrors the precedence chain (role > shared >
+# role@user), so this line comes after the shared pointer.
+if [ -r "$role_dir/user/MEMORY.md" ]; then
+  payload="$payload
+# Role user-tier memory index (loaded on demand): read $role_dir/user/MEMORY.md"
+fi
+
 if [ "$truncated" -eq 1 ]; then
   payload="$payload
 [TRUNCATED by the Codex adapter at the Claude Code native cap - read $role_index for the full role index]"

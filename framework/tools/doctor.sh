@@ -36,7 +36,7 @@ VALID_OPENCODE_VALUES="global per-clone"
 SUPPORTED_MANIFEST_VERSIONS="1"
 
 # All keys this doctor understands, regardless of topology.
-ALL_VALID_KEYS="manifest_version topology memory_layout adapter claude_hook codex_hook skills_mount opencode framework_source framework_ref"
+ALL_VALID_KEYS="manifest_version topology memory_layout adapter claude_hook codex_hook skills_mount opencode framework_source framework_ref role_source"
 
 # Keys valid only for topology=embedded.
 EMBEDDED_ONLY_KEYS="claude_hook codex_hook skills_mount"
@@ -392,6 +392,25 @@ validate_manifest_semantics() {
       esac
     done < <(manifest_get_all "$k")
   done
+
+  # role_source (optional, consumer-side, claude-personas#49): points a
+  # role-clones or embedded instance at the user-scope roles instance.
+  # Hard error on user-tier (self-reference: the user-tier instance IS the
+  # role tier's home). Must be repo-relative: the committed <role>/user
+  # symlinks are derived from it and encode the sibling-layout assumption.
+  v="$(manifest_get role_source)"
+  if [ -n "$v" ]; then
+    if [ "$topology" = "user-tier" ]; then
+      echo "ERROR: key 'role_source' is not valid for topology=user-tier (the user-tier instance is the role tier's home, not a consumer of it) in $MANIFEST" >&2
+      exit 2
+    fi
+    case "$v" in
+      /*)
+        echo "ERROR: role_source '$v' in $MANIFEST must be a repo-relative path, not absolute" >&2
+        exit 2
+        ;;
+    esac
+  fi
 }
 
 validate_manifest_syntax
@@ -422,6 +441,8 @@ SKILLS_MOUNT="$(manifest_get skills_mount)"
 
 OPENCODE_MODE="$(manifest_get opencode)"
 [ -n "$OPENCODE_MODE" ] || OPENCODE_MODE="global"
+
+ROLE_SOURCE="$(manifest_get role_source)"
 
 # --- shared check core (Task 2): counters, reporters, link/payload/hook checks ---
 
@@ -1252,6 +1273,72 @@ topology_user_tier_checks() {
   fi
 }
 
+check_role_tier_readiness() {
+  # Role-tier readiness (claude-personas#49 spec section 5): active only
+  # when the manifest declares role_source (validated in Task 1: never on
+  # user-tier, never absolute). Target checks: the path resolves, is a git
+  # repo, and its manifest declares memory_layout=roles - a flat target
+  # means the pointer was wired before the user-memory migration (spec
+  # section 3) and is an ERROR, not a fixable drift.
+  [ -n "$ROLE_SOURCE" ] || return 0
+
+  local src_abs target_layout
+  src_abs="$(cd "$ROOT/$ROLE_SOURCE" 2>/dev/null && pwd)"
+  if [ -z "$src_abs" ]; then
+    report_error "role_source '$ROLE_SOURCE' unreachable from $ROOT"
+    return 0
+  fi
+  if [ ! -d "$src_abs/.git" ]; then
+    report_error "role_source '$ROLE_SOURCE' ($src_abs) is not a git repo"
+    return 0
+  fi
+  target_layout="$(grep -v '^[[:space:]]*#' "$src_abs/.agents/manifest" 2>/dev/null \
+    | grep '^memory_layout=' | head -n1 | cut -d= -f2-)"
+  if [ "$target_layout" != "roles" ]; then
+    report_error "role_source '$ROLE_SOURCE' declares memory_layout='${target_layout:-MISSING}', expected 'roles' - wire role_source only after the user-memory migration (claude-personas#49 spec section 3)"
+    return 0
+  fi
+
+  _role_tier_check_roles "$src_abs"
+}
+
+_role_tier_check_roles() {
+  # _role_tier_check_roles <src_abs>
+  # Per-role <role>/user mount checks (claude-personas#49 spec sections 4d
+  # + 5). Role discovery: same rule as check_payload / list-roles.sh - a
+  # root-level dir with MEMORY.md, excluding shared and examples.
+  # Lazy by design: NO symlink and NO target role dir is the normal state
+  # (silent in both modes); fix mode materializes the symlink only once the
+  # target role dir exists; --check never flags a missing symlink (creation
+  # is fix-mode's job, not a drift). An EXISTING symlink is held to the
+  # full standard: exact ../<role_source>/<role> target text AND resolving.
+  local src_abs="$1"
+  local d n link_path expected_target
+
+  for d in "$ROOT"/*/; do
+    [ -d "$d" ] || continue
+    n="$(basename "$d")"
+    [ -f "$d/MEMORY.md" ] || continue
+    if [ "$n" = "shared" ] || [ "$n" = "examples" ]; then
+      continue
+    fi
+
+    link_path="$ROOT/$n/user"
+    expected_target="../$ROLE_SOURCE/$n"
+
+    if [ -L "$link_path" ]; then
+      need_link "$link_path" "$expected_target" "$n/user"
+      if [ -L "$link_path" ] && [ ! -e "$link_path" ] && [ "$(readlink "$link_path")" = "$expected_target" ]; then
+        report_drift "$n/user -> $(readlink "$link_path") dangles - role@user dir missing at $src_abs/$n (restore it there or remove the symlink)"
+      fi
+    elif [ -e "$link_path" ]; then
+      report_drift "$n/user exists and is not a symlink (refusing to touch)"
+    elif [ -f "$src_abs/$n/MEMORY.md" ] && [ "$CHECK" != 1 ]; then
+      need_link "$link_path" "$expected_target" "$n/user"
+    fi
+  done
+}
+
 # Shared floor for every topology, run before the topology-specific catalog.
 check_payload
 check_hook_scripts
@@ -1262,6 +1349,8 @@ case "$TOPOLOGY" in
   embedded) topology_embedded_checks ;;
   user-tier) topology_user_tier_checks ;;
 esac
+
+check_role_tier_readiness
 
 if [ "$DRIFT_COUNT" -gt 0 ]; then
   exit 1
