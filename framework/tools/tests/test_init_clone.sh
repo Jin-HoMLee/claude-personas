@@ -1347,4 +1347,99 @@ assert_not_exists "$tmp42/myapp" "fresh clone rolled back after gitignore rewrit
 
 cleanup_clone_test_fixture "$tmp42"
 
+echo "=== test_init_clone: aliased project layout (.claude -> .agents committed, #81) - fresh wire is clean, never plants a stray link in the memory repo ==="
+DOCTOR="$(cd "$SCRIPT_DIR/.." && pwd)/doctor.sh"
+tmpA="$(mktemp -d)"
+make_clone_test_fixture "$tmpA"
+mkdir -p "$tmpA/home"
+mv "$tmpA/memory-repo" "$tmpA/claude-personas-myapp"
+
+# Commit the flagship consumer's layout into the project repo: a real
+# .agents/ dir with content, .claude as a compatibility symlink to it.
+# Under that aliasing, the clone's .claude/memory IS .agents/memory - a
+# symlink to the role DIRECTORY - so an unguarded 'ln -s ... .claude/memory'
+# dereferences it and plants the link INSIDE the memory repo's committed
+# role dir (the live-verified #81 failure), instead of failing.
+aliaswt="$tmpA/alias-seed"
+git clone -q "$tmpA/project-repo.git" "$aliaswt"
+mkdir -p "$aliaswt/.agents"
+echo payload > "$aliaswt/.agents/keep"
+( cd "$aliaswt" && ln -s .agents .claude && \
+  git -c user.email=t@x -c user.name=T add -A && \
+  git -c user.email=t@x -c user.name=T commit -qm "aliased layout" && \
+  git push -q origin HEAD )
+rm -rf "$aliaswt"
+
+( cd "$tmpA/claude-personas-myapp" && \
+  HOME="$tmpA/home" bash "$INIT_CLONE" developer --project-url "$tmpA/project-repo.git" ) \
+  >/dev/null 2>&1 || [ $? -eq 2 ]
+
+assert_exists "$tmpA/myapp" "aliased clone landed at the no-suffix path"
+assert_symlink "$tmpA/myapp/.claude" ".agents" "committed .claude alias survived wiring (not replaced by a real dir)"
+assert_symlink "$tmpA/myapp/.agents/memory" "../../claude-personas-myapp/developer" "mount points at the role dir"
+assert_exists "$tmpA/myapp/.agents/memory/MEMORY.md" "index resolves through the mount"
+assert_not_exists "$tmpA/claude-personas-myapp/developer/memory" "NO stray memory link planted inside the memory repo's role dir"
+if grep -qxF "/.claude/memory" "$tmpA/myapp/.git/info/exclude" 2>/dev/null; then
+  echo "  FAIL: /.claude/memory exclude line written on an aliased clone (path has no git entry of its own there)"
+  TESTS_RUN=$((TESTS_RUN + 1)); TESTS_FAILED=$((TESTS_FAILED + 1)); FAILED_TESTS+=("aliased clone /.claude/memory exclude line")
+else
+  echo "  PASS: no /.claude/memory exclude line on the aliased clone (matches doctor's #80 semantics)"
+  TESTS_RUN=$((TESTS_RUN + 1)); TESTS_PASSED=$((TESTS_PASSED + 1))
+fi
+if [ -z "$( cd "$tmpA/myapp" && git status --porcelain )" ]; then
+  echo "  PASS: wired aliased clone is git-clean"
+  TESTS_RUN=$((TESTS_RUN + 1)); TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo "  FAIL: wired aliased clone is dirty:"; ( cd "$tmpA/myapp" && git status --porcelain )
+  TESTS_RUN=$((TESTS_RUN + 1)); TESTS_FAILED=$((TESTS_FAILED + 1)); FAILED_TESTS+=("aliased clone git-clean")
+fi
+
+# Cross-check with doctor: the wiring init-clone just produced must verify
+# clean under the (post-#80, alias-aware) doctor.
+mkdir -p "$tmpA/claude-personas-myapp/.agents"
+cat > "$tmpA/claude-personas-myapp/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=role-clones
+memory_layout=roles
+adapter=claude-code
+EOF
+HOME="$tmpA/home" bash "$DOCTOR" --check --root "$tmpA/claude-personas-myapp" >/dev/null 2>&1
+assert_equal "0" "$?" "doctor --check verifies the freshly-wired aliased clone clean"
+
+echo "=== test_init_clone: aliased clone --force re-wire (#81) - completes in place, mount fresh, still no stray link ==="
+( cd "$tmpA/claude-personas-myapp" && \
+  HOME="$tmpA/home" bash "$INIT_CLONE" developer --force --project-url "$tmpA/project-repo.git" ) \
+  >/dev/null 2>&1 || [ $? -eq 2 ]
+force_rc=$?
+assert_equal "0" "$force_rc" "--force re-wire exits cleanly (no mid-wiring abort)"
+assert_symlink "$tmpA/myapp/.agents/memory" "../../claude-personas-myapp/developer" "--force re-created the mount on the role dir"
+assert_exists "$tmpA/myapp/.agents/memory/MEMORY.md" "index still resolves after --force"
+assert_not_exists "$tmpA/claude-personas-myapp/developer/memory" "still no stray link in the memory repo after --force"
+assert_symlink "$tmpA/myapp/.claude" ".agents" ".claude alias intact after --force"
+cleanup_clone_test_fixture "$tmpA"
+
+echo "=== test_init_clone: dangling committed alias (.claude -> .agents, no .agents content committed) - wiring materializes .agents and stays clean (#81) ==="
+tmpB="$(mktemp -d)"
+make_clone_test_fixture "$tmpB"
+mkdir -p "$tmpB/home"
+mv "$tmpB/memory-repo" "$tmpB/claude-personas-myapp"
+aliaswt="$tmpB/alias-seed"
+git clone -q "$tmpB/project-repo.git" "$aliaswt"
+( cd "$aliaswt" && ln -s .agents .claude && \
+  git -c user.email=t@x -c user.name=T add -A && \
+  git -c user.email=t@x -c user.name=T commit -qm "dangling alias only" && \
+  git push -q origin HEAD )
+rm -rf "$aliaswt"
+
+( cd "$tmpB/claude-personas-myapp" && \
+  HOME="$tmpB/home" bash "$INIT_CLONE" developer --project-url "$tmpB/project-repo.git" ) \
+  >/dev/null 2>&1 || [ $? -eq 2 ]
+
+assert_exists "$tmpB/myapp" "dangling-alias clone landed"
+assert_symlink "$tmpB/myapp/.claude" ".agents" "committed dangling alias survived wiring"
+assert_symlink "$tmpB/myapp/.agents/memory" "../../claude-personas-myapp/developer" "mount created after materializing .agents/"
+assert_exists "$tmpB/myapp/.agents/memory/MEMORY.md" "index resolves"
+assert_not_exists "$tmpB/claude-personas-myapp/developer/memory" "no stray link in the memory repo (dangling-alias path)"
+cleanup_clone_test_fixture "$tmpB"
+
 print_summary
