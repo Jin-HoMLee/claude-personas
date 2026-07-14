@@ -17,6 +17,10 @@ make_memrepo() {
   echo "# dev@user idx" > "$base/developer/user/MEMORY.md"
   echo "# pm idx" > "$base/pm/MEMORY.md"
   echo "# top-level shared idx" > "$base/shared/MEMORY.md"
+  # examples/MEMORY.md exists only in this fixture (real instances index
+  # example roles one level down) so the examples exclusion is exercised
+  # for real - without it, the missing-file guard passes the test trivially.
+  echo "# top-level examples idx" > "$base/examples/MEMORY.md"
   echo "# example idx" > "$base/examples/developer/MEMORY.md"
 }
 
