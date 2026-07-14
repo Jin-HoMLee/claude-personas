@@ -10,11 +10,18 @@ HOOK="$(cd "$SCRIPT_DIR/../.." && pwd)/hooks/inject-subagent-role-pointer.sh"
 
 make_memrepo() {
   local base="$1"
-  mkdir -p "$base/developer/shared" "$base/developer/user" "$base/pm"
+  mkdir -p "$base/developer/shared" "$base/developer/user" "$base/pm" \
+    "$base/shared" "$base/examples/developer"
   echo "# dev idx" > "$base/developer/MEMORY.md"
   echo "# shared idx" > "$base/developer/shared/MEMORY.md"
   echo "# dev@user idx" > "$base/developer/user/MEMORY.md"
   echo "# pm idx" > "$base/pm/MEMORY.md"
+  echo "# top-level shared idx" > "$base/shared/MEMORY.md"
+  # examples/MEMORY.md exists only in this fixture (real instances index
+  # example roles one level down) so the examples exclusion is exercised
+  # for real - without it, the missing-file guard passes the test trivially.
+  echo "# top-level examples idx" > "$base/examples/MEMORY.md"
+  echo "# example idx" > "$base/examples/developer/MEMORY.md"
 }
 
 echo "=== inject-subagent-role-pointer: known agent_type gets a pointer ==="
@@ -40,6 +47,7 @@ make_memrepo "$tmp"
 out="$(printf '{"agent_type":"pm"}' | bash "$HOOK" "$tmp")"
 ctx="$(printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext')"
 assert_contains "$ctx" "Read $tmp/pm/MEMORY.md" "pm pointer names the pm index"
+assert_not_contains "$ctx" "/pm/shared/" "no shared pointer for a role without shared/"
 case "$ctx" in
   *"/pm/user/"*) assert_equal "absent" "present" "no user pointer for unmounted role" ;;
   *) assert_equal "absent" "absent" "no user pointer for unmounted role" ;;
@@ -53,6 +61,20 @@ out="$(printf '{"agent_type":"Explore"}' | bash "$HOOK" "$tmp")"
 rc=$?
 assert_equal "0" "$rc" "unknown agent_type exits 0"
 assert_equal "" "$out" "unknown agent_type emits nothing"
+rm -rf "$tmp"
+
+echo "=== inject-subagent-role-pointer: shared/examples agent_type is silent (not a role) ==="
+tmp="$(mktemp -d)"
+make_memrepo "$tmp"
+out="$(printf '{"agent_type":"shared"}' | bash "$HOOK" "$tmp")"
+assert_equal "" "$out" "agent_type 'shared' emits nothing despite top-level shared/MEMORY.md"
+out="$(printf '{"agent_type":"examples"}' | bash "$HOOK" "$tmp")"
+assert_equal "" "$out" "agent_type 'examples' emits nothing"
+# Case variant: only bites on a case-insensitive filesystem (macOS APFS
+# default), where Shared/MEMORY.md resolves to shared/MEMORY.md - trivially
+# green on case-sensitive CI, red on a dev Mac without the tr fold.
+out="$(printf '{"agent_type":"Shared"}' | bash "$HOOK" "$tmp")"
+assert_equal "" "$out" "agent_type 'Shared' emits nothing (case-insensitive filesystems)"
 rm -rf "$tmp"
 
 echo "=== inject-subagent-role-pointer: traversal-shaped agent_type is silent ==="

@@ -24,9 +24,15 @@ command -v jq >/dev/null 2>&1 || exit 0
 agent_type="$(jq -r '.agent_type // empty' 2>/dev/null)"
 [ -n "$agent_type" ] || exit 0
 # Role dir names are plain slugs; anything else (path separators, dots)
-# is not a role and must not become a path component.
+# is not a role and must not become a path component. shared/examples are
+# the same non-role exclusion every other role-discovery component applies,
+# folded to lowercase: on a case-insensitive filesystem (macOS APFS
+# default) Shared/MEMORY.md resolves to shared/MEMORY.md.
 case "$agent_type" in
   *[!a-zA-Z0-9_-]*) exit 0 ;;
+esac
+case "$(printf '%s' "$agent_type" | tr '[:upper:]' '[:lower:]')" in
+  shared|examples) exit 0 ;;
 esac
 
 role_index="$memrepo/$agent_type/MEMORY.md"
