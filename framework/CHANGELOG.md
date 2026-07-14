@@ -3,6 +3,12 @@
 One entry per `framework/v*` tag: what breaks / what to do.
 The payload = the file set declared in [FILES](FILES); instances consume it via `install.sh` against the recorded `framework_ref` pin.
 
+## framework/v1.1 - 2026-07-14
+
+Adds the role@user tier (cross-project role memory, claude-personas#49, PR #71): optional `role_source` manifest key with validation + scoping, doctor "Role-tier readiness" checks, lazy fix-mode materialization of the `<role>/user` symlink, a conditional role@user pointer line in `inject-role-index.sh`, the NEW `inject-subagent-role-pointer.sh` SubagentStart hook (added to FILES), the load-persona-memory user hop, and the two-axis precedence chain in README.
+Breaks: nothing - `role_source` is optional and the default is lazy; an instance without the key sees zero new findings and unchanged behavior.
+Do: bump `framework_ref=framework/v1.1` and run `install.sh --sync`, then `doctor.sh`; add `role_source=../user-memory` only when wiring the role@user tier (the target must be a git repo with `memory_layout=roles`, so wire it after the user-memory migration).
+
 ## framework/v1 - 2026-07-07
 
 First versioned payload: doctor.sh, memory_cliff.py, init-clone.sh, list-roles.sh, install.sh, inject-role-index.sh, the load-persona-memory skill.
