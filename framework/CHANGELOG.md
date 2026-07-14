@@ -3,6 +3,14 @@
 One entry per `framework/v*` tag: what breaks / what to do.
 The payload = the file set declared in [FILES](FILES); instances consume it via `install.sh` against the recorded `framework_ref` pin.
 
+## framework/v1.1.2 - 2026-07-14
+
+Patch: doctor.sh fix mode destroyed the memory mount of any role clone whose `.claude` is a symlink to `.agents`, then reported OK (claude-personas#78, PR #80; fired live against three flagship clones).
+doctor.sh: `need_link` refuses to write any symlink whose target chain resolves back to the link itself (1-hop parent-alias loops, leaf cycles, mirror 2-hop cycles), and an already-written self-loop is ERROR in both modes, never silently "correct"; a self-referential expectation whose path still resolves counts as satisfied transitively, making the `.claude -> .agents` aliased layout a supported, clean state in every topology; on aliased role clones the `.claude/memory` hop and its `/.claude/memory` exclude line are skipped (including a committed-but-dangling alias on a fresh clone); the orphan sweep no longer reaps an external hop whose target still exists but does not resolve (broken mount chain, not a moved clone - DRIFT in both modes instead).
+Breaks: nothing for correct instances. An instance that already carries a broken mount chain flips from silently green (or silently reaped) to DRIFT/ERROR - that alarm is the fix working; repair the mount by hand.
+Known gap: init-clone.sh still crashes on aliased clones (claude-personas#81) - do not run it against them until that lands.
+Do: bump `framework_ref=framework/v1.1.2` and run `install.sh --sync`, then `doctor.sh`.
+
 ## framework/v1.1.1 - 2026-07-14
 
 Patch: role-tier hardening from the #71 whole-branch review (claude-personas#72, PR #74), plus the post-#71 executable-bit CI fix that the v1.1 tag predates.
