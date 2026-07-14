@@ -245,8 +245,27 @@ vendor_warn() {
 # .claude/memory -> ../.agents/memory            (Claude Code in-repo hop)
 # A failure anywhere in this window must roll back a clone we created this run.
 
-if ! mkdir -p "$TARGET/.agents" "$TARGET/.claude"; then
-  echo "Error: failed to create $TARGET/.agents or $TARGET/.claude" >&2
+if ! mkdir -p "$TARGET/.agents"; then
+  echo "Error: failed to create $TARGET/.agents" >&2
+  rollback_fresh_clone
+  exit 1
+fi
+
+# Aliased layout (#81): a consumer that canonicalizes on .agents/ and
+# commits '.claude -> .agents' (one dir, two names). Under that aliasing
+# .claude/memory IS .agents/memory, so the hop must not be written: ln
+# would dereference through the alias onto the mount (a symlink to the
+# role DIRECTORY) and plant the link INSIDE the memory repo's role dir.
+# Detect the alias - materialized (-ef) or the committed link text on a
+# fresh clone whose .agents/ only just got created above - and skip the
+# hop and its exclude line below; the mount alone satisfies both paths.
+# Keep in sync with doctor.sh claude_aliases_agents.
+CLAUDE_ALIASED=0
+if [[ "$TARGET/.claude" -ef "$TARGET/.agents" ]] || \
+   { [[ -L "$TARGET/.claude" ]] && [[ "$(readlink "$TARGET/.claude")" == ".agents" ]]; }; then
+  CLAUDE_ALIASED=1
+elif ! mkdir -p "$TARGET/.claude"; then
+  echo "Error: failed to create $TARGET/.claude" >&2
   rollback_fresh_clone
   exit 1
 fi
@@ -268,8 +287,14 @@ if [[ "$SELF" -ne 1 && "$FORCE" -eq 1 && ( -L "$LEGACY_LINK" || -e "$LEGACY_LINK
 fi
 
 # Back up whatever sits at either mount point (v3.1 direct symlink on a
-# --force migration, or artifacts from a prior run).
-for link in "$AGENTS_LINK" "$MEMORY_LINK"; do
+# --force migration, or artifacts from a prior run). On an aliased clone
+# MEMORY_LINK is the same inode as AGENTS_LINK - handling it separately
+# would double-move one file, so it is skipped there.
+MOUNT_POINTS=("$AGENTS_LINK")
+if [[ "$CLAUDE_ALIASED" -ne 1 ]]; then
+  MOUNT_POINTS+=("$MEMORY_LINK")
+fi
+for link in "${MOUNT_POINTS[@]}"; do
   if [[ -e "$link" || -L "$link" ]]; then
     if [[ "$FORCE" -eq 1 ]]; then
       BACKUP="$link.backup-$(date +%Y%m%d-%H%M%S)"
@@ -296,19 +321,25 @@ if [[ "$SELF" -eq 1 ]]; then
 else
   MOUNT_TARGET="../../$MEMORY_REPO_NAME/$ROLE"
 fi
-if ! ln -s "$MOUNT_TARGET" "$AGENTS_LINK"; then
+# ln -sn everywhere: -n keeps ln from dereferencing a symlink-to-dir at the
+# destination and silently creating INSIDE the resolved directory - the #81
+# contamination mode. With -n such a state fails loudly instead.
+if ! ln -sn "$MOUNT_TARGET" "$AGENTS_LINK"; then
   echo "Error: failed to create memory mount $AGENTS_LINK" >&2
   rollback_fresh_clone
   exit 1
 fi
 echo "✓ Symlinked .agents/memory → $MOUNT_TARGET"
 
-if ! ln -s "../.agents/memory" "$MEMORY_LINK"; then
+if [[ "$CLAUDE_ALIASED" -eq 1 ]]; then
+  echo "✓ .claude aliases .agents - Claude Code hop satisfied transitively (nothing to write)"
+elif ! ln -sn "../.agents/memory" "$MEMORY_LINK"; then
   echo "Error: failed to create Claude Code hop $MEMORY_LINK" >&2
   rollback_fresh_clone
   exit 1
+else
+  echo "✓ Symlinked .claude/memory → ../.agents/memory"
 fi
-echo "✓ Symlinked .claude/memory → ../.agents/memory"
 
 # Untracked-ness via exclude, NOT .gitignore. Existing committed v3.1
 # .gitignore lines keep working; we just stop adding new ones. NOTE the
@@ -316,7 +347,11 @@ echo "✓ Symlinked .claude/memory → ../.agents/memory"
 # directories, and these paths are symlinks.
 add_exclude "# claude-personas vendor wiring (per-clone, untracked)"
 add_exclude "/.agents/memory"
-add_exclude "/.claude/memory"
+# On an aliased clone /.claude/memory never exists as its own git entry -
+# doctor (#80) likewise skips the line there.
+if [[ "$CLAUDE_ALIASED" -ne 1 ]]; then
+  add_exclude "/.claude/memory"
+fi
 
 # Remove legacy /memory/ line on --force (v3.0 -> v3.1 migration) - unchanged.
 GITIGNORE="$TARGET/.gitignore"
