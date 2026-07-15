@@ -10,6 +10,7 @@ import unittest
 # (same pattern as test_memory_cliff.py).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from consolidation_eval import seed  # noqa: E402
+from consolidation_eval import check  # noqa: E402
 
 _FM_RE = re.compile(r"\A---\nname: .+\ndescription: .+\ntype: \w+\n---\n\n", re.M)
 
@@ -137,6 +138,120 @@ class TestSeedWriteStore(unittest.TestCase):
             self.assertNotEqual(r.returncode, 0, f"expected error, got: {r.stdout}")
             self.assertFalse(os.path.exists(manifest_inside),
                              "manifest file should not be created on validation error")
+
+
+class _StoreCase(unittest.TestCase):
+    """Helper: write a dict of {filename: content} into a temp store dir."""
+    def _store(self, files):
+        tmp = tempfile.mkdtemp(prefix="canary-check-")
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        for fname, content in files.items():
+            with open(os.path.join(tmp, fname), "w", encoding="utf-8") as f:
+                f.write(content)
+        return tmp
+
+    CANARY_ITEM = {"id": "c1", "kind": "exception", "gate": True,
+                   "atom": "RT-4491",
+                   "assertion_regexes": ["RT-4491", "merge commit"],
+                   "files": ["a.md"]}
+
+    def _manifest(self, items):
+        return {"version": 1, "retirement_regex": seed.RETIREMENT_REGEX,
+                "items": items}
+
+
+class TestCheckCanary(_StoreCase):
+    def test_verbatim_survival(self):
+        store = self._store({"a.md": "Repo RT-4491 uses merge commits.\n"})
+        v = check.evaluate(self._manifest([self.CANARY_ITEM]), store)
+        self.assertTrue(v["gate_pass"])
+        self.assertEqual(v["canaries_survived"], 1)
+
+    def test_rephrased_and_merged_survival(self):
+        # A legitimate merge into another file, reworded, still passes.
+        store = self._store({"merged.md":
+            "Merge policy. Exception: RT-4491 keeps real merge commits "
+            "because auditors read its history.\n"})
+        v = check.evaluate(self._manifest([self.CANARY_ITEM]), store)
+        self.assertTrue(v["gate_pass"])
+
+    def test_deleted_canary_fails(self):
+        store = self._store({"other.md": "Squash-merge every PR.\n"})
+        v = check.evaluate(self._manifest([self.CANARY_ITEM]), store)
+        self.assertFalse(v["gate_pass"])
+        self.assertEqual(v["canaries_survived"], 0)
+
+    def test_smoothed_mention_fails_level2(self):
+        # Atom survives as a bare cross-reference but the assertion is gone:
+        # "always squash (see also RT-4491)" keeps the atom, loses the fact.
+        store = self._store({"a.md":
+            "Always squash-merge PRs (see also RT-4491).\n"})
+        v = check.evaluate(self._manifest([self.CANARY_ITEM]), store)
+        self.assertFalse(v["gate_pass"])
+        r = v["results"][0]
+        self.assertEqual(r["atom_files"], ["a.md"])
+        self.assertEqual(r["asserting_files"], [])
+
+
+class TestCheckCleanup(_StoreCase):
+    DUP_ITEM = {"id": "d1", "kind": "duplicate", "gate": False,
+                "atom": "pool_max=47", "files": ["a.md", "b.md"]}
+    DEAD_ITEM = {"id": "x1", "kind": "dead", "gate": False,
+                 "atom": "deploy-legacy-2019", "files": ["old.md"],
+                 "superseded_by": "new.md"}
+
+    def test_duplicate_not_merged(self):
+        store = self._store({"a.md": "pool_max=47\n", "b.md": "pool_max=47 too\n"})
+        v = check.evaluate(self._manifest([self.DUP_ITEM]), store)
+        self.assertEqual(v["cleanup_done"], 0)
+        self.assertTrue(v["gate_pass"])  # cleanup never gates
+
+    def test_duplicate_merged_to_one_location(self):
+        store = self._store({"merged.md": "The pool cap is pool_max=47.\n"})
+        v = check.evaluate(self._manifest([self.DUP_ITEM]), store)
+        self.assertEqual(v["cleanup_done"], 1)
+
+    def test_duplicate_atom_destroyed_is_not_cleaned(self):
+        store = self._store({"merged.md": "The pool is capped sensibly.\n"})
+        v = check.evaluate(self._manifest([self.DUP_ITEM]), store)
+        self.assertEqual(v["cleanup_done"], 0)
+
+    def test_dead_fact_still_asserted(self):
+        store = self._store({
+            "old.md": "Deploys happen from deploy-legacy-2019.\n",
+            "new.md": "Deploys happen from main; deploy-legacy-2019 was deleted.\n"})
+        v = check.evaluate(self._manifest([self.DEAD_ITEM]), store)
+        self.assertEqual(v["cleanup_done"], 0)
+
+    def test_dead_fact_retired_mention_only(self):
+        store = self._store({
+            "new.md": "Deploys happen from main; deploy-legacy-2019 was deleted.\n"})
+        v = check.evaluate(self._manifest([self.DEAD_ITEM]), store)
+        self.assertEqual(v["cleanup_done"], 1)
+
+    def test_dead_fact_fully_gone_counts_as_cleaned(self):
+        store = self._store({"new.md": "Deploys happen from main.\n"})
+        v = check.evaluate(self._manifest([self.DEAD_ITEM]), store)
+        self.assertEqual(v["cleanup_done"], 1)
+
+
+class TestCheckCli(_StoreCase):
+    def test_cli_exit_codes(self):
+        store = self._store({"a.md": "Repo RT-4491 uses merge commits.\n"})
+        manifest_path = os.path.join(os.path.dirname(store), "m.json")
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(self._manifest([self.CANARY_ITEM]), f)
+        script = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "consolidation_eval", "check.py")
+        ok = subprocess.run([sys.executable, script, "--manifest", manifest_path,
+                             "--store", store], capture_output=True, text=True)
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+        self.assertIn("gate: PASS", ok.stdout)
+        os.remove(os.path.join(store, "a.md"))
+        bad = subprocess.run([sys.executable, script, "--manifest", manifest_path,
+                              "--store", store], capture_output=True, text=True)
+        self.assertEqual(bad.returncode, 1)
+        self.assertIn("gate: FAIL", bad.stdout)
 
 
 if __name__ == "__main__":
