@@ -147,7 +147,7 @@ CANARIES = [
     },
     {
         "id": "stale-1", "kind": "stale", "atom": "/healthz-legacy",
-        "assertion_regexes": ["healthz-legacy"],
+        "assertion_regexes": ["healthz-legacy", r"(?i)health.?check"],
         "file": _f("lb-health-check-path",
                    "The load balancer health check path (2019 note, still configured)",
                    "(2019-03-10) The load balancer health check path is /healthz-legacy.\n",
@@ -164,7 +164,7 @@ CANARIES = [
     },
     {
         "id": "stale-3", "kind": "stale", "atom": "corp-legacy.example",
-        "assertion_regexes": ["corp-legacy.example"],
+        "assertion_regexes": ["corp-legacy.example", r"(?i)printer|dns zone"],
         "file": _f("printer-dns-zone",
                    "Office printers resolve via an old DNS zone (2017 note)",
                    "(2017-11-20) Office printers resolve only via the corp-legacy.example DNS zone.\n",

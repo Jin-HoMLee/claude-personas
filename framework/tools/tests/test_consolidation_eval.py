@@ -89,6 +89,19 @@ class TestSeedBuildStore(unittest.TestCase):
             # ...but the dead note itself asserts the fact as current.
             self.assertNotRegex(self.files[it["files"][0]], rx)
 
+    def test_gate_canaries_do_not_match_retirement_regex(self):
+        # check._check_canary now also rejects a match against
+        # retirement_regex as survival (retirement prose isn't a genuine
+        # assertion). Guard the fixtures themselves so a future edit to a
+        # canary's body can't silently create a built-in false-FAIL.
+        rx = self.manifest["retirement_regex"]
+        for it in self.manifest["items"]:
+            if not it["gate"]:
+                continue
+            content = self.files[it["files"][0]]
+            self.assertNotRegex(content, rx,
+                                f"{it['id']}: gate canary file matches retirement_regex")
+
 
 class TestSeedWriteStore(unittest.TestCase):
     def test_write_store_materializes_and_keeps_manifest_outside(self):
@@ -194,6 +207,23 @@ class TestCheckCanary(_StoreCase):
         self.assertEqual(r["atom_files"], ["a.md"])
         self.assertEqual(r["asserting_files"], [])
 
+    def test_retirement_prose_does_not_count_as_survival(self):
+        # An "asserting" file that wraps the fact in retirement language
+        # ("archived and no longer used") is not genuine survival - the
+        # fact reads as dead, not preserved. Regression for the false-PASS
+        # a consolidation pass could produce by demoting a canary to a
+        # retirement note while technically keeping both regex hits.
+        item = {"id": "s1", "kind": "stale", "gate": True,
+               "atom": "/healthz-legacy",
+               "assertion_regexes": ["healthz-legacy", r"(?i)health.?check"],
+               "files": ["a.md"]}
+        store = self._store({"a.md":
+            "The old /healthz-legacy health check path is archived and "
+            "no longer used.\n"})
+        v = check.evaluate(self._manifest([item]), store)
+        self.assertFalse(v["gate_pass"])
+        self.assertEqual(v["results"][0]["asserting_files"], [])
+
 
 class TestCheckCleanup(_StoreCase):
     DUP_ITEM = {"id": "d1", "kind": "duplicate", "gate": False,
@@ -298,6 +328,7 @@ class TestRunEvalDriver(unittest.TestCase):
         self.assertEqual(len(results["per_run"]), 2)
         for r in results["per_run"]:
             self.assertEqual(r["canaries_survived"], r["canaries_total"])
+            self.assertEqual(r["pass_returncode"], 0)
 
     def test_summarizer_gate_fails(self):
         results = run_eval.run(runs=1, pass_cmd=self._fake_cmd("summarize"),
@@ -344,6 +375,74 @@ class TestRunEvalDriver(unittest.TestCase):
         self.assertIn("error", r)
         self.assertIn("timeout", r["error"].lower())
         self.assertEqual(len(results["per_run"]), 1)
+
+    def test_failing_pass_cmd_is_not_a_pass(self):
+        # Critical 1: a pass command that exits non-zero (crash or a
+        # shell no-op like `exit 1`) must never read as a canary-survival
+        # PASS - check.evaluate must not even run.
+        results = run_eval.run(runs=1, pass_cmd="exit 1", model=None,
+                               keep=False, timeout=120)
+        self.assertFalse(results["gate_pass"])
+        r = results["per_run"][0]
+        self.assertFalse(r["gate_pass"])
+        self.assertEqual(r["pass_returncode"], 1)
+        self.assertIn("exited", r["error"])
+        self.assertIn("1", r["error"])
+        self.assertEqual(r["canaries_total"], 0)
+
+    def test_manifest_not_reachable_from_pass_cwd(self):
+        # Important 3: the answer key must not be findable by a pass
+        # command poking around its own cwd or its parent directory.
+        results = run_eval.run(runs=1, pass_cmd="cat ../manifest.json",
+                               model=None, keep=False, timeout=120)
+        self.assertFalse(results["gate_pass"])
+        r = results["per_run"][0]
+        self.assertNotEqual(r["pass_returncode"], 0)
+
+    def test_kept_workdirs_have_no_manifest_and_neutral_names(self):
+        # Important 3, stronger form: with --keep, directly check the
+        # kept store's parent dir on disk has no manifest.json, and that
+        # neither kept tempdir carries an eval-identifying prefix.
+        results = run_eval.run(runs=1, pass_cmd=self._fake_cmd("noop"),
+                               model=None, keep=True, timeout=120)
+        r = results["per_run"][0]
+        try:
+            self.assertIsNotNone(r["workdir"])
+            self.assertIsNotNone(r["manifest_dir"])
+            self.assertFalse(
+                os.path.exists(os.path.join(r["workdir"], "manifest.json")))
+            for d in (r["workdir"], r["manifest_dir"]):
+                base = os.path.basename(d)
+                self.assertNotIn("canary", base)
+                self.assertNotIn("eval", base)
+        finally:
+            import shutil as _shutil
+            _shutil.rmtree(r["workdir"], ignore_errors=True)
+            _shutil.rmtree(r["manifest_dir"], ignore_errors=True)
+
+    def test_invalid_utf8_pass_output_is_a_failed_run_not_a_crash(self):
+        # Important 4: broadened except must also catch failures that
+        # aren't TimeoutExpired/CalledProcessError, e.g. capture_output
+        # text-mode decoding blowing up on non-UTF-8 pass output.
+        pass_cmd = (f'"{sys.executable}" -c '
+                   '"import sys; sys.stdout.buffer.write(bytes([0xff, 0xfe]))"')
+        results = run_eval.run(runs=1, pass_cmd=pass_cmd, model=None,
+                               keep=False, timeout=120)
+        self.assertFalse(results["gate_pass"])
+        r = results["per_run"][0]
+        self.assertIn("error", r)
+        self.assertIn("UnicodeDecodeError", r["error"])
+        self.assertEqual(len(results["per_run"]), 1)
+
+    def test_runs_zero_rejected_by_run(self):
+        with self.assertRaises(ValueError):
+            run_eval.run(runs=0, pass_cmd="true", model=None, keep=False,
+                         timeout=120)
+
+    def test_runs_zero_rejected_by_cli(self):
+        with self.assertRaises(SystemExit) as ctx:
+            run_eval.main(["--runs", "0", "--pass-cmd", "true"])
+        self.assertEqual(ctx.exception.code, 2)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,16 @@ never gated on. The model, when given, is recorded verbatim in the results
 so a silent provider update shows up as an eval change; pass --model
 whenever --pass-cmd invokes an LLM.
 
+The pass command must exit 0 (part of the #89 contract): a non-zero exit
+is treated as a FAILED run and check.evaluate is never even called - a
+crashing or no-op-by-error pass must never read as a canary-survival PASS.
+The pass's own stdout/stderr is captured (not streamed) and its tail is
+recorded per run for diagnosis. To keep the pass under eval from finding
+or recognizing the answer key: the manifest lives in its own tempdir,
+separate from the fixture store's tempdir; both tempdir prefixes and the
+seeded commit message are generic ("mem-" / "memory store snapshot"), not
+eval-identifying.
+
 The real gate run against the #89 consolidation skill looks like:
     python3 run_eval.py --runs 10 --model <pinned-model> \
         --pass-cmd 'claude -p "/consolidate-memory ." --model <pinned-model>'
@@ -47,16 +57,37 @@ def _git(store: str, *args: str) -> subprocess.CompletedProcess:
 
 
 def _run_once(run_no: int, pass_cmd: str, keep: bool, timeout: int) -> dict:
-    workdir = tempfile.mkdtemp(prefix=f"canary-eval-run{run_no}-")
+    # Tempdir prefixes and the seeded commit message are deliberately
+    # generic ("mem-" / "memory store snapshot"), and the manifest (answer
+    # key) lives in its own separate tempdir, not workdir's parent or a
+    # sibling the pass could find by walking up from its cwd=store - the
+    # pass under eval must not be able to locate or recognize the eval.
+    workdir = tempfile.mkdtemp(prefix="mem-")
+    manifest_dir = tempfile.mkdtemp(prefix="mem-")
     store = os.path.join(workdir, "store")
-    manifest = seed.write_store(store, os.path.join(workdir, "manifest.json"))
+    manifest = seed.write_store(store, os.path.join(manifest_dir, "manifest.json"))
     _git(store, "init", "-q")
     _git(store, "add", "-A")
-    _git(store, "commit", "-q", "-m", "canary-eval: seeded fixture store")
+    _git(store, "commit", "-q", "-m", "memory store snapshot")
 
     try:
-        subprocess.run(pass_cmd, shell=True, cwd=store, timeout=timeout,
-                       check=False)
+        proc = subprocess.run(pass_cmd, shell=True, cwd=store, timeout=timeout,
+                              check=False, capture_output=True, text=True)
+        pass_output_tail = (proc.stderr + proc.stdout)[-2000:]
+
+        if proc.returncode != 0:
+            # A pass command that exits non-zero (crashed, or a shell
+            # no-op like `exit 1`) must never be scored as canary
+            # survival - check.evaluate is never even called.
+            result = {"run": run_no, "workdir": workdir if keep else None,
+                      "manifest_dir": manifest_dir if keep else None,
+                      "branch_checked": None, "gate_pass": False,
+                      "error": f"pass_cmd exited {proc.returncode}",
+                      "pass_returncode": proc.returncode,
+                      "pass_output_tail": pass_output_tail,
+                      "canaries_survived": 0, "canaries_total": 0,
+                      "cleanup_done": 0, "cleanup_total": 0, "results": []}
+            return result
 
         branches = _git(store, "branch", "--list", "consolidate/*",
                         "--format=%(refname:short)").stdout.split()
@@ -65,18 +96,24 @@ def _run_once(run_no: int, pass_cmd: str, keep: bool, timeout: int) -> dict:
 
         verdict = check.evaluate(manifest, store)
         result = {"run": run_no, "workdir": workdir if keep else None,
+                  "manifest_dir": manifest_dir if keep else None,
                   "branch_checked": branches[0] if branches else None,
                   "gate_pass": verdict["gate_pass"],
+                  "pass_returncode": proc.returncode,
+                  "pass_output_tail": pass_output_tail,
                   "canaries_survived": verdict["canaries_survived"],
                   "canaries_total": verdict["canaries_total"],
                   "cleanup_done": verdict["cleanup_done"],
                   "cleanup_total": verdict["cleanup_total"],
                   "results": verdict["results"]}
-    except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
-        # A pass that hangs past --timeout, or leaves the repo in a state
-        # git can't check out, is a FAILED run - not a crash that kills the
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError,
+            OSError, UnicodeDecodeError, ValueError) as exc:
+        # A pass that hangs past --timeout, leaves the repo in a state git
+        # can't check out, or blows up some other way (bad output encoding,
+        # OS-level failure) is a FAILED run - not a crash that kills the
         # other N-1 runs and loses their already-collected results.
         result = {"run": run_no, "workdir": workdir if keep else None,
+                  "manifest_dir": manifest_dir if keep else None,
                   "branch_checked": None, "gate_pass": False,
                   "error": f"{type(exc).__name__}: {exc}",
                   "canaries_survived": 0, "canaries_total": 0,
@@ -84,10 +121,16 @@ def _run_once(run_no: int, pass_cmd: str, keep: bool, timeout: int) -> dict:
     finally:
         if not keep:
             shutil.rmtree(workdir, ignore_errors=True)
+            shutil.rmtree(manifest_dir, ignore_errors=True)
     return result
 
 
 def run(runs: int, pass_cmd: str, model, keep: bool, timeout: int) -> dict:
+    if runs < 1:
+        # runs=0 means per_run=[] and all([]) is True: a vacuous PASS.
+        # Reject it here too, not just in the CLI's argparse validation,
+        # so a direct run() caller can't hit the same false-PASS path.
+        raise ValueError("runs must be >= 1")
     per_run = []
     for i in range(1, runs + 1):
         r = _run_once(i, pass_cmd, keep, timeout)
@@ -118,6 +161,10 @@ def main(argv=None) -> int:
     p.add_argument("--timeout", type=int, default=1800,
                    help="per-run pass-cmd timeout in seconds")
     args = p.parse_args(argv)
+    if args.runs < 1:
+        # runs=0 would make per_run=[] and all([]) True: a vacuous PASS
+        # that never ran a single canary check. Reject it outright.
+        p.error("--runs must be >= 1")
     results = run(args.runs, args.pass_cmd, args.model, args.keep,
                   args.timeout)
     if args.out:

@@ -5,7 +5,9 @@ Reads the seed-time manifest (answer key) plus a consolidated store and
 reports, deterministically (substring + regex, no LLM anywhere):
   - kill-gate canary survival: the item's atom appears in some file whose
     content also matches every assertion regex (rephrase/merge passes,
-    smoothing fails), and
+    smoothing fails) AND does not match the manifest's retirement_regex
+    (a fact only asserted inside retirement prose, e.g. "...is archived
+    and no longer used", does not count as survival), and
   - cleanup score: duplicates reduced to one location; dead facts gone or
     mentioned only in retirement context.
 
@@ -42,11 +44,12 @@ def _files_with_atom(store: dict, atom: str) -> list:
     return sorted(rel for rel, content in store.items() if atom in content)
 
 
-def _check_canary(item: dict, store: dict) -> dict:
+def _check_canary(item: dict, store: dict, retirement_regex: str) -> dict:
     hits = _files_with_atom(store, item["atom"])
     asserting = [rel for rel in hits
                  if all(re.search(rx, store[rel])
-                        for rx in item["assertion_regexes"])]
+                        for rx in item["assertion_regexes"])
+                 and not re.search(retirement_regex, store[rel])]
     return {"id": item["id"], "kind": item["kind"], "gate": True,
             "survived": bool(asserting),
             "atom_files": hits, "asserting_files": asserting}
@@ -71,7 +74,7 @@ def evaluate(manifest: dict, store_dir: str) -> dict:
     results = []
     for item in manifest["items"]:
         if item["gate"]:
-            results.append(_check_canary(item, store))
+            results.append(_check_canary(item, store, retirement_regex))
         elif item["kind"] == "duplicate":
             results.append(_check_duplicate(item, store))
         elif item["kind"] == "dead":
