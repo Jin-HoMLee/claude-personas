@@ -11,6 +11,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from consolidation_eval import seed  # noqa: E402
 from consolidation_eval import check  # noqa: E402
+from consolidation_eval import fake_passes  # noqa: E402
 
 _FM_RE = re.compile(r"\A---\nname: .+\ndescription: .+\ntype: \w+\n---\n\n", re.M)
 
@@ -252,6 +253,33 @@ class TestCheckCli(_StoreCase):
                               "--store", store], capture_output=True, text=True)
         self.assertEqual(bad.returncode, 1)
         self.assertIn("gate: FAIL", bad.stdout)
+
+
+class TestEvalDiscriminates(unittest.TestCase):
+    """The spec's self-test: if the eval cannot tell a no-op pass from a
+    naive summarizer, the eval is wrong and must not gate #87."""
+
+    def _seeded_store(self):
+        tmp = tempfile.mkdtemp(prefix="canary-e2e-")
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        store = os.path.join(tmp, "store")
+        manifest = seed.write_store(store, os.path.join(tmp, "manifest.json"))
+        return store, manifest
+
+    def test_noop_pass_full_survival_zero_cleanup(self):
+        store, manifest = self._seeded_store()
+        fake_passes.noop(store)
+        v = check.evaluate(manifest, store)
+        self.assertTrue(v["gate_pass"])
+        self.assertEqual(v["canaries_survived"], v["canaries_total"])
+        self.assertEqual(v["cleanup_done"], 0)
+
+    def test_naive_summarizer_fails_survival(self):
+        store, manifest = self._seeded_store()
+        fake_passes.naive_summarize(store)
+        v = check.evaluate(manifest, store)
+        self.assertFalse(v["gate_pass"])
+        self.assertLess(v["canaries_survived"], v["canaries_total"])
 
 
 if __name__ == "__main__":
