@@ -113,6 +113,31 @@ class TestSeedWriteStore(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertTrue(os.path.isfile(manifest_path))
 
+    def test_write_store_rejects_manifest_inside_store(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = os.path.join(tmp, "store")
+            manifest_inside = os.path.join(store, "manifest.json")
+            with self.assertRaises(ValueError) as ctx:
+                seed.write_store(store, manifest_inside)
+            self.assertIn("must lie outside", str(ctx.exception))
+            self.assertFalse(os.path.exists(store),
+                             "store directory should not be created on validation error")
+
+    def test_cli_rejects_manifest_inside_store(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = os.path.join(tmp, "store")
+            os.makedirs(store, exist_ok=True)
+            manifest_inside = os.path.join(store, "manifest.json")
+            script = os.path.join(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__))), "consolidation_eval", "seed.py")
+            r = subprocess.run(
+                [sys.executable, script, "--store", store,
+                 "--manifest", manifest_inside],
+                capture_output=True, text=True)
+            self.assertNotEqual(r.returncode, 0, f"expected error, got: {r.stdout}")
+            self.assertFalse(os.path.exists(manifest_inside),
+                             "manifest file should not be created on validation error")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -312,12 +312,16 @@ def _assert_atom_hygiene(files: dict, manifest: dict) -> None:
 
 
 def write_store(store_dir: str, manifest_path: str) -> dict:
+    store_abs = os.path.abspath(store_dir)
+    manifest_abs = os.path.abspath(manifest_path)
+    if manifest_abs.startswith(store_abs + os.sep):
+        raise ValueError("manifest_path must lie outside store_dir (the pass must not see the answer key)")
     files, manifest = build_store()
     os.makedirs(store_dir, exist_ok=True)
     for fname, content in files.items():
         with open(os.path.join(store_dir, fname), "w", encoding="utf-8") as f:
             f.write(content)
-    os.makedirs(os.path.dirname(os.path.abspath(manifest_path)), exist_ok=True)
+    os.makedirs(os.path.dirname(manifest_abs), exist_ok=True)
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
         f.write("\n")
@@ -330,11 +334,10 @@ def main(argv=None) -> int:
     p.add_argument("--manifest", required=True,
                    help="path for the manifest answer key (must be outside --store)")
     args = p.parse_args(argv)
-    store_abs = os.path.abspath(args.store)
-    manifest_abs = os.path.abspath(args.manifest)
-    if manifest_abs.startswith(store_abs + os.sep):
-        p.error("--manifest must lie outside --store (the pass must not see the answer key)")
-    manifest = write_store(args.store, args.manifest)
+    try:
+        manifest = write_store(args.store, args.manifest)
+    except ValueError as e:
+        p.error(str(e))
     n_files = len(build_store()[0])
     print(f"seeded {n_files} files into {args.store} "
           f"({len(manifest['items'])} planted items); manifest: {args.manifest}")
