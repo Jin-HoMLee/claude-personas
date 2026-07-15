@@ -51,7 +51,7 @@ except ImportError:  # executed as a script, not a package
 def _git(store: str, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", "-C", store,
-         "-c", "user.email=canary-eval@local", "-c", "user.name=canary-eval",
+         "-c", "user.email=memory@local", "-c", "user.name=memory",
          *args],
         check=True, capture_output=True, text=True)
 

@@ -415,6 +415,15 @@ class TestRunEvalDriver(unittest.TestCase):
                 base = os.path.basename(d)
                 self.assertNotIn("canary", base)
                 self.assertNotIn("eval", base)
+            store = os.path.join(r["workdir"], "store")
+            log_result = subprocess.run(
+                ["git", "-C", store, "log", "--oneline"],
+                capture_output=True, text=True, check=True)
+            log_output = log_result.stdout.lower()
+            self.assertNotIn("canary", log_output,
+                             "git log should not contain 'canary'")
+            self.assertNotIn("eval", log_output,
+                             "git log should not contain 'eval'")
         finally:
             import shutil as _shutil
             _shutil.rmtree(r["workdir"], ignore_errors=True)
