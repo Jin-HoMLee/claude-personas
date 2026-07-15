@@ -54,25 +54,36 @@ def _run_once(run_no: int, pass_cmd: str, keep: bool, timeout: int) -> dict:
     _git(store, "add", "-A")
     _git(store, "commit", "-q", "-m", "canary-eval: seeded fixture store")
 
-    subprocess.run(pass_cmd, shell=True, cwd=store, timeout=timeout,
-                   check=False)
+    try:
+        subprocess.run(pass_cmd, shell=True, cwd=store, timeout=timeout,
+                       check=False)
 
-    branches = _git(store, "branch", "--list", "consolidate/*",
-                    "--format=%(refname:short)").stdout.split()
-    if branches:
-        _git(store, "checkout", "-q", branches[0])
+        branches = _git(store, "branch", "--list", "consolidate/*",
+                        "--format=%(refname:short)").stdout.split()
+        if branches:
+            _git(store, "checkout", "-q", branches[0])
 
-    verdict = check.evaluate(manifest, store)
-    result = {"run": run_no, "workdir": workdir if keep else None,
-              "branch_checked": branches[0] if branches else None,
-              "gate_pass": verdict["gate_pass"],
-              "canaries_survived": verdict["canaries_survived"],
-              "canaries_total": verdict["canaries_total"],
-              "cleanup_done": verdict["cleanup_done"],
-              "cleanup_total": verdict["cleanup_total"],
-              "results": verdict["results"]}
-    if not keep:
-        shutil.rmtree(workdir, ignore_errors=True)
+        verdict = check.evaluate(manifest, store)
+        result = {"run": run_no, "workdir": workdir if keep else None,
+                  "branch_checked": branches[0] if branches else None,
+                  "gate_pass": verdict["gate_pass"],
+                  "canaries_survived": verdict["canaries_survived"],
+                  "canaries_total": verdict["canaries_total"],
+                  "cleanup_done": verdict["cleanup_done"],
+                  "cleanup_total": verdict["cleanup_total"],
+                  "results": verdict["results"]}
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
+        # A pass that hangs past --timeout, or leaves the repo in a state
+        # git can't check out, is a FAILED run - not a crash that kills the
+        # other N-1 runs and loses their already-collected results.
+        result = {"run": run_no, "workdir": workdir if keep else None,
+                  "branch_checked": None, "gate_pass": False,
+                  "error": f"{type(exc).__name__}: {exc}",
+                  "canaries_survived": 0, "canaries_total": 0,
+                  "cleanup_done": 0, "cleanup_total": 0, "results": []}
+    finally:
+        if not keep:
+            shutil.rmtree(workdir, ignore_errors=True)
     return result
 
 
@@ -80,9 +91,12 @@ def run(runs: int, pass_cmd: str, model, keep: bool, timeout: int) -> dict:
     per_run = []
     for i in range(1, runs + 1):
         r = _run_once(i, pass_cmd, keep, timeout)
-        print(f"run {i}/{runs}: gate={'PASS' if r['gate_pass'] else 'FAIL'} "
-              f"survival={r['canaries_survived']}/{r['canaries_total']} "
-              f"cleanup={r['cleanup_done']}/{r['cleanup_total']}")
+        msg = (f"run {i}/{runs}: gate={'PASS' if r['gate_pass'] else 'FAIL'} "
+               f"survival={r['canaries_survived']}/{r['canaries_total']} "
+               f"cleanup={r['cleanup_done']}/{r['cleanup_total']}")
+        if "error" in r:
+            msg += f" error={r['error']}"
+        print(msg)
         per_run.append(r)
     return {"runs": runs, "pass_cmd": pass_cmd, "model": model,
             "gate_pass": all(r["gate_pass"] for r in per_run),

@@ -1288,3 +1288,10 @@ git push origin 88-consolidation-canary-eval
 
 - Open the PR for `88-consolidation-canary-eval` with `Closes #88` noting deliverable order: seed/check/fakes/driver land now; the real 10-run gate record on #88 waits for #89's skill.
 - The AC1 checkbox "eval run results recorded on this issue" is satisfied only after that gate run; the issue stays open until then unless re-scoped.
+
+## Deviations from the planned code
+
+- Task 1 (earlier deviation): the manifest-placement guard moved from the CLI's `main()` into `seed.write_store()` itself, so any caller gets the protection, not just the CLI; negative tests were added for both the function and the CLI path.
+- Review round 1 on Task 4 found the planned `run_eval.py` crashed the whole N-run driver on a pass-cmd timeout or a broken post-pass git checkout, and left the `consolidate/*` branch-checkout path completely untested.
+- `run_eval.py` now wraps pass execution, branch discovery/checkout, and `check.evaluate` in a try/except, turning `TimeoutExpired`/`CalledProcessError` into a normal FAILED run carrying an `"error"` field instead of an uncaught exception.
+- Workdir cleanup moved into a `finally` block so it runs on every path (unless `--keep`); two tests were added to `TestRunEvalDriver` covering the branch-checkout discrimination and the timeout-becomes-a-failed-run behavior.

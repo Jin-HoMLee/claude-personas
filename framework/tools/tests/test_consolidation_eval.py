@@ -319,6 +319,32 @@ class TestRunEvalDriver(unittest.TestCase):
             self.assertTrue(results["gate_pass"])
             self.assertIsNone(results["model"])
 
+    def test_consolidate_branch_is_checked_out_and_checked(self):
+        # A pass that leaves a consolidate/* branch with the store destroyed,
+        # while the ORIGINAL branch (working tree) still has every file.
+        # This is discriminating: if the driver wrongly checked the working
+        # tree instead of the consolidate branch, the gate would pass.
+        pass_cmd = ("git checkout -q -b consolidate/test && "
+                   "git rm -q -- '*.md' && "
+                   "git -c user.email=t@t -c user.name=t commit -q "
+                   "-m consolidated && "
+                   "git checkout -q -")
+        results = run_eval.run(runs=1, pass_cmd=pass_cmd, model=None,
+                               keep=False, timeout=120)
+        self.assertFalse(results["gate_pass"])
+        self.assertEqual(results["per_run"][0]["branch_checked"],
+                         "consolidate/test")
+
+    def test_timeout_is_a_failed_run_not_a_crash(self):
+        pass_cmd = f'"{sys.executable}" -c "import time; time.sleep(5)"'
+        results = run_eval.run(runs=1, pass_cmd=pass_cmd, model=None,
+                               keep=False, timeout=1)
+        self.assertFalse(results["gate_pass"])
+        r = results["per_run"][0]
+        self.assertIn("error", r)
+        self.assertIn("timeout", r["error"].lower())
+        self.assertEqual(len(results["per_run"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
