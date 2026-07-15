@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from consolidation_eval import seed  # noqa: E402
 from consolidation_eval import check  # noqa: E402
 from consolidation_eval import fake_passes  # noqa: E402
+from consolidation_eval import run_eval  # noqa: E402
 
 _FM_RE = re.compile(r"\A---\nname: .+\ndescription: .+\ntype: \w+\n---\n\n", re.M)
 
@@ -280,6 +281,43 @@ class TestEvalDiscriminates(unittest.TestCase):
         v = check.evaluate(manifest, store)
         self.assertFalse(v["gate_pass"])
         self.assertLess(v["canaries_survived"], v["canaries_total"])
+
+
+class TestRunEvalDriver(unittest.TestCase):
+    _TOOLS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def _fake_cmd(self, mode):
+        script = os.path.join(self._TOOLS_DIR, "consolidation_eval",
+                              "fake_passes.py")
+        return f'"{sys.executable}" "{script}" --mode {mode} .'
+
+    def test_noop_gate_passes_across_runs(self):
+        results = run_eval.run(runs=2, pass_cmd=self._fake_cmd("noop"),
+                               model=None, keep=False, timeout=120)
+        self.assertTrue(results["gate_pass"])
+        self.assertEqual(len(results["per_run"]), 2)
+        for r in results["per_run"]:
+            self.assertEqual(r["canaries_survived"], r["canaries_total"])
+
+    def test_summarizer_gate_fails(self):
+        results = run_eval.run(runs=1, pass_cmd=self._fake_cmd("summarize"),
+                               model=None, keep=False, timeout=120)
+        self.assertFalse(results["gate_pass"])
+
+    def test_cli_writes_results_json_and_exit_code(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "results.json")
+            script = os.path.join(self._TOOLS_DIR, "consolidation_eval",
+                                  "run_eval.py")
+            r = subprocess.run(
+                [sys.executable, script, "--runs", "1",
+                 "--pass-cmd", self._fake_cmd("noop"), "--out", out],
+                capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            with open(out, encoding="utf-8") as f:
+                results = json.load(f)
+            self.assertTrue(results["gate_pass"])
+            self.assertIsNone(results["model"])
 
 
 if __name__ == "__main__":
