@@ -44,7 +44,9 @@ Every operation updates `MEMORY.md` in the same commit: after every operation, e
 
 ## Procedure
 
-1. `python3 <tools-dir>/consolidate_pass.py begin --store <store>` (resolve `<tools-dir>`: `.agents/tools/` in an installed instance, `framework/tools/` in the framework repo).
+1. `python3 <tools-dir>/consolidate_pass.py begin --store <store>`.
+   If the invocation states an absolute path to `consolidate_pass.py`, use that path.
+   Otherwise resolve `<tools-dir>`: `.agents/tools/` in an installed instance, `framework/tools/` in the framework repo.
    If begin fails, report its message and stop - do not work around it.
 2. Read the ENTIRE store: `MEMORY.md` plus every linked file. Build the full operation list BEFORE editing anything, applying the preservation stance.
 3. Per operation: edit the files (all pieces of the logical op together, including the index update), then

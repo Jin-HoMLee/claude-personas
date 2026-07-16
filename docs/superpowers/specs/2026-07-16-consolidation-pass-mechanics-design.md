@@ -94,7 +94,7 @@ The gate run (recorded on #88 after this PR merges):
 
 ```bash
 python3 framework/tools/consolidation_eval/run_eval.py --runs 10 --model <pinned> \
-    --pass-cmd 'claude -p "consolidate the memory store in ." --model <pinned> \
+    --pass-cmd 'claude -p "You are running a consolidation pass. Consolidate the memory store in the current directory. The consolidation wrapper is at <personas-repo>/framework/tools/consolidate_pass.py." --model <pinned> \
         --append-system-prompt-file <personas-repo>/framework/skills/consolidate-memory/SKILL.md \
         --permission-mode acceptEdits --allowedTools "Bash(python3 *),Bash(git *)"'
 ```
