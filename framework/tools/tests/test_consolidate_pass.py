@@ -134,6 +134,21 @@ class TestCommit(unittest.TestCase):
         with self.assertRaises(SystemExit):
             cp.main(["commit", "--op", "tidy", "-m", "m"])
 
+    def test_commit_rejects_rename_smuggled_from_outside(self):
+        _git(self.root, "mv", "README.md", "mem/readme_fact.md")
+        self.assertNotEqual(
+            cp.main(["commit", "--op", "redistribute", "-m", "m"]), 0)
+        self.assertEqual(
+            _git(self.root, "log", "-1", "--format=%s").stdout.strip(), "seed")
+
+    def test_commit_allows_in_store_rename(self):
+        _git(self.root, "mv", "mem/fact_a.md", "mem/fact_b.md")
+        self._edit("mem/MEMORY.md", "# Index\n\n- [Fact A](fact_b.md) - a fact\n")
+        rc = cp.main(["commit", "--op", "redistribute", "-m", "rename a to b"])
+        self.assertEqual(rc, 0)
+        subj = _git(self.root, "log", "-1", "--format=%s").stdout.strip()
+        self.assertEqual(subj, "consolidate(redistribute): rename a to b")
+
 
 if __name__ == "__main__":
     unittest.main()

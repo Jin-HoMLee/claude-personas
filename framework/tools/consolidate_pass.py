@@ -78,14 +78,19 @@ def store_relpath(root: str, store: str) -> str | None:
 
 
 def changed_paths(root: str) -> list[str]:
-    """Working-tree changes vs HEAD, rename-aware (new path after ' -> ')."""
+    """Working-tree changes vs HEAD. Rename lines (`old -> new`) yield BOTH
+    endpoints, so a rename that crosses the store boundary on either side
+    is visible to the offender check."""
     out = _git(root, "status", "--porcelain").stdout
     paths = []
     for line in out.splitlines():
         path = line[3:]
         if " -> " in path:
-            path = path.split(" -> ", 1)[1]
-        paths.append(path.strip().strip('"'))
+            old, new = path.split(" -> ", 1)
+            paths.append(old.strip().strip('"'))
+            paths.append(new.strip().strip('"'))
+        else:
+            paths.append(path.strip().strip('"'))
     return paths
 
 
