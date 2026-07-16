@@ -35,6 +35,21 @@ def make_repo(tmp):
     return tmp
 
 
+def make_root_store_repo(tmp):
+    """Git repo whose root IS the store (the canary-eval fixture's shape):
+    MEMORY.md + fact_a.md live directly at the repo root, no subdir."""
+    _git(tmp, "init", "-q", "-b", "main", ".")
+    _git(tmp, "config", "user.email", "t@l")
+    _git(tmp, "config", "user.name", "t")
+    with open(os.path.join(tmp, "MEMORY.md"), "w") as f:
+        f.write("# Index\n\n- [Fact A](fact_a.md) - a fact\n")
+    with open(os.path.join(tmp, "fact_a.md"), "w") as f:
+        f.write("---\nname: fact-a\n---\n\nFact A body.\n")
+    _git(tmp, "add", ".")
+    _git(tmp, "commit", "-qm", "seed")
+    return tmp
+
+
 class TestBegin(unittest.TestCase):
     def setUp(self):
         self._td = tempfile.TemporaryDirectory(prefix="mem-")
@@ -259,6 +274,59 @@ class TestFinishAbort(unittest.TestCase):
             self.assertIsNotNone(cp.config_get(self.root, "consolidate.branch"))
             branch = _git(self.root, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
             self.assertTrue(branch.startswith("consolidate/"))
+
+
+class TestStoreAtRoot(unittest.TestCase):
+    # Same cwd note as TestCommit/TestFinishAbort: commit/finish resolve
+    # the repo from the process cwd, so chdir into the fixture. This
+    # fixture is the canary-eval store shape (store == repo root) that
+    # begin/commit/finish previously rejected - see the plan doc's
+    # Deviations entry for smoke round 2.
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory(prefix="mem-root-")
+        self.root = make_root_store_repo(self._td.name)
+        self._oldcwd = os.getcwd()
+        os.chdir(self.root)
+
+    def tearDown(self):
+        os.chdir(self._oldcwd)
+        self._td.cleanup()
+
+    def test_begin_root_store_creates_root_branch(self):
+        rc = cp.main(["begin", "--store", self.root])
+        self.assertEqual(rc, 0)
+        branch = _git(self.root, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        self.assertTrue(branch.startswith("consolidate/root-"))
+        self.assertEqual(cp.config_get(self.root, "consolidate.store"), ".")
+
+    def test_commit_root_store_typed_prefix(self):
+        self.assertEqual(cp.main(["begin", "--store", self.root]), 0)
+        with open(os.path.join(self.root, "fact_a.md"), "w") as f:
+            f.write("---\nname: fact-a\n---\n\nMerged body.\n")
+        rc = cp.main(["commit", "--op", "dedupe", "-m", "merge a into a"])
+        self.assertEqual(rc, 0)
+        subj = _git(self.root, "log", "-1", "--format=%s").stdout.strip()
+        self.assertEqual(subj, "consolidate(dedupe): merge a into a")
+
+    def test_finish_root_store_remoteless_succeeds(self):
+        self.assertEqual(cp.main(["begin", "--store", self.root]), 0)
+        # Body-only edit to fact_a.md keeps index<->file sync intact:
+        # MEMORY.md still links fact_a.md, and fact_a.md still exists.
+        with open(os.path.join(self.root, "fact_a.md"), "w") as f:
+            f.write("---\nname: fact-a\n---\n\nMerged body.\n")
+        self.assertEqual(cp.main(["commit", "--op", "dedupe", "-m", "merge"]), 0)
+        rc = cp.main(["finish"])
+        self.assertEqual(rc, 0)
+        branch = _git(self.root, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        self.assertTrue(branch.startswith("consolidate/root-"))
+        self.assertIsNone(cp.config_get(self.root, "consolidate.branch"))
+
+    def test_begin_refuses_dirty_root_store(self):
+        with open(os.path.join(self.root, "fact_a.md"), "a") as f:
+            f.write("dirt\n")
+        rc = cp.main(["begin", "--store", self.root])
+        self.assertNotEqual(rc, 0)
+        self.assertIsNone(cp.config_get(self.root, "consolidate.branch"))
 
 
 if __name__ == "__main__":

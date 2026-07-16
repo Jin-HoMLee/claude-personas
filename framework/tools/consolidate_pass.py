@@ -72,13 +72,15 @@ def _current_branch(root: str) -> str:
 
 
 def store_relpath(root: str, store: str) -> str | None:
-    """Store dir as a relpath under root, or None if outside/invalid."""
+    """Store dir as a relpath under root, or None if outside/invalid.
+    A store that IS the repo root (rel == ".") is a legitimate shape -
+    both a production layout and the canary-eval fixture's shape - and
+    returns "." rather than being rejected."""
     ab = os.path.realpath(store)
     rootab = os.path.realpath(root)
     if not (ab == rootab or ab.startswith(rootab + os.sep)):
         return None
-    rel = os.path.relpath(ab, rootab)
-    return None if rel == "." else rel
+    return os.path.relpath(ab, rootab)
 
 
 def changed_paths(root: str) -> list[str]:
@@ -111,8 +113,11 @@ def cmd_commit(args: argparse.Namespace) -> int:
     paths = changed_paths(root)
     if not paths:
         return _fail("nothing to commit")
-    offenders = [p_ for p_ in paths
-                 if not (p_ == store or p_.startswith(store + "/"))]
+    # store == "." means the store IS the repo root, so every changed path
+    # is in-store by definition - skip the filter rather than compare
+    # against a nonsensical "./" prefix.
+    offenders = [] if store == "." else [
+        p_ for p_ in paths if not (p_ == store or p_.startswith(store + "/"))]
     if offenders:
         print("FAIL: changes outside the store; revert these and retry:",
               file=sys.stderr)
@@ -126,7 +131,11 @@ def cmd_commit(args: argparse.Namespace) -> int:
 
 
 def cmd_begin(args: argparse.Namespace) -> int:
-    root = repo_root(os.path.dirname(os.path.realpath(args.store)) or ".")
+    # Derive root from the store dir itself, not its parent: `git
+    # rev-parse --show-toplevel` finds the enclosing repo regardless of
+    # depth, so this works whether the store is a subdir OR is itself the
+    # repo root (the canary-eval fixture's shape).
+    root = repo_root(os.path.realpath(args.store))
     if root is None:
         return _fail(f"{args.store} is not inside a git repository")
     if _dirty(root):
@@ -136,7 +145,7 @@ def cmd_begin(args: argparse.Namespace) -> int:
         return _fail(f"{args.store} is not a memory store (no MEMORY.md)")
     if config_get(root, "consolidate.branch"):
         return _fail("a consolidation pass is already in progress; run finish or abort")
-    slug = rel.replace(os.sep, "-")
+    slug = "root" if rel == "." else rel.replace(os.sep, "-")
     branch = f"consolidate/{slug}-{datetime.date.today().isoformat()}"
     if _git(root, "rev-parse", "--verify", branch, check=False).returncode == 0:
         return _fail(f"branch {branch} already exists; delete it or finish that pass")
@@ -213,7 +222,11 @@ def cmd_finish(args: argparse.Namespace) -> int:
             config_unset(root, key)
         print(f"OK: {len(ops)} operation(s) on {branch} (no remote; branch is the deliverable)")
         return 0
-    title = f"consolidate: {store} pass {datetime.date.today().isoformat()}"
+    # Same slug rule as begin: "root" for a store-at-repo-root pass, else
+    # the store's relpath - keeps the PR title consistent with the branch
+    # name instead of printing the raw "." store string.
+    slug = "root" if store == "." else store
+    title = f"consolidate: {slug} pass {datetime.date.today().isoformat()}"
     body = "Consolidation pass operations:\n\n" + "\n".join(f"- {s}" for s in ops)
     if not shutil.which("gh"):
         return _fail("gh not found; branch intact - deliver manually:\n"

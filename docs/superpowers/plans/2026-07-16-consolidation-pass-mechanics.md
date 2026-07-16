@@ -925,3 +925,5 @@ Sentence-per-line splits applied to five bullets.
 Task 8 first smoke: the eval fixture is a bare tempdir store with no `.agents/tools/` or `framework/tools/`, so the skill's `<tools-dir>` resolution found no wrapper and the pass safely refused - the smoke "passed" vacuously (9/9 canary survival with zero operations).
 SKILL.md's `<tools-dir>` resolution now accepts an explicit invocation-stated wrapper path as its first-priority source, and the gate-run command in the design spec now states that path.
 Also recorded: a refusing pass reads as gate PASS under the survival-only rule, so the #88 gate-run record must additionally require cleanup > 0 as a no-op sanity check, not rely on survival alone.
+
+Store-at-root support added to the wrapper after smoke round 2 proved the fixture shape unreachable (begin parent-dir root discovery + relpath "." rejection); TestStoreAtRoot covers it.
