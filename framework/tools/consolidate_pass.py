@@ -23,6 +23,7 @@ import argparse
 import datetime
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -151,11 +152,13 @@ def cmd_begin(args: argparse.Namespace) -> int:
 
 
 def index_sync_errors(root: str, store: str) -> list[str]:
-    """Index<->file sync: every store .md file indexed, every index link live."""
+    """Index<->file sync, same-directory links only - cross-store references
+    like shared/MEMORY.md are legitimate and skipped, as are URLs."""
     storedir = os.path.join(root, store)
     idx_path = os.path.join(storedir, "MEMORY.md")
     with open(idx_path, encoding="utf-8") as f:
-        linked = set(INDEX_LINK_RE.findall(f.read()))
+        links = INDEX_LINK_RE.findall(f.read())
+    linked = {l for l in links if "/" not in l and "://" not in l}
     on_disk = {f_ for f_ in os.listdir(storedir)
                if f_.endswith(".md") and f_ != "MEMORY.md"}
     errors = []
@@ -197,6 +200,9 @@ def cmd_finish(args: argparse.Namespace) -> int:
         print("OK: nothing to consolidate; cleaning up")
         _cleanup(root, branch, baseref)
         return 0
+    idx_path = os.path.join(root, store, "MEMORY.md")
+    if not os.path.isfile(idx_path):
+        return _fail(f"{store}/MEMORY.md missing - the pass must never delete the store index")
     errors = index_sync_errors(root, store)
     if errors:
         for e in errors:
@@ -207,9 +213,13 @@ def cmd_finish(args: argparse.Namespace) -> int:
             config_unset(root, key)
         print(f"OK: {len(ops)} operation(s) on {branch} (no remote; branch is the deliverable)")
         return 0
-    push = _git(root, "push", "-u", "origin", branch, check=False)
     title = f"consolidate: {store} pass {datetime.date.today().isoformat()}"
     body = "Consolidation pass operations:\n\n" + "\n".join(f"- {s}" for s in ops)
+    if not shutil.which("gh"):
+        return _fail("gh not found; branch intact - deliver manually:\n"
+                     f"  git push -u origin {branch}\n"
+                     f"  gh pr create --title '{title}' --body-file <ops>")
+    push = _git(root, "push", "-u", "origin", branch, check=False)
     if push.returncode != 0:
         print(push.stderr, file=sys.stderr)
         return _fail("push failed; branch intact - deliver manually:\n"

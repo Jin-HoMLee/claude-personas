@@ -1,5 +1,6 @@
 """test_consolidate_pass.py - guard tests for consolidate_pass.py (#89)."""
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -209,6 +210,55 @@ class TestFinishAbort(unittest.TestCase):
         self.assertIsNone(cp.config_get(self.root, "consolidate.store"))
         subj = _git(self.root, "log", "-1", "--format=%s").stdout.strip()
         self.assertEqual(subj, "seed")
+
+    def test_index_sync_ignores_cross_store_links(self):
+        # A cross-store link (e.g. shared/MEMORY.md) never resolves against
+        # this store's flat os.listdir() basenames and must not be flagged.
+        idx = os.path.join(self.root, "mem", "MEMORY.md")
+        with open(idx, "a") as f:
+            f.write("- [Shared](shared/MEMORY.md) - cross-store\n")
+        # Also make a real in-store edit so there's something to commit.
+        with open(os.path.join(self.root, "mem", "fact_a.md"), "w") as f:
+            f.write("---\nname: fact-a\n---\n\nMerged.\n")
+        rc = cp.main(["commit", "--op", "redistribute", "-m", "add cross-store link"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(cp.index_sync_errors(self.root, "mem"), [])
+        self.assertEqual(cp.main(["finish"]), 0)
+
+    def test_finish_fails_cleanly_when_index_deleted(self):
+        os.remove(os.path.join(self.root, "mem", "MEMORY.md"))
+        rc = cp.main(["commit", "--op", "retire", "-m", "removed index"])
+        self.assertEqual(rc, 0)
+        self.assertNotEqual(cp.main(["finish"]), 0)
+
+    def test_finish_without_gh_keeps_config(self):
+        # Approach chosen: strip PATH down to a temp bin dir containing only
+        # a symlink to the real git binary, so `gh` genuinely resolves to
+        # nothing via shutil.which - exercising the real guard end-to-end
+        # rather than mocking it.
+        git_path = shutil.which("git")
+        self.assertIsNotNone(git_path, "git must be on PATH to run this test")
+        with tempfile.TemporaryDirectory(prefix="bare-") as bare_dir, \
+                tempfile.TemporaryDirectory(prefix="bin-") as bin_dir:
+            bare_repo = os.path.join(bare_dir, "origin.git")
+            subprocess.run(["git", "init", "-q", "--bare", bare_repo],
+                           check=True, capture_output=True, text=True)
+            _git(self.root, "remote", "add", "origin", f"file://{bare_repo}")
+            self._commit_op()
+            os.symlink(git_path, os.path.join(bin_dir, "git"))
+            old_path = os.environ.get("PATH")
+            os.environ["PATH"] = bin_dir
+            try:
+                rc = cp.main(["finish"])
+            finally:
+                if old_path is None:
+                    os.environ.pop("PATH", None)
+                else:
+                    os.environ["PATH"] = old_path
+            self.assertNotEqual(rc, 0)
+            self.assertIsNotNone(cp.config_get(self.root, "consolidate.branch"))
+            branch = _git(self.root, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+            self.assertTrue(branch.startswith("consolidate/"))
 
 
 if __name__ == "__main__":
