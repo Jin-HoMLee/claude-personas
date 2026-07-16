@@ -150,5 +150,66 @@ class TestCommit(unittest.TestCase):
         self.assertEqual(subj, "consolidate(redistribute): rename a to b")
 
 
+class TestFinishAbort(unittest.TestCase):
+    # Same cwd note as TestCommit: chdir into the fixture.
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory(prefix="mem-")
+        self.root = make_repo(self._td.name)
+        self._oldcwd = os.getcwd()
+        os.chdir(self.root)
+        cp.main(["begin", "--store", os.path.join(self.root, "mem")])
+
+    def tearDown(self):
+        os.chdir(self._oldcwd)
+        self._td.cleanup()
+
+    def _commit_op(self):
+        with open(os.path.join(self.root, "mem", "fact_a.md"), "w") as f:
+            f.write("---\nname: fact-a\n---\n\nMerged.\n")
+        cp.main(["commit", "--op", "dedupe", "-m", "merge"])
+
+    def test_zero_op_finish_cleans_up(self):
+        self.assertEqual(cp.main(["finish"]), 0)
+        self.assertEqual(_git(self.root, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip(), "main")
+        self.assertIsNone(cp.config_get(self.root, "consolidate.branch"))
+        branches = _git(self.root, "branch", "--list", "consolidate/*").stdout.strip()
+        self.assertEqual(branches, "")
+
+    def test_finish_refuses_dirty_tree(self):
+        with open(os.path.join(self.root, "mem", "fact_a.md"), "a") as f:
+            f.write("dirt\n")
+        self.assertNotEqual(cp.main(["finish"]), 0)
+
+    def test_finish_remoteless_stops_at_branch(self):
+        self._commit_op()
+        self.assertEqual(cp.main(["finish"]), 0)
+        branch = _git(self.root, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        self.assertTrue(branch.startswith("consolidate/"))
+        self.assertIsNone(cp.config_get(self.root, "consolidate.branch"))
+
+    def test_finish_catches_dangling_index_line(self):
+        idx = os.path.join(self.root, "mem", "MEMORY.md")
+        with open(idx, "a") as f:
+            f.write("- [Ghost](ghost.md) - dangles\n")
+        _git(self.root, "add", "-A")
+        _git(self.root, "commit", "-qm", "consolidate(retire): bad edit")
+        self.assertNotEqual(cp.main(["finish"]), 0)
+
+    def test_finish_catches_orphan_file(self):
+        with open(os.path.join(self.root, "mem", "orphan.md"), "w") as f:
+            f.write("---\nname: orphan\n---\n\nNot indexed.\n")
+        _git(self.root, "add", "-A")
+        _git(self.root, "commit", "-qm", "consolidate(redistribute): bad split")
+        self.assertNotEqual(cp.main(["finish"]), 0)
+
+    def test_abort_restores_base(self):
+        self._commit_op()
+        self.assertEqual(cp.main(["abort"]), 0)
+        self.assertEqual(_git(self.root, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip(), "main")
+        self.assertIsNone(cp.config_get(self.root, "consolidate.store"))
+        subj = _git(self.root, "log", "-1", "--format=%s").stdout.strip()
+        self.assertEqual(subj, "seed")
+
+
 if __name__ == "__main__":
     unittest.main()

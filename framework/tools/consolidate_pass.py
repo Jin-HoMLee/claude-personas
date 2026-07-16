@@ -22,12 +22,15 @@ from __future__ import annotations
 import argparse
 import datetime
 import os
+import re
 import subprocess
 import sys
 
 OPS = ("dedupe", "redistribute", "retire")
 KEYS = ("consolidate.store", "consolidate.base",
         "consolidate.branch", "consolidate.baseref")
+
+INDEX_LINK_RE = re.compile(r"\]\(([^)]+\.md)\)")
 
 
 def _git(root: str, *args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -147,6 +150,99 @@ def cmd_begin(args: argparse.Namespace) -> int:
     return 0
 
 
+def index_sync_errors(root: str, store: str) -> list[str]:
+    """Index<->file sync: every store .md file indexed, every index link live."""
+    storedir = os.path.join(root, store)
+    idx_path = os.path.join(storedir, "MEMORY.md")
+    with open(idx_path, encoding="utf-8") as f:
+        linked = set(INDEX_LINK_RE.findall(f.read()))
+    on_disk = {f_ for f_ in os.listdir(storedir)
+               if f_.endswith(".md") and f_ != "MEMORY.md"}
+    errors = []
+    for ghost in sorted(linked - on_disk):
+        errors.append(f"index links missing file: {ghost}")
+    for orphan in sorted(on_disk - linked):
+        errors.append(f"file not in index: {orphan}")
+    return errors
+
+
+def _op_log(root: str, base: str) -> list[str]:
+    out = _git(root, "log", "--reverse", "--format=%s", f"{base}..HEAD").stdout
+    return [s for s in out.splitlines() if s.strip()]
+
+
+def _cleanup(root: str, branch: str, baseref: str) -> None:
+    _git(root, "checkout", "-q", baseref)
+    _git(root, "branch", "-D", branch)
+    for key in KEYS:
+        config_unset(root, key)
+
+
+def cmd_finish(args: argparse.Namespace) -> int:
+    root = repo_root()
+    if root is None:
+        return _fail("not inside a git repository")
+    branch = config_get(root, "consolidate.branch")
+    store = config_get(root, "consolidate.store")
+    base = config_get(root, "consolidate.base")
+    baseref = config_get(root, "consolidate.baseref")
+    if not all((branch, store, base, baseref)):
+        return _fail("no consolidation pass in progress; run begin first")
+    if _current_branch(root) != branch:
+        return _fail(f"not on the pass branch {branch}")
+    if _dirty(root):
+        return _fail("uncommitted changes; land them via commit or revert them")
+    ops = _op_log(root, base)
+    if not ops:
+        print("OK: nothing to consolidate; cleaning up")
+        _cleanup(root, branch, baseref)
+        return 0
+    errors = index_sync_errors(root, store)
+    if errors:
+        for e in errors:
+            print(f"FAIL: {e}", file=sys.stderr)
+        return 1
+    if not _git(root, "remote", check=False).stdout.strip():
+        for key in KEYS:
+            config_unset(root, key)
+        print(f"OK: {len(ops)} operation(s) on {branch} (no remote; branch is the deliverable)")
+        return 0
+    push = _git(root, "push", "-u", "origin", branch, check=False)
+    title = f"consolidate: {store} pass {datetime.date.today().isoformat()}"
+    body = "Consolidation pass operations:\n\n" + "\n".join(f"- {s}" for s in ops)
+    if push.returncode != 0:
+        print(push.stderr, file=sys.stderr)
+        return _fail("push failed; branch intact - deliver manually:\n"
+                     f"  git push -u origin {branch}\n"
+                     f"  gh pr create --title '{title}' --body-file <ops>")
+    pr = subprocess.run(["gh", "pr", "create", "--title", title, "--body", body],
+                        cwd=root, capture_output=True, text=True)
+    if pr.returncode != 0:
+        print(pr.stderr, file=sys.stderr)
+        return _fail("gh pr create failed; branch pushed - open the PR manually:\n"
+                     f"  gh pr create --title '{title}' --body '...op log...'")
+    for key in KEYS:
+        config_unset(root, key)
+    print(f"OK: PR opened for {branch}\n{pr.stdout.strip()}")
+    return 0
+
+
+def cmd_abort(args: argparse.Namespace) -> int:
+    root = repo_root()
+    if root is None:
+        return _fail("not inside a git repository")
+    branch = config_get(root, "consolidate.branch")
+    baseref = config_get(root, "consolidate.baseref")
+    if not branch or not baseref:
+        return _fail("no consolidation pass in progress")
+    _git(root, "checkout", "-qf", baseref)
+    _git(root, "branch", "-D", branch)
+    for key in KEYS:
+        config_unset(root, key)
+    print(f"OK: aborted; back on {baseref}, {branch} deleted")
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -157,6 +253,10 @@ def main(argv=None) -> int:
     c.add_argument("--op", required=True, choices=OPS)
     c.add_argument("-m", required=True)
     c.set_defaults(fn=cmd_commit)
+    f = sub.add_parser("finish")
+    f.set_defaults(fn=cmd_finish)
+    a = sub.add_parser("abort")
+    a.set_defaults(fn=cmd_abort)
     args = p.parse_args(argv)
     return args.fn(args)
 
