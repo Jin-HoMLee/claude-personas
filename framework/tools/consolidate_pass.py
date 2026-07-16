@@ -74,8 +74,11 @@ def _current_branch(root: str) -> str:
 def store_relpath(root: str, store: str) -> str | None:
     """Store dir as a relpath under root, or None if outside/invalid.
     A store that IS the repo root (rel == ".") is a legitimate shape -
-    both a production layout and the canary-eval fixture's shape - and
-    returns "." rather than being rejected."""
+    it returns "." rather than being rejected. This assumes the root
+    contains ONLY the index and fact files (no README.md or other
+    root-level .md siblings), matching the canary-eval fixture's shape;
+    index_sync_errors requires every root .md except MEMORY.md to be
+    indexed, so a root store with an un-indexed doc file can never finish."""
     ab = os.path.realpath(store)
     rootab = os.path.realpath(root)
     if not (ab == rootab or ab.startswith(rootab + os.sep)):
@@ -150,6 +153,8 @@ def cmd_begin(args: argparse.Namespace) -> int:
     if _git(root, "rev-parse", "--verify", branch, check=False).returncode == 0:
         return _fail(f"branch {branch} already exists; delete it or finish that pass")
     baseref = _current_branch(root)
+    if baseref == "HEAD":
+        return _fail("detached HEAD; check out a branch before starting a pass")
     base = _git(root, "rev-parse", "HEAD").stdout.strip()
     _git(root, "checkout", "-q", "-b", branch)
     config_set(root, "consolidate.store", rel)
@@ -162,11 +167,14 @@ def cmd_begin(args: argparse.Namespace) -> int:
 
 def index_sync_errors(root: str, store: str) -> list[str]:
     """Index<->file sync, same-directory links only - cross-store references
-    like shared/MEMORY.md are legitimate and skipped, as are URLs."""
+    like shared/MEMORY.md are legitimate and skipped, as are URLs. A leading
+    `./` on a same-directory link (e.g. `./fact_a.md`) is normalized away
+    before the cross-store filter, so it isn't mistaken for a path."""
     storedir = os.path.join(root, store)
     idx_path = os.path.join(storedir, "MEMORY.md")
     with open(idx_path, encoding="utf-8") as f:
         links = INDEX_LINK_RE.findall(f.read())
+    links = [l[2:] if l.startswith("./") else l for l in links]
     linked = {l for l in links if "/" not in l and "://" not in l}
     on_disk = {f_ for f_ in os.listdir(storedir)
                if f_.endswith(".md") and f_ != "MEMORY.md"}

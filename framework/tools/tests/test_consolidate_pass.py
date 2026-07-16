@@ -91,6 +91,13 @@ class TestBegin(unittest.TestCase):
         _git(self.root, "checkout", "-q", "main")
         self.assertNotEqual(self._begin(), 0)
 
+    def test_begin_refuses_detached_head(self):
+        _git(self.root, "checkout", "-q", "--detach")
+        self.assertNotEqual(self._begin(), 0)
+        self.assertIsNone(cp.config_get(self.root, "consolidate.branch"))
+        branches = _git(self.root, "branch", "--list", "consolidate/*").stdout.strip()
+        self.assertEqual(branches, "")
+
     def test_begin_refuses_outside_git_repo(self):
         with tempfile.TemporaryDirectory(prefix="mem-") as td:
             os.makedirs(os.path.join(td, "mem"))
@@ -236,6 +243,20 @@ class TestFinishAbort(unittest.TestCase):
         with open(os.path.join(self.root, "mem", "fact_a.md"), "w") as f:
             f.write("---\nname: fact-a\n---\n\nMerged.\n")
         rc = cp.main(["commit", "--op", "redistribute", "-m", "add cross-store link"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(cp.index_sync_errors(self.root, "mem"), [])
+        self.assertEqual(cp.main(["finish"]), 0)
+
+    def test_index_sync_accepts_dot_slash_links(self):
+        # A `./`-prefixed same-directory link (e.g. `./fact_a.md`) must be
+        # normalized before the cross-store "/" filter, else the on-disk
+        # file is falsely flagged as "file not in index" and finish wedges.
+        idx = os.path.join(self.root, "mem", "MEMORY.md")
+        with open(idx, "w") as f:
+            f.write("# Index\n\n- [Fact A](./fact_a.md) - a fact\n")
+        with open(os.path.join(self.root, "mem", "fact_a.md"), "w") as f:
+            f.write("---\nname: fact-a\n---\n\nMerged.\n")
+        rc = cp.main(["commit", "--op", "redistribute", "-m", "dot-slash link"])
         self.assertEqual(rc, 0)
         self.assertEqual(cp.index_sync_errors(self.root, "mem"), [])
         self.assertEqual(cp.main(["finish"]), 0)
