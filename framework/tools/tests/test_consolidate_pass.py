@@ -88,5 +88,52 @@ class TestBegin(unittest.TestCase):
                 os.chdir(old)
 
 
+class TestCommit(unittest.TestCase):
+    # commit/finish/abort resolve the repo from the process cwd (repo_root()),
+    # so these classes chdir into the fixture - otherwise the wrapper would
+    # act on the claude-personas repo the tests run from.
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory(prefix="mem-")
+        self.root = make_repo(self._td.name)
+        self._oldcwd = os.getcwd()
+        os.chdir(self.root)
+        cp.main(["begin", "--store", os.path.join(self.root, "mem")])
+
+    def tearDown(self):
+        os.chdir(self._oldcwd)
+        self._td.cleanup()
+
+    def _edit(self, relpath, text):
+        with open(os.path.join(self.root, relpath), "w") as f:
+            f.write(text)
+
+    def test_commit_typed_prefix(self):
+        self._edit("mem/fact_a.md", "---\nname: fact-a\n---\n\nMerged body.\n")
+        rc = cp.main(["commit", "--op", "dedupe", "-m", "merge a into a"])
+        self.assertEqual(rc, 0)
+        subj = _git(self.root, "log", "-1", "--format=%s").stdout.strip()
+        self.assertEqual(subj, "consolidate(dedupe): merge a into a")
+
+    def test_commit_refuses_off_pass_branch(self):
+        _git(self.root, "checkout", "-q", "main")
+        self._edit("mem/fact_a.md", "x\n")
+        self.assertNotEqual(cp.main(["commit", "--op", "retire", "-m", "m"]), 0)
+        self.assertEqual(_git(self.root, "log", "-1", "--format=%s").stdout.strip(), "seed")
+
+    def test_commit_rejects_out_of_store_paths_and_stages_nothing(self):
+        self._edit("mem/fact_a.md", "in-store edit\n")
+        self._edit("README.md", "stray edit\n")
+        self.assertNotEqual(cp.main(["commit", "--op", "dedupe", "-m", "m"]), 0)
+        staged = _git(self.root, "diff", "--cached", "--name-only").stdout.strip()
+        self.assertEqual(staged, "")
+
+    def test_commit_refuses_empty(self):
+        self.assertNotEqual(cp.main(["commit", "--op", "dedupe", "-m", "m"]), 0)
+
+    def test_commit_rejects_bad_op(self):
+        with self.assertRaises(SystemExit):
+            cp.main(["commit", "--op", "tidy", "-m", "m"])
+
+
 if __name__ == "__main__":
     unittest.main()

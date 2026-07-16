@@ -77,6 +77,45 @@ def store_relpath(root: str, store: str) -> str | None:
     return None if rel == "." else rel
 
 
+def changed_paths(root: str) -> list[str]:
+    """Working-tree changes vs HEAD, rename-aware (new path after ' -> ')."""
+    out = _git(root, "status", "--porcelain").stdout
+    paths = []
+    for line in out.splitlines():
+        path = line[3:]
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        paths.append(path.strip().strip('"'))
+    return paths
+
+
+def cmd_commit(args: argparse.Namespace) -> int:
+    root = repo_root()
+    if root is None:
+        return _fail("not inside a git repository")
+    branch = config_get(root, "consolidate.branch")
+    store = config_get(root, "consolidate.store")
+    if not branch or not store:
+        return _fail("no consolidation pass in progress; run begin first")
+    if _current_branch(root) != branch:
+        return _fail(f"not on the pass branch {branch}; refusing to commit")
+    paths = changed_paths(root)
+    if not paths:
+        return _fail("nothing to commit")
+    offenders = [p_ for p_ in paths
+                 if not (p_ == store or p_.startswith(store + "/"))]
+    if offenders:
+        print("FAIL: changes outside the store; revert these and retry:",
+              file=sys.stderr)
+        for o in offenders:
+            print(f"  {o}", file=sys.stderr)
+        return 1
+    _git(root, "add", "-A", "--", store)
+    _git(root, "commit", "-m", f"consolidate({args.op}): {args.m}")
+    print(f"OK: consolidate({args.op}): {args.m}")
+    return 0
+
+
 def cmd_begin(args: argparse.Namespace) -> int:
     root = repo_root(os.path.dirname(os.path.realpath(args.store)) or ".")
     if root is None:
@@ -109,6 +148,10 @@ def main(argv=None) -> int:
     b = sub.add_parser("begin")
     b.add_argument("--store", required=True)
     b.set_defaults(fn=cmd_begin)
+    c = sub.add_parser("commit")
+    c.add_argument("--op", required=True, choices=OPS)
+    c.add_argument("-m", required=True)
+    c.set_defaults(fn=cmd_commit)
     args = p.parse_args(argv)
     return args.fn(args)
 
