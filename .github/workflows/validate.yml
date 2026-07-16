@@ -27,19 +27,32 @@ jobs:
             echo "OK: $role/shared -> $target"
           done
 
-      - name: framework scripts are executable
+      - name: executable bit matches shebang (framework payload)
         run: |
-          # Derived, not enumerated: every tracked shell/python file under
-          # framework/ must be executable (they ship as runnable payload or
-          # test harness). A new tool added to framework/ is covered
-          # automatically - no list to forget to update.
+          # Derived, not enumerated: for every tracked shell/python file under
+          # framework/, the executable bit must match the file's contents.
+          # A shebang'd script must be +x (it ships as runnable payload); a
+          # shebang-less file (importable module, unittest test module) must
+          # NOT be +x. Same invariant as pre-commit's
+          # check-executables-have-shebangs + check-shebang-scripts-are-executable.
+          # A new file added to framework/ is covered automatically - no list
+          # to forget to update.
           fail=0
           for s in $(git ls-files 'framework/*.sh' 'framework/*.py'); do
-            if [ ! -x "$s" ]; then
-              echo "FAIL: $s is not executable"
-              fail=1
+            if head -c2 "$s" | grep -q '^#!'; then
+              if [ -x "$s" ]; then
+                echo "OK: $s (script, executable)"
+              else
+                echo "FAIL: $s has a shebang but is not executable (chmod +x)"
+                fail=1
+              fi
             else
-              echo "OK: $s is executable"
+              if [ -x "$s" ]; then
+                echo "FAIL: $s is executable but has no shebang (chmod -x it, or add a shebang)"
+                fail=1
+              else
+                echo "OK: $s (module, not executable)"
+              fi
             fi
           done
           exit $fail
