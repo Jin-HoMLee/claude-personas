@@ -915,3 +915,9 @@ Merge is Jin-Ho's gate; do not self-merge.
 - [ ] **Step 4: Post the scope-trim note on #89**
 
 One comment: transcripts input deferred (store-only v1, per approved spec section "Scope decisions"); link the spec file on the branch.
+
+## Deviations
+
+Task 6 review: SKILL.md step 5's blanket abort-on-error contradicted finish's retryable branch-intact failure paths (data-loss risk).
+Step 5 rewritten to reserve abort for begin/commit failures and abandoned passes.
+Sentence-per-line splits applied to five bullets.

@@ -14,18 +14,23 @@ This skill is self-contained: follow it identically whether it was invoked as a 
 ## Hard rules
 
 - Explicit invocation only: never start a pass on your own initiative.
-- One store per pass: the store is the directory you were pointed at; it must contain a `MEMORY.md`. If it does not, refuse and report - never guess a different directory.
+- One store per pass: the store is the directory you were pointed at; it must contain a `MEMORY.md`.
+  If it does not, refuse and report - never guess a different directory.
 - Never run `git commit`, `git push`, `git checkout`, or `gh pr create` yourself: the wrapper is the only write path.
 - Never demote content out of its tier or move content to another store: you clean WITHIN the store only.
 
 ## The preservation stance (anti-smoothing)
 
-LLM consolidation is documented to smooth away rare-but-valid facts. These rules are the countermeasure; they outrank tidiness:
+LLM consolidation is documented to smooth away rare-but-valid facts.
+These rules are the countermeasure; they outrank tidiness:
 
-- An exception NEVER merges into the rule it excepts. "Always X" + "except in S, do Y" stay distinct facts (merging them into one file is allowed only if both assertions survive verbatim in meaning).
+- An exception NEVER merges into the rule it excepts.
+  "Always X" + "except in S, do Y" stay distinct facts (merging them into one file is allowed only if both assertions survive verbatim in meaning).
 - A fact referenced by nothing else is not therefore disposable.
-- An old date is not staleness. Retire a fact ONLY when a newer fact in this store contradicts it, and cite that newer fact in the commit message.
-- When in doubt, keep. A missed cleanup costs a little; a destroyed fact costs the store its trustworthiness.
+- An old date is not staleness.
+  Retire a fact ONLY when a newer fact in this store contradicts it, and cite that newer fact in the commit message.
+- When in doubt, keep.
+  A missed cleanup costs a little; a destroyed fact costs the store its trustworthiness.
 
 ## Operations
 
@@ -47,7 +52,10 @@ Every operation updates `MEMORY.md` in the same commit: after every operation, e
    If commit rejects out-of-store paths, revert the stray edit and retry the operation.
 4. `python3 <tools-dir>/consolidate_pass.py finish`.
    Report its output verbatim (PR URL, branch name, or "nothing to consolidate").
-5. On any unrecoverable error, run `python3 <tools-dir>/consolidate_pass.py abort` and report what failed.
+   If finish fails with a "branch intact - deliver manually" message (gh missing, push failed, or `gh pr create` failed), do NOT abort: these are deliberately retryable, and the wrapper has kept the pass branch and its commits intact.
+   Report the wrapper's manual-delivery instructions verbatim to the human and stop.
+5. `abort` is for abandoning the pass itself, not for a retryable finish failure: use it only for a `begin`/`commit` failure you cannot resolve, or a pass you conclude should not be delivered.
+   Run `python3 <tools-dir>/consolidate_pass.py abort` and report what failed.
 
 ## What a good pass looks like
 
