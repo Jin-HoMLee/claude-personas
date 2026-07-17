@@ -239,12 +239,19 @@ def _op_log(root: str, base: str) -> list[str]:
     return [s for s in out.splitlines() if s.strip()]
 
 
-def _cleanup(root: str, branch: str, baseref: str) -> None:
-    _git(root, "checkout", "-q", baseref)
-    _git(root, "branch", "-D", branch)
+def _clear_state(root: str) -> None:
+    """Terminal-path finalization: drop the config keys + the #97 snapshot.
+    Shared by every path that ends a pass (finish successes, zero-op
+    cleanup, abort) so no ending can forget half the state."""
     for key in KEYS:
         config_unset(root, key)
     _remove_snapshot(root)
+
+
+def _cleanup(root: str, branch: str, baseref: str) -> None:
+    _git(root, "checkout", "-q", baseref)
+    _git(root, "branch", "-D", branch)
+    _clear_state(root)
 
 
 def cmd_finish(args: argparse.Namespace) -> int:
@@ -289,9 +296,7 @@ def cmd_finish(args: argparse.Namespace) -> int:
         for e in still_present:
             print(f"  {e}", file=sys.stderr)
     if not _git(root, "remote", check=False).stdout.strip():
-        for key in KEYS:
-            config_unset(root, key)
-        _remove_snapshot(root)
+        _clear_state(root)
         print(f"OK: {len(ops)} operation(s) on {branch} (no remote; branch is the deliverable)")
         return 0
     # Same slug rule as begin: "root" for a store-at-repo-root pass, else
@@ -316,9 +321,7 @@ def cmd_finish(args: argparse.Namespace) -> int:
         print(pr.stderr, file=sys.stderr)
         return _fail("gh pr create failed; branch pushed - open the PR manually:\n"
                      f"  gh pr create --title '{title}' --body '...op log...'")
-    for key in KEYS:
-        config_unset(root, key)
-    _remove_snapshot(root)
+    _clear_state(root)
     print(f"OK: PR opened for {branch}\n{pr.stdout.strip()}")
     return 0
 
@@ -333,9 +336,7 @@ def cmd_abort(args: argparse.Namespace) -> int:
         return _fail("no consolidation pass in progress")
     _git(root, "checkout", "-qf", baseref)
     _git(root, "branch", "-D", branch)
-    for key in KEYS:
-        config_unset(root, key)
-    _remove_snapshot(root)
+    _clear_state(root)
     print(f"OK: aborted; back on {baseref}, {branch} deleted")
     return 0
 

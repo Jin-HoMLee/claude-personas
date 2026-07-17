@@ -505,6 +505,17 @@ class TestFinishDeltaGate(unittest.TestCase):
             self.assertEqual(cp.main(["abort"]), 0)
         self.assertFalse(os.path.exists(cp.snapshot_path(self.root)))
 
+    def test_missing_snapshot_degrades_to_strict_gate(self):
+        # Backward compat: a pre-#97 begin left no snapshot, so EVERY sync
+        # error (here the pre-existing orphan) blocks, as before.
+        self._edit("mem/fact_a.md", "---\nname: fact-a\n---\n\nTidied body.\n")
+        self.assertEqual(cp.main(["commit", "--op", "dedupe", "-m", "tidy"]), 0)
+        os.remove(cp.snapshot_path(self.root))
+        rc, _, err = self._finish()
+        self.assertNotEqual(rc, 0)
+        self.assertIn("orphan.md", err)
+        self.assertIn("FAIL", err)
+
 
 if __name__ == "__main__":
     unittest.main()
