@@ -20,7 +20,14 @@ TEMPLATE_ROLES = ("pm", "scientist", "developer", "designer")
 
 
 class _CorpusBuilderMixin:
-    """Shared test helpers for building corpus structures."""
+    """Shared test helpers: corpus builders + the main() runner."""
+
+    def _run_main(self, args):
+        """Run mc.main(args); return (rc, stdout, stderr)."""
+        buf, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(buf), redirect_stderr(err):
+            rc = mc.main(args)
+        return rc, buf.getvalue(), err.getvalue()
     def _write(self, root, rel, content):
         path = os.path.join(root, rel)
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -691,16 +698,10 @@ class TestComputeLoadsFlat(_CorpusBuilderMixin, unittest.TestCase):
 
 
 class TestMainFlatLayout(_CorpusBuilderMixin, unittest.TestCase):
-    def _run(self, args):
-        buf, err = io.StringIO(), io.StringIO()
-        with redirect_stdout(buf), redirect_stderr(err):
-            rc = mc.main(args)
-        return rc, buf.getvalue(), err.getvalue()
-
     def test_layout_flag_flat_one_index_row_under_cliff(self):
         with tempfile.TemporaryDirectory() as root:
             self._flat_index(root, "".join(f"- **R{i}:** x\n" for i in range(3)))
-            rc, out, _ = self._run(["--root", root, "--layout", "flat"])
+            rc, out, _ = self._run_main(["--root", root, "--layout", "flat"])
             self.assertEqual(rc, 0)
             self.assertIn("index", out)
             self.assertIn("OK", out)
@@ -709,7 +710,7 @@ class TestMainFlatLayout(_CorpusBuilderMixin, unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             # 15 rules > RULE_CLIFF (14); whole file counted, no section needed.
             self._flat_index(root, "".join(f"- **R{i}:** x\n" for i in range(15)))
-            rc, out, _ = self._run(["--root", root, "--layout", "flat"])
+            rc, out, _ = self._run_main(["--root", root, "--layout", "flat"])
             self.assertEqual(rc, 1)
             self.assertIn("OVER (rules)", out)
 
@@ -717,7 +718,7 @@ class TestMainFlatLayout(_CorpusBuilderMixin, unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             self._flat_index(root, "".join(f"- **R{i}:** x\n" for i in range(15)))
             self._manifest(root, "flat")
-            rc, out, _ = self._run(["--root", root])
+            rc, out, _ = self._run_main(["--root", root])
             self.assertEqual(rc, 1)
             self.assertIn("OVER (rules)", out)
             self.assertIn("index", out)
@@ -729,7 +730,7 @@ class TestMainFlatLayout(_CorpusBuilderMixin, unittest.TestCase):
             self._flat_index(root, "".join(f"- **R{i}:** x\n" for i in range(15)))
             self._manifest(root, "flat")
             self._corpus(root, shared_rules=2, role_rules=2)   # under cliff
-            rc, out, _ = self._run(["--root", root, "--layout", "roles"])
+            rc, out, _ = self._run_main(["--root", root, "--layout", "roles"])
             self.assertEqual(rc, 0)
             self.assertIn("pm", out)          # role discovery ran, not flat
             self.assertNotIn("Role (the whole index file", out)
@@ -737,13 +738,13 @@ class TestMainFlatLayout(_CorpusBuilderMixin, unittest.TestCase):
     def test_no_manifest_no_flag_existing_behavior_unchanged(self):
         with tempfile.TemporaryDirectory() as root:
             self._corpus(root, shared_rules=2, role_rules=2)
-            rc, out, _ = self._run(["--root", root])
+            rc, out, _ = self._run_main(["--root", root])
             self.assertEqual(rc, 0)
             self.assertIn("Role (role + shared)", out)
 
     def test_flat_missing_index_clean_error_exit_2(self):
         with tempfile.TemporaryDirectory() as root:
-            rc, _, err = self._run(["--root", root, "--layout", "flat"])
+            rc, _, err = self._run_main(["--root", root, "--layout", "flat"])
             self.assertEqual(rc, 2)
             self.assertIn("error", err.lower())
 
@@ -751,12 +752,12 @@ class TestMainFlatLayout(_CorpusBuilderMixin, unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             self._flat_index(root, "".join(f"- **R{i}:** x\n" for i in range(3)))
             bpath = os.path.join(root, "baseline.json")
-            rc, _, _ = self._run(["--root", root, "--layout", "flat", "--write-baseline", bpath])
+            rc, _, _ = self._run_main(["--root", root, "--layout", "flat", "--write-baseline", bpath])
             self.assertEqual(rc, 0)
             data = mc.load_baseline(bpath)
             self.assertIn("index", data)
             self.assertEqual(data["index"]["rules"], 3)
-            rc, out, _ = self._run(["--root", root, "--layout", "flat", "--baseline", bpath])
+            rc, out, _ = self._run_main(["--root", root, "--layout", "flat", "--baseline", bpath])
             self.assertEqual(rc, 0)
             self.assertIn("Ratchet OK", out)
 
@@ -804,31 +805,25 @@ class TestConsolidationSuggestionUnit(unittest.TestCase):
 
 
 class TestConsolidationSuggestionMainIntegration(_CorpusBuilderMixin, unittest.TestCase):
-    def _run(self, args):
-        buf, err = io.StringIO(), io.StringIO()
-        with redirect_stdout(buf), redirect_stderr(err):
-            rc = mc.main(args)
-        return rc, buf.getvalue(), err.getvalue()
-
     def test_near_cliff_suggests_and_still_exits_0(self):
         with tempfile.TemporaryDirectory() as root:
             # effective 13 rules: >= 90% of the 14-rule cliff, but not over it.
             self._corpus(root, shared_rules=8, role_rules=5)
-            rc, out, _ = self._run(["--root", root])
+            rc, out, _ = self._run_main(["--root", root])
             self.assertEqual(rc, 0)                  # AC: exit semantics unchanged
             self.assertIn("consolidate-memory", out)
 
     def test_under_near_line_no_suggestion(self):
         with tempfile.TemporaryDirectory() as root:
             self._corpus(root, shared_rules=2, role_rules=2)
-            rc, out, _ = self._run(["--root", root])
+            rc, out, _ = self._run_main(["--root", root])
             self.assertEqual(rc, 0)
-            self.assertNotIn("consolidate", out)
+            self.assertNotIn("Suggestion:", out)
 
     def test_over_cliff_suggests_and_still_exits_1(self):
         with tempfile.TemporaryDirectory() as root:
             self._corpus(root, shared_rules=13, role_rules=5)   # effective 18 > 14
-            rc, out, _ = self._run(["--root", root])
+            rc, out, _ = self._run_main(["--root", root])
             self.assertEqual(rc, 1)                  # AC: exit semantics unchanged
             self.assertIn("consolidate-memory", out)
 
@@ -840,7 +835,7 @@ class TestConsolidationSuggestionMainIntegration(_CorpusBuilderMixin, unittest.T
             bpath = os.path.join(root, "baseline.json")
             with redirect_stdout(io.StringIO()):
                 self.assertEqual(mc.main(["--root", root, "--write-baseline", bpath]), 0)
-            rc, out, _ = self._run(["--root", root, "--baseline", bpath])
+            rc, out, _ = self._run_main(["--root", root, "--baseline", bpath])
             self.assertEqual(rc, 0)
             self.assertIn("Ratchet OK", out)
             self.assertIn("consolidate-memory", out)
@@ -849,29 +844,52 @@ class TestConsolidationSuggestionMainIntegration(_CorpusBuilderMixin, unittest.T
         with tempfile.TemporaryDirectory() as root:
             self._corpus(root, shared_rules=20, role_rules=5)   # far over the cliff
             bpath = os.path.join(root, "baseline.json")
-            rc, out, _ = self._run(["--root", root, "--write-baseline", bpath])
+            rc, out, _ = self._run_main(["--root", root, "--write-baseline", bpath])
             self.assertEqual(rc, 0)
-            self.assertNotIn("consolidate", out)
+            # Assert on the suggestion marker, not "consolidate": the printed
+            # "Wrote baseline ... to <path>" embeds a TMPDIR-derived path that
+            # could itself contain "consolidate" on some machines.
+            self.assertNotIn("Suggestion:", out)
 
     def test_flat_layout_near_cliff_suggests(self):
         with tempfile.TemporaryDirectory() as root:
             # 13 whole-file rules: near the 14-rule cliff in flat layout.
             self._flat_index(root, "".join(f"- **R{i}:** x\n" for i in range(13)))
-            rc, out, _ = self._run(["--root", root, "--layout", "flat"])
+            rc, out, _ = self._run_main(["--root", root, "--layout", "flat"])
             self.assertEqual(rc, 0)
-            self.assertIn("consolidate-memory", out)
-            self.assertIn("index", out)
+            # "Suggestion: index" proves the warn-line NAMES the flat role; a
+            # bare assertIn("index", out) would be vacuous - the report table
+            # always carries an "index" row.
+            self.assertIn("Suggestion: index", out)
 
     def test_linter_has_no_invocation_path(self):
         # AC: the linter performs no invocation of the pass under any code path.
-        # Tripwire, not proof: the tool must stay free of process-spawning calls.
+        # Tripwire, not proof - an import-level AST scan (not a substring grep,
+        # so comments/docstrings may mention these names freely) plus a check
+        # for os process-spawning attributes.
+        import ast
         src_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "memory_cliff.py"
         )
         with open(src_path, encoding="utf-8") as f:
-            src = f.read()
-        for needle in ("subprocess", "os.system", "popen", "os.exec"):
-            self.assertNotIn(needle, src)
+            tree = ast.parse(f.read())
+        banned_modules = {"subprocess", "multiprocessing", "pty", "ctypes"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                hit = banned_modules & {a.name.split(".")[0] for a in node.names}
+                self.assertFalse(hit, f"banned import: {hit}")
+            elif isinstance(node, ast.ImportFrom):
+                mod = (node.module or "").split(".")[0]
+                self.assertNotIn(mod, banned_modules, f"banned import-from: {mod}")
+                if mod == "os":
+                    names = {a.name for a in node.names}
+                    self.assertFalse({"system", "popen"} & names, f"banned os name: {names}")
+            elif (isinstance(node, ast.Attribute)
+                  and isinstance(node.value, ast.Name) and node.value.id == "os"):
+                self.assertFalse(
+                    node.attr == "system" or node.attr.startswith(("exec", "spawn", "popen")),
+                    f"banned os attribute: os.{node.attr}",
+                )
 
 
 if __name__ == "__main__":

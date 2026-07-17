@@ -300,16 +300,20 @@ def needs_consolidation(load: RoleLoad) -> bool:
 
 def render_consolidation_suggestion(per_role: list[RoleLoad]) -> str | None:
     """One advisory line naming the qualifying roles and the consolidation
-    skill/tool to invoke, or None when every role is comfortably under the
-    cliffs. The trigger policy is explicit-only (#87): this linter only ever
-    *suggests* a pass - it must never invoke one on any code path."""
+    pass to invoke, or None when every role is comfortably under the cliffs.
+    The trigger policy is explicit-only (#87): this linter only ever *suggests*
+    a pass - it must never invoke one on any code path. The pointers are
+    relative paths valid in both homes (framework/ and an instance's .agents/):
+    consolidate_pass.py sits in this tool's own dir, the skill doc in the
+    sibling skills/ dir - named by path, not as a slash-command, because
+    default instances (skills_mount=false) don't mount skills."""
     near = [rl.role for rl in per_role if needs_consolidation(rl)]
     if not near:
         return None
     return (
         f"Suggestion: {', '.join(near)} at >={int(NEAR_FRACTION * 100)}% of a size cliff - "
-        "consider a consolidation pass (skill: consolidate-memory, tool: consolidate_pass.py; "
-        "explicit invocation only, this linter never runs it)."
+        "consider a consolidation pass: consolidate_pass.py (next to this tool; "
+        "guide: skills/consolidate-memory/SKILL.md)."
     )
 
 
@@ -438,7 +442,10 @@ def render(
     per_role: list[RoleLoad],
     load_label: str = "role + shared",
 ) -> str:
-    """Render the two report tables + threshold footer as text. ``load_label``
+    """Render the two report tables + threshold footer (+ the advisory
+    consolidation warn-line when a role qualifies - inside render so every
+    report-printing mode carries it and non-report modes structurally can't;
+    it never affects exit codes). ``load_label``
     describes what "effective load" means for this layout: roles layout sums a
     role's own file with ``shared`` (the default, preserving prior wording
     byte-for-byte); flat layout has no shared file to add - the single index IS
@@ -470,23 +477,16 @@ def render(
         "Note: counts every '## ... Always ...' section (tier-1 + any session-start / "
         "morning-routine loaders) as always-loaded; the lazy 'Reference' section is excluded."
     )
+    suggestion = render_consolidation_suggestion(per_role)
+    if suggestion:
+        out.append("")
+        out.append(suggestion)
     return "\n".join(out)
 
 
 # --------------------------------------------------------------------------- #
 # Entry point
 # --------------------------------------------------------------------------- #
-def _print_suggestion(per_role: list[RoleLoad]) -> None:
-    """Print the advisory consolidation warn-line after a report, if warranted.
-    Report-printing modes only (default + --baseline); --write-baseline prints
-    no report so it gets no suggestion. Never touches exit codes."""
-    suggestion = render_consolidation_suggestion(per_role)
-    if suggestion:
-        print()
-        print(suggestion)
-
-
-
 def _discover_root() -> str:
     """Repo root = nearest ancestor of this file containing .git or .agents/.
 
@@ -556,7 +556,6 @@ def main(argv=None) -> int:
             print(f"memory_cliff: bad baseline file: {exc}", file=sys.stderr)
             return 2
         print(render(per_file, per_role, load_label))
-        _print_suggestion(per_role)
         print()
         print(render_wholefile_info(per_file))
         regressions = compare_to_baseline(per_role, baseline)
@@ -571,7 +570,6 @@ def main(argv=None) -> int:
         return 0
 
     print(render(per_file, per_role, load_label))
-    _print_suggestion(per_role)
     return 1 if any(classify(rl) for rl in per_role) else 0
 
 
