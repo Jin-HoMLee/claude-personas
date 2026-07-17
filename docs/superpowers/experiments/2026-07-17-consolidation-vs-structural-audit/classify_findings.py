@@ -62,6 +62,10 @@ def classify_wikilink(store: str, target: str) -> str:
             or any(c.isupper() for c in target) or target in KNOWN_NON_MEMORY):
         return "non-memory-reference"
     on_disk = _files(store)
+    # Ordering note: a target with BOTH defects ([[some-name.md]] vs
+    # some_name.md) is safe here - the slug-style branch appends ".md" so it
+    # can't match a target already carrying it, and the extension-suffixed
+    # branch dash-normalizes too, so the combined case lands there.
     normalized = target.replace("-", "_")
     if f"{normalized}.md" in on_disk or f"{target.replace('_', '-')}.md" in on_disk:
         return "slug-style-mismatch"
@@ -90,6 +94,9 @@ def main(argv=None) -> int:
             target = finding.rsplit("[[", 1)[1].rstrip("]")
             cls = "wikilink/" + classify_wikilink(args.store, target)
         else:
+            # audit() emits exactly three finding shapes today; anything
+            # unmatched above is "index links missing file". If audit() ever
+            # grows a fourth shape, revisit - this catch-all would mislabel it.
             cls = "index-ghost"
         classes.setdefault(cls, []).append(finding)
     if not args.summary:
