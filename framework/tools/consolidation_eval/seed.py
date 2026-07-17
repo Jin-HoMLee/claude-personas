@@ -184,7 +184,8 @@ DUPLICATES = [
                      type_="reference"),
         "file_b": _f("db-pool-sizing",
                      "Why the connection pool is sized the way it is",
-                     "We size the pool below the DB's 50-connection license limit: pool_max=47 leaves headroom for two admin sessions and the monitor.\n"),
+                     "We size the pool below the DB's 50-connection license limit: pool_max=47 leaves headroom for two admin sessions and the monitor.\n",
+                     type_="reference"),
     },
     {
         "id": "dup-2", "atom": "artifact-cache.example.net",
@@ -194,7 +195,8 @@ DUPLICATES = [
                      type_="reference"),
         "file_b": _f("artifact-mirror-usage",
                      "Use the artifact mirror for CI downloads",
-                     "CI downloads dependencies from artifact-cache.example.net instead of the upstream registry.\n"),
+                     "CI downloads dependencies from artifact-cache.example.net instead of the upstream registry.\n",
+                     type_="reference"),
     },
     {
         "id": "dup-3", "atom": "ttl=900",
@@ -204,7 +206,8 @@ DUPLICATES = [
                      type_="reference"),
         "file_b": _f("dns-ttl-rationale",
                      "The DNS TTL balances failover speed against query load",
-                     "We keep ttl=900 on service records: short enough for failover, long enough to keep resolver load sane.\n"),
+                     "We keep ttl=900 on service records: short enough for failover, long enough to keep resolver load sane.\n",
+                     type_="reference"),
     },
 ]
 

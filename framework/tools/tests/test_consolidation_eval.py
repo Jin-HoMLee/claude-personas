@@ -37,6 +37,25 @@ class TestSeedBuildStore(unittest.TestCase):
         self.assertEqual(sum(1 for it in items if it["gate"]), 9)
         self.assertEqual(sum(1 for it in items if not it["gate"]), 6)
 
+    def test_cleanup_targets_are_contract_reachable_same_tier(self):
+        # #98: the pass contract forbids merging across tiers (type:
+        # frontmatter), so every cleanup target must pair same-tier files -
+        # otherwise a contract-obedient pass cannot reach it and the
+        # denominator lies.
+        def tier(fname):
+            m = re.search(r"^type: (\w+)$", self.files[fname], re.M)
+            self.assertIsNotNone(m, f"no type: in {fname}")
+            return m.group(1)
+
+        for it in self.manifest["items"]:
+            if it["gate"]:
+                continue
+            involved = list(it["files"]) + ([it["superseded_by"]]
+                                            if "superseded_by" in it else [])
+            tiers = {tier(f) for f in involved}
+            self.assertEqual(len(tiers), 1,
+                             f"{it['id']}: cross-tier cleanup target {tiers}")
+
     def test_every_file_has_frontmatter(self):
         for fname, content in self.files.items():
             if fname == "MEMORY.md":
