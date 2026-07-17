@@ -350,5 +350,57 @@ class TestStoreAtRoot(unittest.TestCase):
         self.assertIsNone(cp.config_get(self.root, "consolidate.branch"))
 
 
+class TestDotDirStore(unittest.TestCase):
+    """#95: a store under a dot-directory (.agents/memory - the framework's
+    own documented instance layout) must yield a valid pass branch; a ref
+    component starting with '.' is rejected by git check-ref-format."""
+
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory(prefix="mem-")
+        tmp = self._td.name
+        _git(tmp, "init", "-q", "-b", "main", ".")
+        _git(tmp, "config", "user.email", "t@l")
+        _git(tmp, "config", "user.name", "t")
+        os.makedirs(os.path.join(tmp, ".agents", "memory"))
+        with open(os.path.join(tmp, ".agents", "memory", "MEMORY.md"), "w") as f:
+            f.write("# Index\n\n- [Fact A](fact_a.md) - a fact\n")
+        with open(os.path.join(tmp, ".agents", "memory", "fact_a.md"), "w") as f:
+            f.write("---\nname: fact-a\n---\n\nFact A body.\n")
+        _git(tmp, "add", ".")
+        _git(tmp, "commit", "-qm", "seed")
+        self.root = tmp
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def test_begin_dot_dir_store_creates_valid_branch(self):
+        rc = cp.main(
+            ["begin", "--store", os.path.join(self.root, ".agents", "memory")])
+        self.assertEqual(rc, 0)
+        branch = _git(self.root, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        self.assertTrue(branch.startswith("consolidate/agents-memory-"), branch)
+        self.assertEqual(
+            cp.config_get(self.root, "consolidate.store"),
+            os.path.join(".agents", "memory"))
+
+
+class TestBranchSlug(unittest.TestCase):
+    def test_plain_path_unchanged(self):
+        self.assertEqual(cp.branch_slug("mem"), "mem")
+
+    def test_nested_path_joined(self):
+        self.assertEqual(cp.branch_slug(os.path.join("a", "b")), "a-b")
+
+    def test_leading_dot_component_stripped(self):
+        self.assertEqual(
+            cp.branch_slug(os.path.join(".agents", "memory")), "agents-memory")
+
+    def test_ref_hostile_chars_mapped_and_collapsed(self):
+        self.assertEqual(cp.branch_slug("a b..c"), "a-b-c")
+
+    def test_all_hostile_falls_back(self):
+        self.assertEqual(cp.branch_slug("..."), "store")
+
+
 if __name__ == "__main__":
     unittest.main()

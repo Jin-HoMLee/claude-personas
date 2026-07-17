@@ -133,6 +133,18 @@ def cmd_commit(args: argparse.Namespace) -> int:
     return 0
 
 
+def branch_slug(rel: str) -> str:
+    """Git-ref-safe branch component for the store's relative path (#95).
+    The live hazard is a dot-directory store: `.agents/memory` (the
+    framework's own instance layout) naively becomes a ref component
+    starting with `.`, which `git check-ref-format` rejects. Conservative
+    rule: keep [A-Za-z0-9_-], map everything else (path separators
+    included) to `-`, collapse runs, trim `-` at the ends; if nothing
+    survives, fall back to `store` so begin never builds an invalid ref."""
+    slug = re.sub(r"-+", "-", re.sub(r"[^A-Za-z0-9_-]", "-", rel)).strip("-")
+    return slug or "store"
+
+
 def cmd_begin(args: argparse.Namespace) -> int:
     # Derive root from the store dir itself, not its parent: `git
     # rev-parse --show-toplevel` finds the enclosing repo regardless of
@@ -148,7 +160,7 @@ def cmd_begin(args: argparse.Namespace) -> int:
         return _fail(f"{args.store} is not a memory store (no MEMORY.md)")
     if config_get(root, "consolidate.branch"):
         return _fail("a consolidation pass is already in progress; run finish or abort")
-    slug = "root" if rel == "." else rel.replace(os.sep, "-")
+    slug = "root" if rel == "." else branch_slug(rel)
     branch = f"consolidate/{slug}-{datetime.date.today().isoformat()}"
     if _git(root, "rev-parse", "--verify", branch, check=False).returncode == 0:
         return _fail(f"branch {branch} already exists; delete it or finish that pass")
