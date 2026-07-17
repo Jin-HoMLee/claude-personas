@@ -154,6 +154,11 @@ Run it via the `consolidate-memory` skill; all writes go through `consolidate_pa
 
 **Review requirement:** the pass's output is never adopted directly; the branch/PR goes to the same human/MM merge gate as any other memory change, and the typed commit log - `consolidate(dedupe|redistribute|retire): ...`, one operation per commit - is the unit of review.
 
+**Composition with deterministic lint (evidenced, not assumed):** the pass **composes with** deterministic structural checks (index/file divergence, `[[name]]` link integrity, orphan detection); it does not replace them, and they do not replace it.
+Measured side-by-side on a real 103-file store (#91, 2026-07-17): 85 findings caught by deterministic lint only, 2 by the synthesis pass only (a contradicted stale fact, a two-facts-one-file split), 0 by both.
+The separation is structural: link/index hygiene is not a `dedupe|redistribute|retire` operation, and semantic staleness has no deterministic signature.
+Run both.
+
 **Which guarantees are code and which are convention:** branch isolation, store scope, typed commit format, and the index<->file sync check at finish are enforced by `consolidate_pass.py`; the preservation stance (exceptions survive, old-but-true survives, retire needs a cited contradiction) and operation atomicity live in the skill text and the PR review.
 The canary eval (`framework/tools/consolidation_eval/`) is the kill gate for the semantic half: the pass ships only while seeded outlier facts survive it 100%.
 

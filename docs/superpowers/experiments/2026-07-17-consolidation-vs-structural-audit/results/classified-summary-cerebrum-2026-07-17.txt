@@ -1,0 +1,2 @@
+
+118 finding(s): index-ghost=1, orphan/archive-indexed=25, orphan/dated-artifact=7, wikilink/dangling=35, wikilink/extension-suffixed=4, wikilink/non-memory-reference=6, wikilink/slug-style-mismatch=40
