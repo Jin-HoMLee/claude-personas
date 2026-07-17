@@ -59,6 +59,7 @@ One wrapper call = one commit = one logical operation; the skill is responsible 
 ### `finish`
 
 Verifies: clean tree; at least the shape invariants hold - every store file has an index line and every index line points at an existing file (index<->file sync, the mechanical share of the no-demotion guard).
+**Amended by #97 (2026-07-17, evidenced by the #91 live run):** the sync check is a DELTA gate - `begin` snapshots the store's pre-existing sync findings (git-dir file, removed on every terminal path), and `finish` blocks only on findings the pass introduced, warning verbatim about surviving pre-existing ones; format examples in inline code or fenced blocks are stripped before link-matching. The enforced contract is "leave the store no worse" - pre-existing rot (e.g. a one-hop archive index the flat check can't see) never blocks delivery, and the gate stays deterministic and in code.
 Zero typed commits is not an error: a genuinely clean store yields "nothing to consolidate", branch deleted, config cleared, exit 0.
 With commits: if a remote exists and `gh` is authed, push first, then `gh pr create` with explicit `--title` and `--body` generated from the typed commit log - never `--fill` and never prompt-dependent, because non-interactive `gh pr create` fails without explicit values and requires the branch already pushed (web-checked 2026-07-16, see Decision log).
 On push/PR delivery failure, exit non-zero with the manual commands printed - the branch and commits stay intact.
