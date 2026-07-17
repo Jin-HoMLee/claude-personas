@@ -143,6 +143,20 @@ The `.claude/memory/` symlink in each project clone (`<project-clone>/.claude/me
 
 **Windows:** Symlink creation requires Developer Mode on Windows (Settings → Privacy & Security → Developer Mode). If you're on Windows without Developer Mode, use WSL.
 
+## The consolidation pass
+
+An explicit-only pass that proposes a tidied reorganization of ONE memory store on a `consolidate/*` branch, delivered as a PR to the human/MM merge gate (issue #87).
+Run it via the `consolidate-memory` skill; all writes go through `consolidate_pass.py`.
+
+**It may:** dedupe duplicate facts, redistribute an overgrown file, and retire facts contradicted by newer facts - all within a single store per pass.
+
+**It may not:** write to `main` (the wrapper refuses to commit off its own `consolidate/*` branch), touch paths outside the target store (the wrapper rejects them), move content across stores or tiers, demote a rule out of a tier (that is the promotion ladder's job), or run unattended (no cron; `memory_cliff.py` may at most *suggest* a pass when a store nears a cliff - a planned prompt, tracked as #90, not yet in its output).
+
+**Review requirement:** the pass's output is never adopted directly; the branch/PR goes to the same human/MM merge gate as any other memory change, and the typed commit log - `consolidate(dedupe|redistribute|retire): ...`, one operation per commit - is the unit of review.
+
+**Which guarantees are code and which are convention:** branch isolation, store scope, typed commit format, and the index<->file sync check at finish are enforced by `consolidate_pass.py`; the preservation stance (exceptions survive, old-but-true survives, retire needs a cited contradiction) and operation atomicity live in the skill text and the PR review.
+The canary eval (`framework/tools/consolidation_eval/`) is the kill gate for the semantic half: the pass ships only while seeded outlier facts survive it 100%.
+
 ## Getting started
 
 See the [Quick start in README.md](README.md#quick-start-10-minutes-per-project) — `framework/tools/init-clone.sh` automates the clone creation + symlink wiring. Once a role is wired, open Claude Code in the role's clone and it auto-loads the matching `MEMORY.md`.
