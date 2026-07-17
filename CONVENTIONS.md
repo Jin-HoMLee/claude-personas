@@ -150,7 +150,7 @@ Run it via the `consolidate-memory` skill; all writes go through `consolidate_pa
 
 **It may:** dedupe duplicate facts, redistribute an overgrown file, and retire facts contradicted by newer facts - all within a single store per pass.
 
-**It may not:** write to `main` (the wrapper refuses to commit off its own `consolidate/*` branch), touch paths outside the target store (the wrapper rejects them), move content across stores or tiers, demote a rule out of a tier (that is the promotion ladder's job), or run unattended (no cron; `memory_cliff.py` may at most *suggest* a pass when a store nears a cliff - a planned prompt, tracked as #90, not yet in its output).
+**It may not:** write to `main` (the wrapper refuses to commit off its own `consolidate/*` branch), touch paths outside the target store (the wrapper rejects them), move content across stores or tiers, demote a rule out of a tier (that is the promotion ladder's job), or run unattended (no cron; `memory_cliff.py` at most *suggests* a pass when a store sits at >=90% of a size cliff - an advisory warn-line in its report (#90); the linter never invokes one).
 
 **Review requirement:** the pass's output is never adopted directly; the branch/PR goes to the same human/MM merge gate as any other memory change, and the typed commit log - `consolidate(dedupe|redistribute|retire): ...`, one operation per commit - is the unit of review.
 
