@@ -4,8 +4,10 @@
 The only sanctioned write path for the consolidate-memory skill. Owns the git
 surface so the AC guarantees are properties of code, not instructions:
 zero writes to main (commit refuses off the pass branch), single-store scope
-(commit rejects out-of-store paths), typed one-op-per-commit history, and an
-index<->file sync check at finish. Spec:
+(commit rejects out-of-store paths), typed one-op-per-commit history, and a
+DELTA index<->file sync gate at finish - begin snapshots the store's
+pre-existing sync findings, finish blocks only on findings the pass
+introduced and warns about the rest (#97). Spec:
 docs/superpowers/specs/2026-07-16-consolidation-pass-mechanics-design.md
 
 Usage:
@@ -32,6 +34,11 @@ KEYS = ("consolidate.store", "consolidate.base",
         "consolidate.branch", "consolidate.baseref")
 
 INDEX_LINK_RE = re.compile(r"\]\(([^)]+\.md)\)")
+# Format examples are not index entries (#97): a link shown in inline code
+# (cerebrum's index header documents its own format that way) or a fenced
+# block must not register with INDEX_LINK_RE.
+_CODE_SPAN_RE = re.compile(r"`[^`\n]*`")
+_FENCE_BLOCK_RE = re.compile(r"^(```|~~~).*?^\1", re.DOTALL | re.MULTILINE)
 
 
 def _git(root: str, *args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -173,6 +180,15 @@ def cmd_begin(args: argparse.Namespace) -> int:
     config_set(root, "consolidate.base", base)
     config_set(root, "consolidate.branch", branch)
     config_set(root, "consolidate.baseref", baseref)
+    # Snapshot the store's sync errors as they stand BEFORE the pass: finish
+    # holds the pass accountable only for its own delta (#97), so pre-existing
+    # rot (layered-index conventions, historical drift) never blocks delivery.
+    preexisting = index_sync_errors(root, rel)
+    with open(snapshot_path(root), "w", encoding="utf-8") as f:
+        f.write("\n".join(preexisting))
+    if preexisting:
+        print(f"NOTE: {len(preexisting)} pre-existing index-sync finding(s) "
+              "recorded; finish will warn about them but only block on NEW ones")
     print(f"OK: pass branch {branch} (store: {rel}, base: {baseref})")
     return 0
 
@@ -181,11 +197,14 @@ def index_sync_errors(root: str, store: str) -> list[str]:
     """Index<->file sync, same-directory links only - cross-store references
     like shared/MEMORY.md are legitimate and skipped, as are URLs. A leading
     `./` on a same-directory link (e.g. `./fact_a.md`) is normalized away
-    before the cross-store filter, so it isn't mistaken for a path."""
+    before the cross-store filter, so it isn't mistaken for a path. Inline
+    code spans and fenced blocks are stripped first - a format example in
+    the index header is not a link (#97)."""
     storedir = os.path.join(root, store)
     idx_path = os.path.join(storedir, "MEMORY.md")
     with open(idx_path, encoding="utf-8") as f:
-        links = INDEX_LINK_RE.findall(f.read())
+        text = _CODE_SPAN_RE.sub("", _FENCE_BLOCK_RE.sub("", f.read()))
+    links = INDEX_LINK_RE.findall(text)
     links = [l[2:] if l.startswith("./") else l for l in links]
     linked = {l for l in links if "/" not in l and "://" not in l}
     on_disk = {f_ for f_ in os.listdir(storedir)
@@ -198,6 +217,23 @@ def index_sync_errors(root: str, store: str) -> list[str]:
     return errors
 
 
+def snapshot_path(root: str) -> str:
+    """Where begin records the store's PRE-EXISTING sync errors (#97): inside
+    the git dir, so it is invisible to the working tree and to the eval, and
+    dies with the pass state rather than lingering as a tracked file."""
+    d = _git(root, "rev-parse", "--git-dir").stdout.strip()
+    if not os.path.isabs(d):
+        d = os.path.join(root, d)
+    return os.path.join(d, "consolidate-preexisting")
+
+
+def _remove_snapshot(root: str) -> None:
+    try:
+        os.remove(snapshot_path(root))
+    except OSError:
+        pass
+
+
 def _op_log(root: str, base: str) -> list[str]:
     out = _git(root, "log", "--reverse", "--format=%s", f"{base}..HEAD").stdout
     return [s for s in out.splitlines() if s.strip()]
@@ -208,6 +244,7 @@ def _cleanup(root: str, branch: str, baseref: str) -> None:
     _git(root, "branch", "-D", branch)
     for key in KEYS:
         config_unset(root, key)
+    _remove_snapshot(root)
 
 
 def cmd_finish(args: argparse.Namespace) -> int:
@@ -233,13 +270,28 @@ def cmd_finish(args: argparse.Namespace) -> int:
     if not os.path.isfile(idx_path):
         return _fail(f"{store}/MEMORY.md missing - the pass must never delete the store index")
     errors = index_sync_errors(root, store)
-    if errors:
-        for e in errors:
+    try:
+        with open(snapshot_path(root), encoding="utf-8") as f:
+            preexisting = {line for line in f.read().splitlines() if line}
+    except OSError:
+        preexisting = set()   # no snapshot (pre-#97 begin): all errors block
+    new_errors = [e for e in errors if e not in preexisting]
+    if new_errors:
+        for e in new_errors:
             print(f"FAIL: {e}", file=sys.stderr)
-        return 1
+        return _fail(f"{len(new_errors)} index-sync error(s) INTRODUCED by this "
+                     "pass; fix them via commit, then retry finish")
+    still_present = [e for e in errors if e in preexisting]
+    if still_present:
+        print(f"WARN: {len(still_present)} pre-existing index-sync finding(s) "
+              "remain (not introduced by this pass; not a delivery blocker):",
+              file=sys.stderr)
+        for e in still_present:
+            print(f"  {e}", file=sys.stderr)
     if not _git(root, "remote", check=False).stdout.strip():
         for key in KEYS:
             config_unset(root, key)
+        _remove_snapshot(root)
         print(f"OK: {len(ops)} operation(s) on {branch} (no remote; branch is the deliverable)")
         return 0
     # Same slug rule as begin: "root" for a store-at-repo-root pass, else
@@ -266,6 +318,7 @@ def cmd_finish(args: argparse.Namespace) -> int:
                      f"  gh pr create --title '{title}' --body '...op log...'")
     for key in KEYS:
         config_unset(root, key)
+    _remove_snapshot(root)
     print(f"OK: PR opened for {branch}\n{pr.stdout.strip()}")
     return 0
 
@@ -282,6 +335,7 @@ def cmd_abort(args: argparse.Namespace) -> int:
     _git(root, "branch", "-D", branch)
     for key in KEYS:
         config_unset(root, key)
+    _remove_snapshot(root)
     print(f"OK: aborted; back on {baseref}, {branch} deleted")
     return 0
 

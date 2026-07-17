@@ -1,10 +1,12 @@
 """test_consolidate_pass.py - guard tests for consolidate_pass.py (#89)."""
+import io
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import consolidate_pass as cp  # noqa: E402
@@ -400,6 +402,108 @@ class TestBranchSlug(unittest.TestCase):
 
     def test_all_hostile_falls_back(self):
         self.assertEqual(cp.branch_slug("..."), "store")
+
+
+class TestIndexSyncCodeStripping(unittest.TestCase):
+    """#97 defect 1: links inside inline code or fenced blocks are format
+    examples, not index entries - they must not register as ghosts."""
+
+    def _errors(self, index_text):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "mem"))
+            with open(os.path.join(tmp, "mem", "MEMORY.md"), "w") as f:
+                f.write(index_text)
+            with open(os.path.join(tmp, "mem", "fact_a.md"), "w") as f:
+                f.write("body\n")
+            return cp.index_sync_errors(tmp, "mem")
+
+    def test_inline_code_format_example_not_a_ghost(self):
+        # cerebrum's real index header shape: the format documented in backticks.
+        errs = self._errors(
+            "# Index\n\nOne line per file (`- [Title](file.md) - hook`).\n\n"
+            "- [Fact A](fact_a.md) - a fact\n")
+        self.assertEqual(errs, [])
+
+    def test_fenced_block_example_not_a_ghost(self):
+        errs = self._errors(
+            "# Index\n\n```\n- [Example](ghost.md) - not real\n```\n\n"
+            "- [Fact A](fact_a.md) - a fact\n")
+        self.assertEqual(errs, [])
+
+    def test_real_ghost_still_detected(self):
+        errs = self._errors(
+            "# Index\n\n- [Fact A](fact_a.md) - a\n- [Gone](missing.md) - b\n")
+        self.assertEqual(errs, ["index links missing file: missing.md"])
+
+
+class TestFinishDeltaGate(unittest.TestCase):
+    """#97 defect 2: finish must block only on sync errors the PASS introduced.
+    Pre-existing store rot (e.g. layered-index conventions the flat check
+    can't see) is warned about, never a delivery blocker."""
+
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory(prefix="mem-")
+        self.root = make_repo(self._td.name)
+        # Pre-existing rot, committed BEFORE the pass: an unindexed file.
+        with open(os.path.join(self.root, "mem", "orphan.md"), "w") as f:
+            f.write("unindexed but legitimate (archive-indexed in real life)\n")
+        _git(self.root, "add", ".")
+        _git(self.root, "commit", "-qm", "pre-existing orphan")
+        self._oldcwd = os.getcwd()
+        os.chdir(self.root)
+        cp.main(["begin", "--store", os.path.join(self.root, "mem")])
+
+    def tearDown(self):
+        os.chdir(self._oldcwd)
+        self._td.cleanup()
+
+    def _edit(self, relpath, text):
+        with open(os.path.join(self.root, relpath), "w") as f:
+            f.write(text)
+
+    def _finish(self):
+        buf, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(buf), redirect_stderr(err):
+            rc = cp.main(["finish"])
+        return rc, buf.getvalue(), err.getvalue()
+
+    def test_begin_snapshots_preexisting_errors(self):
+        snap = cp.snapshot_path(self.root)
+        self.assertTrue(os.path.isfile(snap))
+        with open(snap) as f:
+            self.assertIn("file not in index: orphan.md", f.read())
+
+    def test_finish_delivers_despite_preexisting_errors(self):
+        self._edit("mem/fact_a.md", "---\nname: fact-a\n---\n\nTidied body.\n")
+        self.assertEqual(cp.main(["commit", "--op", "dedupe", "-m", "tidy"]), 0)
+        rc, out, err = self._finish()
+        self.assertEqual(rc, 0)                    # no remote -> branch deliverable
+        self.assertIn("OK: 1 operation(s)", out)
+        self.assertIn("pre-existing", err)         # warned, not silent
+        self.assertIn("orphan.md", err)
+
+    def test_finish_blocks_on_error_introduced_by_pass(self):
+        os.remove(os.path.join(self.root, "mem", "fact_a.md"))
+        self.assertEqual(cp.main(["commit", "--op", "retire", "-m", "drop a"]), 0)
+        rc, _, err = self._finish()
+        self.assertNotEqual(rc, 0)
+        self.assertIn("fact_a.md", err)            # the NEW ghost blocks
+        # the pre-existing orphan is not among the blocking FAIL lines
+        fail_lines = [l for l in err.splitlines() if l.startswith("FAIL")]
+        self.assertFalse(any("orphan.md" in l for l in fail_lines))
+
+    def test_successful_finish_removes_snapshot(self):
+        self._edit("mem/fact_a.md", "---\nname: fact-a\n---\n\nTidied body.\n")
+        cp.main(["commit", "--op", "dedupe", "-m", "tidy"])
+        rc, _, _ = self._finish()
+        self.assertEqual(rc, 0)
+        self.assertFalse(os.path.exists(cp.snapshot_path(self.root)))
+
+    def test_abort_removes_snapshot(self):
+        buf, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(buf), redirect_stderr(err):
+            self.assertEqual(cp.main(["abort"]), 0)
+        self.assertFalse(os.path.exists(cp.snapshot_path(self.root)))
 
 
 if __name__ == "__main__":
