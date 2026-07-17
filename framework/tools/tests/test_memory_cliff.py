@@ -761,5 +761,118 @@ class TestMainFlatLayout(_CorpusBuilderMixin, unittest.TestCase):
             self.assertIn("Ratchet OK", out)
 
 
+class TestConsolidationSuggestionUnit(unittest.TestCase):
+    def test_well_under_does_not_need_consolidation(self):
+        load = mc.RoleLoad("pm", rules=4, always_lines=50, tokens=1000)
+        self.assertFalse(mc.needs_consolidation(load))
+
+    def test_just_below_near_line_does_not_fire(self):
+        # Largest values strictly below 90% of every cliff: 12 < 12.6 rules,
+        # 179 < 180 lines, 3599 < 3600 tokens.
+        load = mc.RoleLoad("pm", rules=12, always_lines=179, tokens=3599)
+        self.assertFalse(mc.needs_consolidation(load))
+
+    def test_at_ninety_percent_of_lines_fires(self):
+        load = mc.RoleLoad("pm", rules=4, always_lines=180, tokens=1000)
+        self.assertTrue(mc.needs_consolidation(load))
+
+    def test_at_ninety_percent_of_rules_fires(self):
+        # ceil(0.9 * 14) = 13 is the first near value on the rules axis.
+        load = mc.RoleLoad("pm", rules=13, always_lines=50, tokens=1000)
+        self.assertTrue(mc.needs_consolidation(load))
+
+    def test_over_cliff_fires(self):
+        load = mc.RoleLoad("pm", rules=15, always_lines=50, tokens=1000)
+        self.assertTrue(mc.needs_consolidation(load))
+
+    def test_render_names_skill_tool_and_roles_on_one_line(self):
+        per_role = [
+            mc.RoleLoad("pm", rules=13, always_lines=50, tokens=1000),   # near
+            mc.RoleLoad("dev", rules=4, always_lines=50, tokens=1000),   # fine
+        ]
+        line = mc.render_consolidation_suggestion(per_role)
+        self.assertIsNotNone(line)
+        self.assertNotIn("\n", line)                 # AC: ONE line
+        self.assertIn("consolidate-memory", line)    # AC: names the skill
+        self.assertIn("consolidate_pass.py", line)   # AC: names the tool
+        self.assertIn("pm", line)
+        self.assertNotIn("dev", line)                # only qualifying roles listed
+
+    def test_render_none_when_all_roles_fine(self):
+        per_role = [mc.RoleLoad("pm", rules=4, always_lines=50, tokens=1000)]
+        self.assertIsNone(mc.render_consolidation_suggestion(per_role))
+
+
+class TestConsolidationSuggestionMainIntegration(_CorpusBuilderMixin, unittest.TestCase):
+    def _run(self, args):
+        buf, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(buf), redirect_stderr(err):
+            rc = mc.main(args)
+        return rc, buf.getvalue(), err.getvalue()
+
+    def test_near_cliff_suggests_and_still_exits_0(self):
+        with tempfile.TemporaryDirectory() as root:
+            # effective 13 rules: >= 90% of the 14-rule cliff, but not over it.
+            self._corpus(root, shared_rules=8, role_rules=5)
+            rc, out, _ = self._run(["--root", root])
+            self.assertEqual(rc, 0)                  # AC: exit semantics unchanged
+            self.assertIn("consolidate-memory", out)
+
+    def test_under_near_line_no_suggestion(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._corpus(root, shared_rules=2, role_rules=2)
+            rc, out, _ = self._run(["--root", root])
+            self.assertEqual(rc, 0)
+            self.assertNotIn("consolidate", out)
+
+    def test_over_cliff_suggests_and_still_exits_1(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._corpus(root, shared_rules=13, role_rules=5)   # effective 18 > 14
+            rc, out, _ = self._run(["--root", root])
+            self.assertEqual(rc, 1)                  # AC: exit semantics unchanged
+            self.assertIn("consolidate-memory", out)
+
+    def test_ratchet_mode_carries_suggestion_without_exit_change(self):
+        with tempfile.TemporaryDirectory() as root:
+            # Over the absolute cliff but ratchet-clean: rc must stay 0 (ratchet
+            # semantics), with the suggestion line present in the report.
+            self._corpus(root, shared_rules=20, role_rules=5)
+            bpath = os.path.join(root, "baseline.json")
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(mc.main(["--root", root, "--write-baseline", bpath]), 0)
+            rc, out, _ = self._run(["--root", root, "--baseline", bpath])
+            self.assertEqual(rc, 0)
+            self.assertIn("Ratchet OK", out)
+            self.assertIn("consolidate-memory", out)
+
+    def test_write_baseline_mode_never_suggests(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._corpus(root, shared_rules=20, role_rules=5)   # far over the cliff
+            bpath = os.path.join(root, "baseline.json")
+            rc, out, _ = self._run(["--root", root, "--write-baseline", bpath])
+            self.assertEqual(rc, 0)
+            self.assertNotIn("consolidate", out)
+
+    def test_flat_layout_near_cliff_suggests(self):
+        with tempfile.TemporaryDirectory() as root:
+            # 13 whole-file rules: near the 14-rule cliff in flat layout.
+            self._flat_index(root, "".join(f"- **R{i}:** x\n" for i in range(13)))
+            rc, out, _ = self._run(["--root", root, "--layout", "flat"])
+            self.assertEqual(rc, 0)
+            self.assertIn("consolidate-memory", out)
+            self.assertIn("index", out)
+
+    def test_linter_has_no_invocation_path(self):
+        # AC: the linter performs no invocation of the pass under any code path.
+        # Tripwire, not proof: the tool must stay free of process-spawning calls.
+        src_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "memory_cliff.py"
+        )
+        with open(src_path, encoding="utf-8") as f:
+            src = f.read()
+        for needle in ("subprocess", "os.system", "popen", "os.exec"):
+            self.assertNotIn(needle, src)
+
+
 if __name__ == "__main__":
     unittest.main()

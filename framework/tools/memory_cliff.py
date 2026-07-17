@@ -280,6 +280,40 @@ def classify(load: RoleLoad) -> list[str]:
 
 
 # --------------------------------------------------------------------------- #
+# Consolidation-pass suggestion (issue #90, #87 AC3): warn-line only.
+# --------------------------------------------------------------------------- #
+# "Near" = any axis at >= 90% of its cliff (over the cliff is a fortiori near).
+# The fraction is a design call, not a CONVENTIONS.md value: the cliffs are
+# rule-of-thumb thresholds, so the warn-line fires with headroom left to act in.
+NEAR_FRACTION = 0.9
+
+
+def needs_consolidation(load: RoleLoad) -> bool:
+    """True when any axis sits at >= NEAR_FRACTION of its cliff, including over
+    it. Purely advisory - never feeds classify() or any exit code."""
+    return (
+        load.rules >= NEAR_FRACTION * RULE_CLIFF
+        or load.always_lines >= NEAR_FRACTION * LINE_CLIFF
+        or load.tokens >= NEAR_FRACTION * TOKEN_CLIFF
+    )
+
+
+def render_consolidation_suggestion(per_role: list[RoleLoad]) -> str | None:
+    """One advisory line naming the qualifying roles and the consolidation
+    skill/tool to invoke, or None when every role is comfortably under the
+    cliffs. The trigger policy is explicit-only (#87): this linter only ever
+    *suggests* a pass - it must never invoke one on any code path."""
+    near = [rl.role for rl in per_role if needs_consolidation(rl)]
+    if not near:
+        return None
+    return (
+        f"Suggestion: {', '.join(near)} at >={int(NEAR_FRACTION * 100)}% of a size cliff - "
+        "consider a consolidation pass (skill: consolidate-memory, tool: consolidate_pass.py; "
+        "explicit invocation only, this linter never runs it)."
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Ratchet: baseline I/O + comparison
 # --------------------------------------------------------------------------- #
 AXES = ("rules", "always_lines", "tokens")
@@ -442,6 +476,17 @@ def render(
 # --------------------------------------------------------------------------- #
 # Entry point
 # --------------------------------------------------------------------------- #
+def _print_suggestion(per_role: list[RoleLoad]) -> None:
+    """Print the advisory consolidation warn-line after a report, if warranted.
+    Report-printing modes only (default + --baseline); --write-baseline prints
+    no report so it gets no suggestion. Never touches exit codes."""
+    suggestion = render_consolidation_suggestion(per_role)
+    if suggestion:
+        print()
+        print(suggestion)
+
+
+
 def _discover_root() -> str:
     """Repo root = nearest ancestor of this file containing .git or .agents/.
 
@@ -511,6 +556,7 @@ def main(argv=None) -> int:
             print(f"memory_cliff: bad baseline file: {exc}", file=sys.stderr)
             return 2
         print(render(per_file, per_role, load_label))
+        _print_suggestion(per_role)
         print()
         print(render_wholefile_info(per_file))
         regressions = compare_to_baseline(per_role, baseline)
@@ -525,6 +571,7 @@ def main(argv=None) -> int:
         return 0
 
     print(render(per_file, per_role, load_label))
+    _print_suggestion(per_role)
     return 1 if any(classify(rl) for rl in per_role) else 0
 
 
