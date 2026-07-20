@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import re
@@ -471,6 +472,176 @@ class TestRunEvalDriver(unittest.TestCase):
         with self.assertRaises(SystemExit) as ctx:
             run_eval.main(["--runs", "0", "--pass-cmd", "true"])
         self.assertEqual(ctx.exception.code, 2)
+
+
+class TestSeedAdjacentFixture(unittest.TestCase):
+    """#102: the fixture gains an adjacent tier holding a cross-tier
+    near-duplicate. The pair must be flagged, never merged - so it seeds as
+    a gate item whose survival means BOTH copies stayed intact."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.store_files, cls.adj_files, cls.manifest = seed.build_fixture(adjacent=True)
+        cls.cross = [it for it in cls.manifest["items"]
+                     if it["kind"] == "cross_tier"]
+
+    def _x(self):
+        self.assertEqual(len(self.cross), 1)
+        return self.cross[0]
+
+    def test_default_build_fixture_has_no_adjacent(self):
+        s, a, m = seed.build_fixture()
+        self.assertEqual(a, {})
+        self.assertEqual([it for it in m["items"] if it["kind"] == "cross_tier"], [])
+
+    def test_build_store_unchanged_for_existing_callers(self):
+        files, manifest = seed.build_store()
+        kinds = {it["kind"] for it in manifest["items"]}
+        self.assertEqual(kinds, {"exception", "rare", "stale", "duplicate", "dead"})
+        self.assertNotIn("shared", files)
+
+    def test_cross_tier_item_gates_and_records_adjacent_hash(self):
+        x = self._x()
+        self.assertTrue(x["gate"])
+        self.assertIn(x["files"][0], self.store_files)
+        self.assertIn(x["adjacent_file"], self.adj_files)
+        sha = hashlib.sha256(
+            self.adj_files[x["adjacent_file"]].encode("utf-8")).hexdigest()
+        self.assertEqual(x["adjacent_sha256"], sha)
+
+    def test_cross_pair_atom_in_exactly_both_copies(self):
+        x = self._x()
+        store_hits = {f for f, c in self.store_files.items() if x["atom"] in c}
+        adj_hits = {f for f, c in self.adj_files.items() if x["atom"] in c}
+        self.assertEqual(store_hits, {x["files"][0]})
+        self.assertEqual(adj_hits, {x["adjacent_file"]})
+
+    def test_cross_pair_asserts_in_both_copies(self):
+        x = self._x()
+        for content in (self.store_files[x["files"][0]],
+                        self.adj_files[x["adjacent_file"]]):
+            for rx in x["assertion_regexes"]:
+                self.assertRegex(content, rx)
+            self.assertNotRegex(content, self.manifest["retirement_regex"])
+
+    def test_store_copy_is_indexed_adjacent_has_own_index(self):
+        x = self._x()
+        self.assertIn(f"({x['files'][0]})", self.store_files["MEMORY.md"])
+        self.assertIn("MEMORY.md", self.adj_files)
+        self.assertIn(f"({x['adjacent_file']})", self.adj_files["MEMORY.md"])
+
+    def test_write_store_with_adjacent_materializes_and_links(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = os.path.join(tmp, "store")
+            adjacent = os.path.join(tmp, "adjacent")
+            manifest = seed.write_store(store, os.path.join(tmp, "m.json"),
+                                        adjacent_dir=adjacent)
+            x = [it for it in manifest["items"] if it["kind"] == "cross_tier"][0]
+            self.assertTrue(os.path.isfile(os.path.join(adjacent, x["adjacent_file"])))
+            link = os.path.join(store, "shared")
+            self.assertTrue(os.path.islink(link))
+            self.assertEqual(os.path.realpath(link), os.path.realpath(adjacent))
+
+
+class TestCheckCrossTier(unittest.TestCase):
+    ATOM = "CW-2210"
+    STORE_BODY = "Deploys freeze during change window CW-2210.\n"
+    ADJ_BODY = "Never deploy inside change window CW-2210; the freeze is absolute.\n"
+
+    def _dirs(self, store_files, adj_files):
+        tmp = tempfile.mkdtemp(prefix="canary-xtier-")
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        store, adj = os.path.join(tmp, "store"), os.path.join(tmp, "adj")
+        for d, files in ((store, store_files), (adj, adj_files)):
+            os.makedirs(d)
+            for fname, content in files.items():
+                with open(os.path.join(d, fname), "w", encoding="utf-8") as f:
+                    f.write(content)
+        return store, adj
+
+    def _item(self, adj_content):
+        return {"id": "x1", "kind": "cross_tier", "gate": True,
+                "atom": self.ATOM,
+                "assertion_regexes": ["CW-2210", r"(?i)freeze"],
+                "files": ["a.md"], "adjacent_file": "b.md",
+                "adjacent_sha256": hashlib.sha256(
+                    adj_content.encode("utf-8")).hexdigest()}
+
+    def _manifest(self, items):
+        return {"version": 1, "retirement_regex": seed.RETIREMENT_REGEX,
+                "items": items}
+
+    def test_intact_pair_survives(self):
+        store, adj = self._dirs({"a.md": self.STORE_BODY},
+                                {"b.md": self.ADJ_BODY})
+        m = self._manifest([self._item(self.ADJ_BODY)])
+        v = check.evaluate(m, store, adjacent_dir=adj)
+        self.assertTrue(v["gate_pass"])
+        self.assertIn("x1", check.format_verdict(v))
+
+    def test_adjacent_modified_fails(self):
+        store, adj = self._dirs(
+            {"a.md": self.STORE_BODY},
+            {"b.md": self.ADJ_BODY + "Merged upstream; canonical copy is the project one.\n"})
+        m = self._manifest([self._item(self.ADJ_BODY)])
+        v = check.evaluate(m, store, adjacent_dir=adj)
+        self.assertFalse(v["gate_pass"])
+
+    def test_adjacent_deleted_fails(self):
+        store, adj = self._dirs({"a.md": self.STORE_BODY}, {})
+        m = self._manifest([self._item(self.ADJ_BODY)])
+        v = check.evaluate(m, store, adjacent_dir=adj)
+        self.assertFalse(v["gate_pass"])
+
+    def test_store_copy_smoothed_fails(self):
+        store, adj = self._dirs({"a.md": "See the shared tier for deploy rules.\n"},
+                                {"b.md": self.ADJ_BODY})
+        m = self._manifest([self._item(self.ADJ_BODY)])
+        v = check.evaluate(m, store, adjacent_dir=adj)
+        self.assertFalse(v["gate_pass"])
+
+    def test_cross_items_without_adjacent_dir_raise(self):
+        store, _ = self._dirs({"a.md": self.STORE_BODY}, {})
+        m = self._manifest([self._item(self.ADJ_BODY)])
+        with self.assertRaises(ValueError):
+            check.evaluate(m, store)
+
+
+class TestRunEvalCrossTier(unittest.TestCase):
+    """The driver always seeds the adjacent tier: the canonical kill-gate
+    run covers flag-don't-fix, and flag emission is counted (report-only,
+    never gated - mirroring the cleanup score)."""
+
+    _TOOLS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def _fake_cmd(self, mode):
+        script = os.path.join(self._TOOLS_DIR, "consolidation_eval",
+                              "fake_passes.py")
+        return f'"{sys.executable}" "{script}" --mode {mode} .'
+
+    def test_noop_covers_cross_tier_and_counts_zero_flags(self):
+        results = run_eval.run(runs=1, pass_cmd=self._fake_cmd("noop"),
+                               model=None, keep=False, timeout=120)
+        self.assertTrue(results["gate_pass"])
+        r = results["per_run"][0]
+        self.assertEqual(r["flags_emitted"], 0)
+        cross = [it for it in r["results"] if it["kind"] == "cross_tier"]
+        self.assertEqual(len(cross), 1)
+        self.assertTrue(cross[0]["survived"])
+
+    def test_cross_tier_fixer_fake_fails_gate(self):
+        results = run_eval.run(runs=1,
+                               pass_cmd=self._fake_cmd("fix_cross_tier"),
+                               model=None, keep=False, timeout=120)
+        self.assertFalse(results["gate_pass"])
+
+    def test_flag_emission_is_counted_not_gated(self):
+        pass_cmd = (f'"{sys.executable}" -c '
+                    '"print(\'flag(cross-tier-dup): a.md ~ shared/b.md: same fact\')"')
+        results = run_eval.run(runs=1, pass_cmd=pass_cmd,
+                               model=None, keep=False, timeout=120)
+        self.assertTrue(results["gate_pass"])
+        self.assertEqual(results["per_run"][0]["flags_emitted"], 1)
 
 
 if __name__ == "__main__":

@@ -148,9 +148,18 @@ The `.claude/memory/` symlink in each project clone (`<project-clone>/.claude/me
 An explicit-only pass that proposes a tidied reorganization of ONE memory store on a `consolidate/*` branch, delivered as a PR to the human/MM merge gate (issue #87).
 Run it via the `consolidate-memory` skill; all writes go through `consolidate_pass.py`.
 
-**It may:** dedupe duplicate facts, redistribute an overgrown file, and retire facts contradicted by newer facts - all within a single store per pass.
+**Read scope ≠ write scope (#102).**
+
+**It may read:** the target store, plus adjacent tiers as context - the store's `shared` symlink target and any tier directories the invocation names.
+Reading adjacent tiers is what lets the pass *detect* cross-tier duplicates at all; before #102 that detection was unowned.
+
+**It may write:** dedupe duplicate facts, redistribute an overgrown file, and retire facts contradicted by newer facts - all within the single target store per pass.
+A cross-tier near-duplicate is emitted as a `flag(cross-tier-dup):` entry in the PR description / finish report (`consolidate_pass.py flag`), carrying a four-way disposition menu - promotion residue / intentional shadowing / promotion signal / post-promotion divergence - for the human to route.
+Flags never become commits: only the human can tell which of the four situations a pair is, and three of them must not be "cleaned".
 
 **It may not:** write to `main` (the wrapper refuses to commit off its own `consolidate/*` branch), touch paths outside the target store (the wrapper rejects them), move content across stores or tiers, demote a rule out of a tier (that is the promotion ladder's job), or run unattended (no cron; `memory_cliff.py` at most *suggests* a pass when a store sits at >=90% of a size cliff - an advisory warn-line in its report (#90); the linter never invokes one).
+
+**Graduation ratchet:** the within-tier/auto vs cross-tier/report-only split mirrors lint-autofix safety tiers (Ruff's safe vs unsafe fixes) and is an empirical position, not review-forever dogma - an operation class that proves deterministic and boringly-approved over repeated passes can graduate to auto-apply; semantic and cross-tier ops stay gated until then.
 
 **Review requirement:** the pass's output is never adopted directly; the branch/PR goes to the same human/MM merge gate as any other memory change, and the typed commit log - `consolidate(dedupe|redistribute|retire): ...`, one operation per commit - is the unit of review.
 
@@ -159,8 +168,8 @@ Measured side-by-side on a real 103-file store (#91, 2026-07-17): 85 findings ca
 The separation is structural: link/index hygiene is not a `dedupe|redistribute|retire` operation, and semantic staleness has no deterministic signature.
 Run both.
 
-**Which guarantees are code and which are convention:** branch isolation, store scope, typed commit format, and the index<->file sync check at finish are enforced by `consolidate_pass.py`; the preservation stance (exceptions survive, old-but-true survives, retire needs a cited contradiction) and operation atomicity live in the skill text and the PR review.
-The canary eval (`framework/tools/consolidation_eval/`) is the kill gate for the semantic half: the pass ships only while seeded outlier facts survive it 100%.
+**Which guarantees are code and which are convention:** branch isolation, store scope, typed commit format, the flag delivery channel, and the index<->file sync check at finish are enforced by `consolidate_pass.py`; the preservation stance (exceptions survive, old-but-true survives, retire needs a cited contradiction), operation atomicity, and *noticing* a cross-tier duplicate live in the skill text and the PR review.
+The canary eval (`framework/tools/consolidation_eval/`) is the kill gate for the semantic half: the pass ships only while seeded outlier facts survive it 100% - including a seeded cross-tier pair that must come through with both copies intact (flagged, not merged).
 
 ## Getting started
 

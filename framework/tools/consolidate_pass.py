@@ -13,6 +13,7 @@ docs/superpowers/specs/2026-07-16-consolidation-pass-mechanics-design.md
 Usage:
     python3 consolidate_pass.py begin --store DIR
     python3 consolidate_pass.py commit --op {dedupe,redistribute,retire} -m MSG
+    python3 consolidate_pass.py flag --kind cross-tier-dup -m MSG
     python3 consolidate_pass.py finish
     python3 consolidate_pass.py abort
 
@@ -30,8 +31,21 @@ import subprocess
 import sys
 
 OPS = ("dedupe", "redistribute", "retire")
+FLAG_KINDS = ("cross-tier-dup",)
 KEYS = ("consolidate.store", "consolidate.base",
         "consolidate.branch", "consolidate.baseref")
+
+# #102 flag-don't-fix: read scope != write scope. The pass may READ adjacent
+# tiers for context, but a cross-tier near-duplicate is never fixed - it is
+# flagged, and the human routes it. Four distinct situations look identical
+# to the pass, and only one of them is a cleanup:
+DISPOSITION_MENU = """\
+Disposition menu - route each flag by hand:
+1. promotion residue -> retire the lower-tier copy (within-store op in a later pass)
+2. intentional shadowing (load-bearing delta) -> leave alone
+3. promotion signal (same lesson written independently in a second scope) -> \
+route to the promotion ladder as evidence; do NOT dedupe
+4. post-promotion divergence (both copies edited since) -> human judgment on content"""
 
 INDEX_LINK_RE = re.compile(r"\]\(([^)]+\.md)\)")
 # Format examples are not index entries (#97): a link shown in inline code
@@ -234,6 +248,65 @@ def _remove_snapshot(root: str) -> None:
         pass
 
 
+def flags_path(root: str) -> str:
+    """Where flag entries accumulate during a pass (#102): inside the git
+    dir, same rationale as snapshot_path - flags are report-only state, so
+    they must never appear in the working tree or become commits."""
+    d = _git(root, "rev-parse", "--git-dir").stdout.strip()
+    if not os.path.isabs(d):
+        d = os.path.join(root, d)
+    return os.path.join(d, "consolidate-flags")
+
+
+def read_flags(root: str) -> list[str]:
+    try:
+        with open(flags_path(root), encoding="utf-8") as f:
+            return [line for line in f.read().splitlines() if line.strip()]
+    except OSError:
+        return []
+
+
+def _remove_flags(root: str) -> None:
+    try:
+        os.remove(flags_path(root))
+    except OSError:
+        pass
+
+
+def flags_report(flags: list[str]) -> str:
+    """Human-facing flags block, shared by the PR body and the stdout
+    report paths: the entries plus the four-way disposition menu."""
+    lines = ["Flags (report-only - no commits were made for these):", ""]
+    lines += [f"- {f}" for f in flags]
+    lines += ["", DISPOSITION_MENU]
+    return "\n".join(lines)
+
+
+def pr_body(ops: list[str], flags: list[str]) -> str:
+    body = "Consolidation pass operations:\n\n" + "\n".join(f"- {s}" for s in ops)
+    if flags:
+        body += "\n\n" + flags_report(flags)
+    return body
+
+
+def cmd_flag(args: argparse.Namespace) -> int:
+    root = repo_root()
+    if root is None:
+        return _fail("not inside a git repository")
+    branch = config_get(root, "consolidate.branch")
+    if not branch:
+        return _fail("no consolidation pass in progress; run begin first")
+    if _current_branch(root) != branch:
+        return _fail(f"not on the pass branch {branch}; refusing to flag")
+    # One flag = one line: collapse any whitespace runs (newlines included)
+    # so a multi-line -m can't split into prefix-less phantom entries.
+    entry = f"flag({args.kind}): {' '.join(args.m.split())}"
+    with open(flags_path(root), "a", encoding="utf-8") as f:
+        f.write(entry + "\n")
+    print(f"OK: {entry} (report-only; delivered by finish, never committed)")
+    return 0
+
+
 def _op_log(root: str, base: str) -> list[str]:
     out = _git(root, "log", "--reverse", "--format=%s", f"{base}..HEAD").stdout
     return [s for s in out.splitlines() if s.strip()]
@@ -246,6 +319,7 @@ def _clear_state(root: str) -> None:
     for key in KEYS:
         config_unset(root, key)
     _remove_snapshot(root)
+    _remove_flags(root)
 
 
 def _cleanup(root: str, branch: str, baseref: str) -> None:
@@ -269,8 +343,16 @@ def cmd_finish(args: argparse.Namespace) -> int:
     if _dirty(root):
         return _fail("uncommitted changes; land them via commit or revert them")
     ops = _op_log(root, base)
+    flags = read_flags(root)
     if not ops:
-        print("OK: nothing to consolidate; cleaning up")
+        # A flags-only pass has no commits, hence no branch/PR to deliver:
+        # stdout IS its report channel. Print before cleanup clears them.
+        if flags:
+            print("OK: nothing to consolidate; "
+                  f"{len(flags)} flag(s) for human routing:\n")
+            print(flags_report(flags))
+        else:
+            print("OK: nothing to consolidate; cleaning up")
         _cleanup(root, branch, baseref)
         return 0
     idx_path = os.path.join(root, store, "MEMORY.md")
@@ -298,13 +380,16 @@ def cmd_finish(args: argparse.Namespace) -> int:
     if not _git(root, "remote", check=False).stdout.strip():
         _clear_state(root)
         print(f"OK: {len(ops)} operation(s) on {branch} (no remote; branch is the deliverable)")
+        if flags:
+            print()
+            print(flags_report(flags))
         return 0
     # Same slug rule as begin: "root" for a store-at-repo-root pass, else
     # the store's relpath - keeps the PR title consistent with the branch
     # name instead of printing the raw "." store string.
     slug = "root" if store == "." else store
     title = f"consolidate: {slug} pass {datetime.date.today().isoformat()}"
-    body = "Consolidation pass operations:\n\n" + "\n".join(f"- {s}" for s in ops)
+    body = pr_body(ops, flags)
     if not shutil.which("gh"):
         return _fail("gh not found; branch intact - deliver manually:\n"
                      f"  git push -u origin {branch}\n"
@@ -351,6 +436,10 @@ def main(argv=None) -> int:
     c.add_argument("--op", required=True, choices=OPS)
     c.add_argument("-m", required=True)
     c.set_defaults(fn=cmd_commit)
+    fl = sub.add_parser("flag")
+    fl.add_argument("--kind", required=True, choices=FLAG_KINDS)
+    fl.add_argument("-m", required=True)
+    fl.set_defaults(fn=cmd_flag)
     f = sub.add_parser("finish")
     f.set_defaults(fn=cmd_finish)
     a = sub.add_parser("abort")

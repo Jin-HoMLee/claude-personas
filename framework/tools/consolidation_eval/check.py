@@ -20,6 +20,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -61,6 +62,30 @@ def _check_duplicate(item: dict, store: dict) -> dict:
             "cleaned": len(hits) == 1, "atom_files": hits}
 
 
+def _check_cross_tier(item: dict, store: dict, retirement_regex: str,
+                      adjacent_dir: str) -> dict:
+    """#102 flag-don't-fix: survival means BOTH copies stayed intact - the
+    store copy still asserts the fact (canary semantics) AND the adjacent
+    copy is byte-identical to seed time (the pass may read the adjacent
+    tier, never write it; any mutation there is a contract violation)."""
+    hits = _files_with_atom(store, item["atom"])
+    asserting = [rel for rel in hits
+                 if all(re.search(rx, store[rel])
+                        for rx in item["assertion_regexes"])
+                 and not re.search(retirement_regex, store[rel])]
+    adj_path = os.path.join(adjacent_dir, item["adjacent_file"])
+    try:
+        with open(adj_path, "rb") as f:
+            adjacent_intact = (hashlib.sha256(f.read()).hexdigest()
+                               == item["adjacent_sha256"])
+    except OSError:
+        adjacent_intact = False
+    return {"id": item["id"], "kind": item["kind"], "gate": True,
+            "survived": bool(asserting) and adjacent_intact,
+            "atom_files": hits, "asserting_files": asserting,
+            "adjacent_intact": adjacent_intact}
+
+
 def _check_dead(item: dict, store: dict, retirement_regex: str) -> dict:
     hits = _files_with_atom(store, item["atom"])
     cleaned = all(re.search(retirement_regex, store[rel]) for rel in hits)
@@ -68,12 +93,21 @@ def _check_dead(item: dict, store: dict, retirement_regex: str) -> dict:
             "cleaned": cleaned, "atom_files": hits}
 
 
-def evaluate(manifest: dict, store_dir: str) -> dict:
+def evaluate(manifest: dict, store_dir: str,
+             adjacent_dir: str | None = None) -> dict:
     store = scan_store(store_dir)
     retirement_regex = manifest["retirement_regex"]
+    cross_items = [it for it in manifest["items"]
+                   if it["kind"] == "cross_tier"]
+    if cross_items and adjacent_dir is None:
+        raise ValueError("manifest contains cross_tier items but no "
+                         "adjacent_dir was given; refusing a silent skip")
     results = []
     for item in manifest["items"]:
-        if item["gate"]:
+        if item["kind"] == "cross_tier":
+            results.append(_check_cross_tier(item, store, retirement_regex,
+                                             adjacent_dir))
+        elif item["gate"]:
             results.append(_check_canary(item, store, retirement_regex))
         elif item["kind"] == "duplicate":
             results.append(_check_duplicate(item, store))
@@ -116,11 +150,14 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--manifest", required=True)
     p.add_argument("--store", required=True)
+    p.add_argument("--adjacent", default=None,
+                   help="adjacent-tier dir (required when the manifest "
+                        "contains cross_tier items)")
     p.add_argument("--json", help="also write the full verdict to this path")
     args = p.parse_args(argv)
     with open(args.manifest, encoding="utf-8") as f:
         manifest = json.load(f)
-    verdict = evaluate(manifest, args.store)
+    verdict = evaluate(manifest, args.store, adjacent_dir=args.adjacent)
     print(format_verdict(verdict))
     if args.json:
         with open(args.json, "w", encoding="utf-8") as f:

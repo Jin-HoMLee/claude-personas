@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -248,6 +249,37 @@ DEAD = [
 ]
 
 
+# --------------------------------------------------------------------------- #
+# Cross-tier near-duplicate (#102): the same fact stated once in the store
+# and once in the adjacent tier that the store's `shared` symlink points at.
+# A contract-obedient pass FLAGS this pair and touches neither copy - so it
+# seeds as a gate item whose survival means both copies stayed intact.
+# --------------------------------------------------------------------------- #
+CROSS_TIER = {
+    "id": "xtier-1", "atom": "CW-2210",
+    "assertion_regexes": ["CW-2210", r"(?i)freeze|change window"],
+    "store_file": _f("deploy-freeze-window",
+                     "Deploys freeze during the weekly change window",
+                     "Deploys freeze during change window CW-2210 "
+                     "(Fri 16:00 - Mon 08:00 UTC).\n"),
+    "adjacent_file": _f("no-deploys-change-window",
+                        "Never deploy inside the change window",
+                        "Never deploy inside change window CW-2210; "
+                        "the Fri-to-Mon freeze is absolute.\n"),
+}
+
+# Innocent adjacent-tier content, so the adjacent store is not a single-file
+# giveaway that its one fact is the planted pair.
+ADJACENT_FILLER = [
+    _f("meeting-notes-live-in-wiki",
+       "Meeting notes belong in the wiki, not the repo",
+       "Keep meeting notes in the wiki; the repo holds decisions, not minutes.\n"),
+    _f("prefer-text-diagram-sources",
+       "Diagrams are checked in as plain-text sources",
+       "Check in diagram sources (mermaid/dot), never only binary exports.\n"),
+]
+
+
 def _filename(entry: dict) -> str:
     return "{}_{}.md".format(entry["type"], entry["name"].replace("-", "_"))
 
@@ -257,18 +289,33 @@ def _render(entry: dict) -> str:
                               type=entry["type"]) + entry["body"]
 
 
-def build_store() -> tuple[dict, dict]:
-    """Return (files, manifest): filename -> content, and the answer key."""
-    files: dict[str, str] = {}
-    descriptions: dict[str, str] = {}
-
-    def add(entry: dict) -> str:
+def _build_dir(entries: list[dict], files: dict, descriptions: dict) -> None:
+    for entry in entries:
         fname = _filename(entry)
         if fname in files:
             raise ValueError(f"duplicate fixture filename: {fname}")
         files[fname] = _render(entry)
         descriptions[fname] = entry["description"]
-        return fname
+
+
+def _index_for(files: dict, descriptions: dict) -> str:
+    lines = ["# Memory Index\n", "\n"]
+    for fname in sorted(files):
+        lines.append("- [{}]({}) - {}\n".format(
+            fname[:-3], fname, descriptions[fname]))
+    return "".join(lines)
+
+
+def build_fixture(adjacent: bool = False) -> tuple[dict, dict, dict]:
+    """Return (store_files, adjacent_files, manifest). With adjacent=False
+    the classic single-store fixture is reproduced exactly (adjacent_files
+    empty, no cross_tier manifest items)."""
+    files: dict[str, str] = {}
+    descriptions: dict[str, str] = {}
+
+    def add(entry: dict) -> str:
+        _build_dir([entry], files, descriptions)
+        return _filename(entry)
 
     items = []
     for entry in FILLER:
@@ -289,41 +336,84 @@ def build_store() -> tuple[dict, dict]:
                       "atom": d["atom"], "files": [f_dead],
                       "superseded_by": f_new})
 
-    index_lines = ["# Memory Index\n", "\n"]
-    for fname in sorted(files):
-        index_lines.append("- [{}]({}) - {}\n".format(
-            fname[:-3], fname, descriptions[fname]))
-    files["MEMORY.md"] = "".join(index_lines)
+    adj_files: dict[str, str] = {}
+    if adjacent:
+        adj_descriptions: dict[str, str] = {}
+        store_copy = add(CROSS_TIER["store_file"])
+        _build_dir([CROSS_TIER["adjacent_file"], *ADJACENT_FILLER],
+                   adj_files, adj_descriptions)
+        adj_copy = _filename(CROSS_TIER["adjacent_file"])
+        adj_files["MEMORY.md"] = _index_for(adj_files, adj_descriptions)
+        items.append({
+            "id": CROSS_TIER["id"], "kind": "cross_tier", "gate": True,
+            "atom": CROSS_TIER["atom"],
+            "assertion_regexes": CROSS_TIER["assertion_regexes"],
+            "files": [store_copy], "adjacent_file": adj_copy,
+            "adjacent_sha256": hashlib.sha256(
+                adj_files[adj_copy].encode("utf-8")).hexdigest()})
+
+    files["MEMORY.md"] = _index_for(files, descriptions)
 
     manifest = {"version": 1, "retirement_regex": RETIREMENT_REGEX,
                 "items": items}
-    _assert_atom_hygiene(files, manifest)
+    _assert_atom_hygiene(files, manifest, adj_files)
+    return files, adj_files, manifest
+
+
+def build_store() -> tuple[dict, dict]:
+    """Classic entry point: the single-store fixture, no adjacent tier."""
+    files, _, manifest = build_fixture(adjacent=False)
     return files, manifest
 
 
-def _assert_atom_hygiene(files: dict, manifest: dict) -> None:
-    """Every atom appears only where the manifest says it does."""
+def _assert_atom_hygiene(files: dict, manifest: dict,
+                         adjacent_files: dict | None = None) -> None:
+    """Every atom appears only where the manifest says it does - across the
+    store AND the adjacent tier (adjacent keys are namespaced so a shared
+    filename can never mask a leak)."""
+    merged = dict(files)
+    for fname, content in (adjacent_files or {}).items():
+        merged[f"adjacent:{fname}"] = content
     for it in manifest["items"]:
         allowed = set(it["files"])
         if "superseded_by" in it:
             allowed.add(it["superseded_by"])
-        hits = {f for f, c in files.items() if it["atom"] in c}
+        if "adjacent_file" in it:
+            allowed.add(f"adjacent:{it['adjacent_file']}")
+        hits = {f for f, c in merged.items() if it["atom"] in c}
         if hits != allowed:
             raise AssertionError(
                 f"atom hygiene violated for {it['id']}: atom {it['atom']!r} "
                 f"found in {sorted(hits)}, expected {sorted(allowed)}")
 
 
-def write_store(store_dir: str, manifest_path: str) -> dict:
+def write_store(store_dir: str, manifest_path: str,
+                adjacent_dir: str | None = None) -> dict:
     store_abs = os.path.abspath(store_dir)
     manifest_abs = os.path.abspath(manifest_path)
     if manifest_abs.startswith(store_abs + os.sep):
         raise ValueError("manifest_path must lie outside store_dir (the pass must not see the answer key)")
-    files, manifest = build_store()
+    if adjacent_dir is not None:
+        adjacent_abs = os.path.abspath(adjacent_dir)
+        if adjacent_abs == store_abs or adjacent_abs.startswith(store_abs + os.sep):
+            raise ValueError("adjacent_dir must lie outside store_dir "
+                             "(it models a different tier, not a subdir)")
+    files, adj_files, manifest = build_fixture(adjacent=adjacent_dir is not None)
     os.makedirs(store_dir, exist_ok=True)
     for fname, content in files.items():
         with open(os.path.join(store_dir, fname), "w", encoding="utf-8") as f:
             f.write(content)
+    if adjacent_dir is not None:
+        os.makedirs(adjacent_dir, exist_ok=True)
+        for fname, content in adj_files.items():
+            with open(os.path.join(adjacent_dir, fname), "w", encoding="utf-8") as f:
+                f.write(content)
+        # The store reaches its adjacent tier the way real role stores do:
+        # a `shared` symlink (role-dir convention), relative so the fixture
+        # survives being moved as a pair.
+        link = os.path.join(store_dir, "shared")
+        if not os.path.lexists(link):
+            os.symlink(os.path.relpath(adjacent_abs, store_abs), link)
     os.makedirs(os.path.dirname(manifest_abs), exist_ok=True)
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
@@ -336,14 +426,18 @@ def main(argv=None) -> int:
     p.add_argument("--store", required=True, help="directory to create the fixture store in")
     p.add_argument("--manifest", required=True,
                    help="path for the manifest answer key (must be outside --store)")
+    p.add_argument("--adjacent", default=None,
+                   help="also seed an adjacent-tier store here, linked from "
+                        "the store as `shared` (adds the cross-tier pair)")
     args = p.parse_args(argv)
     try:
-        manifest = write_store(args.store, args.manifest)
+        manifest = write_store(args.store, args.manifest, adjacent_dir=args.adjacent)
     except ValueError as e:
         p.error(str(e))
-    n_files = len(build_store()[0])
-    print(f"seeded {n_files} files into {args.store} "
-          f"({len(manifest['items'])} planted items); manifest: {args.manifest}")
+    files, adj_files, _ = build_fixture(adjacent=args.adjacent is not None)
+    print(f"seeded {len(files)} store + {len(adj_files)} adjacent files into "
+          f"{args.store} ({len(manifest['items'])} planted items); "
+          f"manifest: {args.manifest}")
     return 0
 
 
