@@ -18,6 +18,7 @@ This skill is self-contained: follow it identically whether it was invoked as a 
   If it does not, refuse and report - never guess a different directory.
 - Never run `git commit`, `git push`, `git checkout`, or `gh pr create` yourself: the wrapper is the only write path.
 - Never demote content out of its tier or move content to another store: you clean WITHIN the store only.
+- Read scope is wider than write scope: you MAY read adjacent tiers for context, but a cross-tier near-duplicate is FLAGGED via the wrapper, never edited, merged, or retired across the boundary (see "Cross-tier duplicates").
 
 ## The preservation stance (anti-smoothing)
 
@@ -31,6 +32,20 @@ These rules are the countermeasure; they outrank tidiness:
   Retire a fact ONLY when a newer fact in this store contradicts it, and cite that newer fact in the commit message.
 - When in doubt, keep.
   A missed cleanup costs a little; a destroyed fact costs the store its trustworthiness.
+
+## Cross-tier duplicates: flag, don't fix
+
+Adjacent tiers are the stores this one cascades with: the store's `shared` symlink target if present, plus any tier directories the invocation names.
+Reading them is allowed and useful context; writing to them - or writing a cross-tier "fix" into this store - is forbidden.
+
+A cross-tier near-duplicate can mean four different things, and only a human can tell which:
+promotion residue (retire the lower-tier copy later), intentional shadowing (a load-bearing delta - leave it), a promotion signal (independent rediscovery - evidence for the promotion ladder, deduping would destroy it), or post-promotion divergence (human judgment on content).
+Because only one of the four is even a cleanup, the pass never chooses: when you find a near-duplicate spanning this store and an adjacent tier, record it as
+
+`python3 <tools-dir>/consolidate_pass.py flag --kind cross-tier-dup -m "<store-file> ~ <adjacent-path>: <one line of similarity evidence>"`
+
+Flags are report-only: the wrapper delivers them in the PR description (or in finish's output for a flags-only pass) together with the disposition menu, and no flag ever becomes a commit.
+A retire in THIS store justified only by an adjacent tier's copy is a cross-tier op in disguise - flag it instead; retire still requires a contradicting newer fact in this store.
 
 ## Operations
 
