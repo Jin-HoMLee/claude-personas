@@ -506,4 +506,42 @@ assert_equal "1" "$DOCTOR_EXIT" "fix mode cannot invent the payload: still exit 
 assert_not_exists "$repo/.pi/extensions/pi-inject-memory-index.ts" "no shim generated over a missing payload module"
 rm -rf "$tmp"
 
+echo "=== test_doctor_embedded: pi adapter - quote in pi_extension path refuses shim generation ==="
+tmp="$(mktemp -d)"
+make_embedded_fixture "$tmp"
+repo="$tmp/embedded-repo"
+home="$tmp/home"
+cat >> "$repo/.agents/manifest" <<'EOF'
+adapter=pi
+pi_extension=.agents/hooks/lib/we"ird.ts
+EOF
+mkdir -p "$repo/.agents/hooks/lib"
+echo "export default function () {}" > "$repo/.agents/hooks/lib/we\"ird.ts"
+
+run_doctor "$home" --root "$repo"
+assert_equal "1" "$DOCTOR_EXIT" "quote-bearing pi_extension: fix mode exit 1"
+assert_contains "$DOCTOR_STDOUT" "cannot embed safely" "refusal names the embed hazard (same guard as the codex generators)"
+assert_not_exists "$repo/.pi/extensions/we\"ird.ts" "no corrupted shim written for a quote-bearing path"
+rm -rf "$tmp"
+
+echo "=== test_doctor_embedded: pi adapter - basename collision across pi_extension entries is refused ==="
+tmp="$(mktemp -d)"
+make_embedded_fixture "$tmp"
+repo="$tmp/embedded-repo"
+home="$tmp/home"
+cat >> "$repo/.agents/manifest" <<'EOF'
+adapter=pi
+pi_extension=.agents/hooks/lib/a/ext.ts
+pi_extension=.agents/hooks/lib/b/ext.ts
+EOF
+mkdir -p "$repo/.agents/hooks/lib/a" "$repo/.agents/hooks/lib/b"
+echo "export default function () {}" > "$repo/.agents/hooks/lib/a/ext.ts"
+echo "export default function () {}" > "$repo/.agents/hooks/lib/b/ext.ts"
+
+run_doctor "$home" --root "$repo"
+assert_equal "1" "$DOCTOR_EXIT" "colliding basenames: fix mode exit 1"
+assert_contains "$DOCTOR_STDOUT" "collide" "error names the basename collision"
+assert_not_exists "$repo/.pi/extensions/ext.ts" "no shim written when two modules would claim it"
+rm -rf "$tmp"
+
 print_summary
