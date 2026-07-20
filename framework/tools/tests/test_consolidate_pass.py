@@ -517,5 +517,119 @@ class TestFinishDeltaGate(unittest.TestCase):
         self.assertIn("FAIL", err)
 
 
+class TestFlag(unittest.TestCase):
+    """#102: cross-tier duplicates are FLAGGED, never fixed. The flag
+    subcommand records report-only entries; finish delivers them in the PR
+    body / stdout report; no flag ever becomes a commit or a tree write."""
+
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory(prefix="mem-")
+        self.root = make_repo(self._td.name)
+        self._oldcwd = os.getcwd()
+        os.chdir(self.root)
+
+    def tearDown(self):
+        os.chdir(self._oldcwd)
+        self._td.cleanup()
+
+    def _begin(self):
+        return cp.main(["begin", "--store", os.path.join(self.root, "mem")])
+
+    def _flag(self, msg="mem/fact_a.md ~ ../shared/fact_a2.md: same pool cap"):
+        return cp.main(["flag", "--kind", "cross-tier-dup", "-m", msg])
+
+    def _commit_op(self):
+        with open(os.path.join(self.root, "mem", "fact_a.md"), "w") as f:
+            f.write("---\nname: fact-a\n---\n\nMerged.\n")
+        cp.main(["commit", "--op", "dedupe", "-m", "merge"])
+
+    def _finish(self):
+        buf, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(buf), redirect_stderr(err):
+            rc = cp.main(["finish"])
+        return rc, buf.getvalue(), err.getvalue()
+
+    def test_flag_requires_active_pass(self):
+        self.assertNotEqual(self._flag(), 0)
+
+    def test_flag_refuses_off_pass_branch(self):
+        self._begin()
+        _git(self.root, "checkout", "-q", "main")
+        self.assertNotEqual(self._flag(), 0)
+
+    def test_flag_rejects_unknown_kind(self):
+        self._begin()
+        with self.assertRaises(SystemExit):
+            cp.main(["flag", "--kind", "tidy-me", "-m", "m"])
+
+    def test_flag_records_without_touching_tree(self):
+        self._begin()
+        self.assertEqual(self._flag(), 0)
+        # The tree stays clean: a flag is state, never an edit or a commit.
+        self.assertEqual(_git(self.root, "status", "--porcelain").stdout.strip(), "")
+        self.assertEqual(_git(self.root, "log", "-1", "--format=%s").stdout.strip(), "seed")
+        with open(cp.flags_path(self.root), encoding="utf-8") as f:
+            self.assertIn("flag(cross-tier-dup): mem/fact_a.md", f.read())
+
+    def test_finish_reports_flags_alongside_ops(self):
+        self._begin()
+        self._commit_op()
+        self._flag()
+        rc, out, _ = self._finish()
+        self.assertEqual(rc, 0)
+        self.assertIn("flag(cross-tier-dup): mem/fact_a.md", out)
+        self.assertIn("promotion ladder", out)  # the disposition menu rides along
+
+    def test_zero_op_finish_still_reports_flags_and_cleans_up(self):
+        self._begin()
+        self._flag()
+        rc, out, _ = self._finish()
+        self.assertEqual(rc, 0)
+        self.assertIn("flag(cross-tier-dup):", out)
+        self.assertEqual(_git(self.root, "rev-parse", "--abbrev-ref",
+                              "HEAD").stdout.strip(), "main")
+        self.assertEqual(_git(self.root, "branch", "--list",
+                              "consolidate/*").stdout.strip(), "")
+
+    def test_finish_clears_flags(self):
+        self._begin()
+        self._flag()
+        self._finish()
+        self.assertFalse(os.path.exists(cp.flags_path(self.root)))
+
+    def test_abort_discards_flags(self):
+        self._begin()
+        self._flag()
+        self.assertEqual(cp.main(["abort"]), 0)
+        self.assertFalse(os.path.exists(cp.flags_path(self.root)))
+
+    def test_multiple_flags_kept_in_order(self):
+        self._begin()
+        self._flag("first ~ pair")
+        self._flag("second ~ pair")
+        with open(cp.flags_path(self.root), encoding="utf-8") as f:
+            content = f.read()
+        self.assertLess(content.index("first"), content.index("second"))
+
+
+class TestPrBody(unittest.TestCase):
+    """The PR body builder is a pure function: ops as bullets, flags in a
+    report-only section carrying the four-way disposition menu (#102)."""
+
+    def test_ops_only_body_has_no_flags_section(self):
+        body = cp.pr_body(["consolidate(dedupe): merge a"], [])
+        self.assertIn("consolidate(dedupe): merge a", body)
+        self.assertNotIn("Flags", body)
+
+    def test_flags_section_carries_disposition_menu(self):
+        body = cp.pr_body(["consolidate(dedupe): merge a"],
+                          ["flag(cross-tier-dup): a.md ~ ../shared/b.md: same fact"])
+        self.assertIn("flag(cross-tier-dup): a.md ~ ../shared/b.md: same fact", body)
+        for phrase in ("report-only", "promotion residue", "intentional shadowing",
+                       "promotion signal", "post-promotion divergence",
+                       "promotion ladder"):
+            self.assertIn(phrase, body)
+
+
 if __name__ == "__main__":
     unittest.main()
