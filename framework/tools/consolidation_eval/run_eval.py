@@ -65,7 +65,12 @@ def _run_once(run_no: int, pass_cmd: str, keep: bool, timeout: int) -> dict:
     workdir = tempfile.mkdtemp(prefix="mem-")
     manifest_dir = tempfile.mkdtemp(prefix="mem-")
     store = os.path.join(workdir, "store")
-    manifest = seed.write_store(store, os.path.join(manifest_dir, "manifest.json"))
+    # The adjacent tier (#102) sits beside the store, outside its git repo,
+    # reachable from inside via the seeded `shared` symlink - the pass may
+    # read it; any write to it is caught by the cross_tier hash check.
+    adjacent = os.path.join(workdir, "shared")
+    manifest = seed.write_store(store, os.path.join(manifest_dir, "manifest.json"),
+                                adjacent_dir=adjacent)
     _git(store, "init", "-q")
     _git(store, "add", "-A")
     _git(store, "commit", "-q", "-m", "memory store snapshot")
@@ -74,6 +79,9 @@ def _run_once(run_no: int, pass_cmd: str, keep: bool, timeout: int) -> dict:
         proc = subprocess.run(pass_cmd, shell=True, cwd=store, timeout=timeout,
                               check=False, capture_output=True, text=True)
         pass_output_tail = (proc.stderr + proc.stdout)[-2000:]
+        # Reported, never gated - mirrors the cleanup score (#102). Counted
+        # over the FULL output, not the recorded tail.
+        flags_emitted = (proc.stdout + proc.stderr).count("flag(cross-tier-dup):")
 
         if proc.returncode != 0:
             # A pass command that exits non-zero (crashed, or a shell
@@ -85,6 +93,7 @@ def _run_once(run_no: int, pass_cmd: str, keep: bool, timeout: int) -> dict:
                       "error": f"pass_cmd exited {proc.returncode}",
                       "pass_returncode": proc.returncode,
                       "pass_output_tail": pass_output_tail,
+                      "flags_emitted": flags_emitted,
                       "canaries_survived": 0, "canaries_total": 0,
                       "cleanup_done": 0, "cleanup_total": 0, "results": []}
             return result
@@ -94,13 +103,14 @@ def _run_once(run_no: int, pass_cmd: str, keep: bool, timeout: int) -> dict:
         if branches:
             _git(store, "checkout", "-q", branches[0])
 
-        verdict = check.evaluate(manifest, store)
+        verdict = check.evaluate(manifest, store, adjacent_dir=adjacent)
         result = {"run": run_no, "workdir": workdir if keep else None,
                   "manifest_dir": manifest_dir if keep else None,
                   "branch_checked": branches[0] if branches else None,
                   "gate_pass": verdict["gate_pass"],
                   "pass_returncode": proc.returncode,
                   "pass_output_tail": pass_output_tail,
+                  "flags_emitted": flags_emitted,
                   "canaries_survived": verdict["canaries_survived"],
                   "canaries_total": verdict["canaries_total"],
                   "cleanup_done": verdict["cleanup_done"],
@@ -116,6 +126,7 @@ def _run_once(run_no: int, pass_cmd: str, keep: bool, timeout: int) -> dict:
                   "manifest_dir": manifest_dir if keep else None,
                   "branch_checked": None, "gate_pass": False,
                   "error": f"{type(exc).__name__}: {exc}",
+                  "flags_emitted": 0,
                   "canaries_survived": 0, "canaries_total": 0,
                   "cleanup_done": 0, "cleanup_total": 0, "results": []}
     finally:
@@ -136,7 +147,8 @@ def run(runs: int, pass_cmd: str, model, keep: bool, timeout: int) -> dict:
         r = _run_once(i, pass_cmd, keep, timeout)
         msg = (f"run {i}/{runs}: gate={'PASS' if r['gate_pass'] else 'FAIL'} "
                f"survival={r['canaries_survived']}/{r['canaries_total']} "
-               f"cleanup={r['cleanup_done']}/{r['cleanup_total']}")
+               f"cleanup={r['cleanup_done']}/{r['cleanup_total']} "
+               f"flags={r['flags_emitted']}")
         if "error" in r:
             msg += f" error={r['error']}"
         print(msg)
