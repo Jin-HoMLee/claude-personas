@@ -3,6 +3,16 @@
 One entry per `framework/v*` tag: what breaks / what to do.
 The payload = the file set declared in [FILES](FILES); instances consume it via `install.sh` against the recorded `framework_ref` pin.
 
+## framework/v1.2.0 - 2026-07-20
+
+Minor: pi coding agent adapter - the fourth supported vendor, embedded topology only (claude-personas#104, PR #105).
+New payload file `pi-inject-memory-index.ts` (lands at `.agents/hooks/lib/`): a pi extension that injects the always-loaded memory index once per session as a persistent custom message (`before_agent_start` + session-entry dedup), walking up from cwd (`.agents/memory`, then the `.claude/memory` hop), bounded by the same Claude Code native size guard as the Codex hooks (~200 lines / ~25 KB, `PERSONAS_INJECT_BYTE_CAP` / `PERSONAS_INJECT_LINE_CAP` overrides, explicit `[TRUNCATED ...]` trailer), with on-demand `shared/` + `user/` pointers; errors are swallowed so a session start can never break on it.
+doctor.sh: `adapter=pi` joins the valid adapter values; new embedded-only repeatable `pi_extension=<repo-relative module path>` key; fix mode generates a one-line re-export shim at `.pi/extensions/<basename>` (pi's trust-gated discovery dir), regenerated wholesale on mismatch like `.codex/hooks.json`; a missing payload module is report-only (installer-owned); quote/backslash module paths and basename collisions across entries are refused instead of emitting corrupted or silently-overwritten shims.
+Docs: new Pi section in `docs/vendor-caveats.md` (version floor pi >= 0.80.10 incl. the 0.80.3 silent-hang lesson, the project-trust silent-drop as the #1 failure mode, `--model provider/id` not `--provider`), README manifest table + embedded note, substrate README pi bullet.
+Live-verified on pi 0.80.10: doctor-wired scratch instance quoted a MEMORY.md-only canary under `--no-tools`; `--no-approve` negative control saw nothing; one injection across a continued session.
+Breaks: nothing. Role-clone wiring for pi (`init-clone.sh`) is not implemented; Cline stays deferred, usage-gated.
+Do: bump `framework_ref=framework/v1.2.0` and run `install.sh --sync`, then `doctor.sh`. To wire pi on an embedded instance: declare `adapter=pi` + `pi_extension=.agents/hooks/lib/pi-inject-memory-index.ts` in `.agents/manifest`, run `doctor.sh` (generates the shim), and grant pi's project trust once (`/trust` or `--approve`).
+
 ## framework/v1.1.3 - 2026-07-15
 
 Patch: completes the `.claude -> .agents` aliased-layout support that v1.1.2 started (doctor), closing the two remaining tool gaps plus a lint hardening pass.
