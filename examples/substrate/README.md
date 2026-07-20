@@ -1,6 +1,6 @@
 # Embedded-topology substrate (copy-and-adapt)
 
-This directory carries the adapter set for the EMBEDDED topology: memory lives inside the same repo under `.agents/memory/`, and three thin vendor adapters point at it.
+This directory carries the adapter set for the EMBEDDED topology: memory lives inside the same repo under `.agents/memory/`, and thin vendor adapters (Claude Code, Codex, OpenCode, pi) point at it.
 It is the pattern proven on the cerebrum instance (see the per-vendor caveats doc: `../../docs/vendor-caveats.md`).
 
 ## Which topology am I?
@@ -19,6 +19,9 @@ Boundary test: does a decision recorded in repo A change what an agent does in r
   Either write your own SessionStart script that prints a `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"..."}}` envelope with your index content, or reuse this template's `framework/hooks/inject-role-index.sh` pointed at your repo's `.agents/memory` directory (its shared-index half no-ops when `shared/MEMORY.md` is absent).
 - `.claude/settings.json` - copy the `permissions.ask` stanza if you want write-prompts on executing artifacts.
   The spec's hook stanza is deliberately omitted here, same treatment as the symlinks below - hooks are instance-specific, and a committed hook path copied verbatim from another repo would silently point nowhere.
+- Pi has no file to copy here: it reads `AGENTS.md` and discovers `.agents/skills/` natively.
+  Declare `adapter=pi` plus `pi_extension=.agents/hooks/lib/pi-inject-memory-index.ts` in `.agents/manifest`, install the framework payload (`install.sh`), and run `doctor.sh` - fix mode generates the `.pi/extensions/` re-export shim for you.
+  Then grant pi's project trust once (`/trust` interactively, or `--approve`); an untrusted project silently drops project extensions and skills (see `../../docs/vendor-caveats.md`, Pi section).
 
 ## Symlinks to create (not committed here - create them in YOUR repo)
 

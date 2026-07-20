@@ -155,6 +155,9 @@ One-time steps per machine that the script cannot perform (it prints them):
 Sharp edges per vendor (trust layers, symlink bugs, context ceilings) live in [docs/vendor-caveats.md](docs/vendor-caveats.md).
 Embedded-topology projects (memory inside the same repo) should start from [examples/substrate/](examples/substrate/) instead of `init-clone.sh`.
 
+A fourth vendor, the **pi coding agent**, is supported on the embedded topology (claude-personas#104): pi natively reads `AGENTS.md`/`CLAUDE.md` and discovers `.agents/skills/`, so its whole adapter is one memory-index injection extension - declare `adapter=pi` + the `pi_extension` manifest key and let `doctor.sh` generate the `.pi/extensions/` shim (requires pi >= 0.80.10; trust gate and other sharp edges in the vendor caveats doc).
+Role-clone wiring for pi (`init-clone.sh`) is not implemented yet.
+
 ## Checking your wiring: `doctor.sh`
 
 `init-clone.sh` wires a role clone once.
@@ -175,9 +178,10 @@ The manifest is read with grep/cut in bash (and a small reader in `memory_cliff.
 | `manifest_version` | `1` | all (required) | Format version; doctor refuses versions it does not know |
 | `topology` | `role-clones` \| `embedded` \| `user-tier` | all (required) | Selects the check catalog; never inferred from repo shape |
 | `memory_layout` | `roles` \| `flat` | all (required) | Drives payload checks and `memory_cliff.py` corpus discovery |
-| `adapter` | `claude-code` \| `codex` \| `opencode` | all (repeatable) | Which vendor adapters must be wired; an undeclared adapter is not checked |
+| `adapter` | `claude-code` \| `codex` \| `opencode` \| `pi` | all (repeatable) | Which vendor adapters must be wired; an undeclared adapter is not checked |
 | `claude_hook` | repo-relative script path | embedded (repeatable) | Hook that `.claude/settings.json` must wire via `$CLAUDE_PROJECT_DIR` |
 | `codex_hook` | repo-relative script path | embedded (repeatable) | Hook that `.codex/hooks.json` must wire with this instance's absolute path |
+| `pi_extension` | repo-relative module path | embedded (repeatable) | Extension module a generated `.pi/extensions/` shim must re-export (fix mode writes the shim) |
 | `skills_mount` | `true` \| `false` (default) | embedded | Whether `.claude/skills -> ../.agents/skills` must exist |
 | `opencode` | `global` (default) \| `per-clone` | role-clones | Which OpenCode wiring variant the clones use |
 
@@ -211,7 +215,7 @@ cd user-memory
 ```
 
 `--init <topology>` writes a commented starter manifest for that topology and exits; it refuses to overwrite an existing one.
-Edit the starter to match your instance - delete (or comment out) an `adapter=` line for a vendor you don't wire, and set a topology-specific optional key (`opencode=<mode>`, `claude_hook=<path>`, `codex_hook=<path>`, `skills_mount=<bool>`) by adding a bare `key=value` line.
+Edit the starter to match your instance - delete (or comment out) an `adapter=` line for a vendor you don't wire, and set a topology-specific optional key (`opencode=<mode>`, `claude_hook=<path>`, `codex_hook=<path>`, `pi_extension=<path>`, `skills_mount=<bool>`) by adding a bare `key=value` line.
 Don't just remove the leading `#` from one of the starter's commented examples: they carry trailing inline comments, and the strict parser rejects anything after the value on a `key=value` line.
 `--check` reports drift and exits nonzero without changing anything - safe to run any time, including in CI.
 Plain `doctor.sh` (no flags) is fix mode: it repairs whatever it can, then reports on anything it can't the same way `--check` would.

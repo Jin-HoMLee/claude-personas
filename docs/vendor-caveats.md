@@ -1,6 +1,6 @@
 # Per-vendor caveats
 
-Dated, verified sharp edges of the three supported tools.
+Dated, verified sharp edges of the supported tools (Claude Code, Codex, OpenCode, pi).
 Re-verify anything volatile before relying on it; each line carries the date it was last checked.
 
 ## Claude Code
@@ -28,6 +28,14 @@ Re-verify anything volatile before relying on it; each line carries the date it 
 - No local config variant (`opencode.local.json` does not exist; anomalyco/opencode#17232 open) - the per-clone fallback file is plain `opencode.json`, untracked via `.git/info/exclude`. (2026-07-03)
 - Glob-through-symlink for `instructions` entries is gated on `follow: false` upstream behavior - live test 1 below decides the default wiring. (2026-07-03)
 - Switching a clone from `--opencode-per-clone` back to the global default does NOT remove the per-clone `opencode.json`: a later plain `--force` run leaves it in place (the script never deletes a file you may have edited) while printing the global-entry note. The stale file keeps working but pins an absolute path that goes stale if the clone moves - delete it by hand when switching back. (2026-07-04)
+
+## Pi
+
+- Version floor: **pi >= 0.80.10**. 0.80.3 HUNG silently at startup (no output, no process; a `--model` override did not escape it) whenever settings `defaultModel` was a DeepSeek model and `defaultThinkingLevel` was not `off` - upstream earendil-works/pi#6521 + earendil-works/pi#6433, fixed by 0.80.10 and retested clean. Lesson: pi's failure mode for a bad model/thinking config is a SILENT hang, not an error - probe any new pi config with `pi -p` plus a timeout before relying on it. (2026-07-20)
+- Trust gate is the **#1 silent-failure mode**: project-local `.pi/extensions/` (where the adapter shim lives) and project `.agents/skills/` load only after pi's project-trust grant. `--approve` (or interactive `/trust`) loads them; `--no-approve` means DISTRUST and silently drops them; the non-interactive default (`defaultProjectTrust: ask`) also ignores them without a word. A wired repo that answers as if it had no memory index is almost certainly untrusted, not broken. (2026-07-20)
+- Model selection: `--provider X` alone does NOT switch models - use `--model provider/id`. (2026-07-20)
+- Native reads (live-verified in a wired embedded instance): pi loads `AGENTS.md` **or** `CLAUDE.md` walking up from cwd, plus `~/.pi/agent/AGENTS.md` as global, and natively discovers `.agents/skills/` (project, ancestors up to the git root, and `~/.agents/skills/`). So context files and skills need ZERO adapter code; the memory-index injection extension is pi's entire adapter. (2026-07-20)
+- Injection parity: the extension (`pi_extension` manifest key, claude-personas#104) injects the index once per session as a persistent custom message, bounded by the same Claude Code native size guard as the Codex hooks (~200 lines / ~25 KB, `PERSONAS_INJECT_BYTE_CAP` / `PERSONAS_INJECT_LINE_CAP` overrides, explicit `[TRUNCATED ...]` trailer), with on-demand pointers for `shared/` and `user/` indexes. (2026-07-20)
 
 ## Live-test results
 
