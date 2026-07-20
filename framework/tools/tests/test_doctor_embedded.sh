@@ -438,4 +438,110 @@ assert_contains "$DOCTOR_STDOUT" "CLAUDE.md -> AGENTS.md resolves back to the li
 assert_not_exists "$repo/CLAUDE.md" "fix mode never created the cycle-closing CLAUDE.md link"
 rm -rf "$tmp"
 
+# --- pi adapter (claude-personas#104): .pi/extensions shim over the installed payload ---
+
+# add_pi_adapter <repo> - declare the pi adapter in the fixture manifest and
+# stage the real extension payload at its installed location. Does NOT create
+# the .pi/extensions shim - scenarios control that.
+PI_EXT_SRC="$(cd "$SCRIPT_DIR/../../hooks" && pwd)/pi-inject-memory-index.ts"
+add_pi_adapter() {
+  cat >> "$1/.agents/manifest" <<'EOF'
+adapter=pi
+pi_extension=.agents/hooks/lib/pi-inject-memory-index.ts
+EOF
+  mkdir -p "$1/.agents/hooks/lib"
+  cp "$PI_EXT_SRC" "$1/.agents/hooks/lib/pi-inject-memory-index.ts"
+}
+
+echo "=== test_doctor_embedded: pi adapter - fix mode generates the .pi/extensions shim, then --check is clean ==="
+tmp="$(mktemp -d)"
+make_embedded_fixture "$tmp"
+repo="$tmp/embedded-repo"
+home="$tmp/home"
+add_pi_adapter "$repo"
+
+run_doctor "$home" --root "$repo"
+assert_equal "0" "$DOCTOR_EXIT" "fix mode with pi declared: exit 0"
+assert_contains "$DOCTOR_STDOUT" "FIXED: .pi/extensions/pi-inject-memory-index.ts" "fix mode reports the generated shim"
+assert_exists "$repo/.pi/extensions/pi-inject-memory-index.ts" "shim file created"
+assert_contains "$(cat "$repo/.pi/extensions/pi-inject-memory-index.ts")" 'export { default } from "../../.agents/hooks/lib/pi-inject-memory-index.ts";' "shim re-exports the declared payload module"
+
+run_doctor "$home" --check --root "$repo"
+assert_equal "0" "$DOCTOR_EXIT" "--check after shim generation: exit 0"
+rm -rf "$tmp"
+
+echo "=== test_doctor_embedded: pi adapter - corrupted shim is DRIFT, fix regenerates it ==="
+tmp="$(mktemp -d)"
+make_embedded_fixture "$tmp"
+repo="$tmp/embedded-repo"
+home="$tmp/home"
+add_pi_adapter "$repo"
+run_doctor "$home" --root "$repo"
+echo "// stale hand edit" > "$repo/.pi/extensions/pi-inject-memory-index.ts"
+
+run_doctor "$home" --check --root "$repo"
+assert_equal "1" "$DOCTOR_EXIT" "corrupted shim: --check exit 1"
+assert_contains "$DOCTOR_STDOUT" "DRIFT: .pi/extensions/pi-inject-memory-index.ts" "corrupted shim named in DRIFT"
+
+run_doctor "$home" --root "$repo"
+assert_equal "0" "$DOCTOR_EXIT" "fix mode regenerates the shim: exit 0"
+assert_contains "$(cat "$repo/.pi/extensions/pi-inject-memory-index.ts")" 'export { default } from "../../.agents/hooks/lib/pi-inject-memory-index.ts";' "regenerated shim re-exports the payload again"
+rm -rf "$tmp"
+
+echo "=== test_doctor_embedded: pi adapter - missing payload module is report-only DRIFT ==="
+tmp="$(mktemp -d)"
+make_embedded_fixture "$tmp"
+repo="$tmp/embedded-repo"
+home="$tmp/home"
+add_pi_adapter "$repo"
+rm -f "$repo/.agents/hooks/lib/pi-inject-memory-index.ts"
+
+run_doctor "$home" --check --root "$repo"
+assert_equal "1" "$DOCTOR_EXIT" "missing payload module: --check exit 1"
+assert_contains "$DOCTOR_STDOUT" "pi_extension '.agents/hooks/lib/pi-inject-memory-index.ts' missing" "missing module named in DRIFT"
+assert_contains "$DOCTOR_STDOUT" "install.sh --sync" "DRIFT points at the installer, not at hand-editing"
+
+run_doctor "$home" --root "$repo"
+assert_equal "1" "$DOCTOR_EXIT" "fix mode cannot invent the payload: still exit 1"
+assert_not_exists "$repo/.pi/extensions/pi-inject-memory-index.ts" "no shim generated over a missing payload module"
+rm -rf "$tmp"
+
+echo "=== test_doctor_embedded: pi adapter - quote in pi_extension path refuses shim generation ==="
+tmp="$(mktemp -d)"
+make_embedded_fixture "$tmp"
+repo="$tmp/embedded-repo"
+home="$tmp/home"
+cat >> "$repo/.agents/manifest" <<'EOF'
+adapter=pi
+pi_extension=.agents/hooks/lib/we"ird.ts
+EOF
+mkdir -p "$repo/.agents/hooks/lib"
+echo "export default function () {}" > "$repo/.agents/hooks/lib/we\"ird.ts"
+
+run_doctor "$home" --root "$repo"
+assert_equal "1" "$DOCTOR_EXIT" "quote-bearing pi_extension: fix mode exit 1"
+assert_contains "$DOCTOR_STDOUT" "cannot embed safely" "refusal names the embed hazard (same guard as the codex generators)"
+assert_not_exists "$repo/.pi/extensions/we\"ird.ts" "no corrupted shim written for a quote-bearing path"
+rm -rf "$tmp"
+
+echo "=== test_doctor_embedded: pi adapter - basename collision across pi_extension entries is refused ==="
+tmp="$(mktemp -d)"
+make_embedded_fixture "$tmp"
+repo="$tmp/embedded-repo"
+home="$tmp/home"
+cat >> "$repo/.agents/manifest" <<'EOF'
+adapter=pi
+pi_extension=.agents/hooks/lib/a/ext.ts
+pi_extension=.agents/hooks/lib/b/ext.ts
+EOF
+mkdir -p "$repo/.agents/hooks/lib/a" "$repo/.agents/hooks/lib/b"
+echo "export default function () {}" > "$repo/.agents/hooks/lib/a/ext.ts"
+echo "export default function () {}" > "$repo/.agents/hooks/lib/b/ext.ts"
+
+run_doctor "$home" --root "$repo"
+assert_equal "1" "$DOCTOR_EXIT" "colliding basenames: fix mode exit 1"
+assert_contains "$DOCTOR_STDOUT" "collide" "error names the basename collision"
+assert_not_exists "$repo/.pi/extensions/ext.ts" "no shim written when two modules would claim it"
+rm -rf "$tmp"
+
 print_summary

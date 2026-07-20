@@ -708,4 +708,48 @@ run_doctor --root "$tmp/inst"
 assert_equal "0" "$DOCTOR_EXIT" "valid role_source on embedded: exit 0"
 rm -rf "$tmp"
 
+echo "=== test_doctor_manifest: adapter=pi is a valid adapter value ==="
+tmp="$(mktemp -d)"
+mkdir -p "$tmp/.agents/memory"
+echo "# idx" > "$tmp/.agents/memory/MEMORY.md"
+cat > "$tmp/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=embedded
+memory_layout=flat
+adapter=pi
+EOF
+run_doctor --check --root "$tmp"
+assert_not_contains "$DOCTOR_STDERR" "unknown adapter" "adapter=pi parses without an unknown-adapter error"
+rm -rf "$tmp"
+
+echo "=== test_doctor_manifest: pi_extension is embedded-only ==="
+tmp="$(mktemp -d)"
+mkdir -p "$tmp/.agents"
+cat > "$tmp/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=user-tier
+memory_layout=flat
+adapter=pi
+pi_extension=.agents/hooks/lib/pi-inject-memory-index.ts
+EOF
+run_doctor --check --root "$tmp"
+assert_equal "2" "$DOCTOR_EXIT" "pi_extension outside embedded: exit 2"
+assert_contains "$DOCTOR_STDERR" "only valid for topology=embedded" "error names the embedded-only constraint"
+rm -rf "$tmp"
+
+echo "=== test_doctor_manifest: pi_extension must be repo-relative ==="
+tmp="$(mktemp -d)"
+mkdir -p "$tmp/.agents"
+cat > "$tmp/.agents/manifest" <<'EOF'
+manifest_version=1
+topology=embedded
+memory_layout=flat
+adapter=pi
+pi_extension=/abs/path/ext.ts
+EOF
+run_doctor --check --root "$tmp"
+assert_equal "2" "$DOCTOR_EXIT" "absolute pi_extension: exit 2"
+assert_contains "$DOCTOR_STDERR" "repo-relative" "error names the repo-relative requirement"
+rm -rf "$tmp"
+
 print_summary
