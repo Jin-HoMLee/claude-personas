@@ -603,6 +603,18 @@ class TestFlag(unittest.TestCase):
         self.assertEqual(cp.main(["abort"]), 0)
         self.assertFalse(os.path.exists(cp.flags_path(self.root)))
 
+    def test_flag_message_newlines_collapse_to_one_entry(self):
+        # A newline smuggled into -m must not split one flag into two report
+        # entries (the fragment would masquerade as a prefix-less flag and
+        # inflate the count). Found by running, 2026-07-20.
+        self._begin()
+        self.assertEqual(cp.main(["flag", "--kind", "cross-tier-dup",
+                                  "-m", "line one\nsneaky second line"]), 0)
+        flags = cp.read_flags(self.root)
+        self.assertEqual(len(flags), 1)
+        self.assertEqual(flags[0],
+                         "flag(cross-tier-dup): line one sneaky second line")
+
     def test_multiple_flags_kept_in_order(self):
         self._begin()
         self._flag("first ~ pair")

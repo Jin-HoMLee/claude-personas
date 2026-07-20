@@ -298,7 +298,9 @@ def cmd_flag(args: argparse.Namespace) -> int:
         return _fail("no consolidation pass in progress; run begin first")
     if _current_branch(root) != branch:
         return _fail(f"not on the pass branch {branch}; refusing to flag")
-    entry = f"flag({args.kind}): {args.m}"
+    # One flag = one line: collapse any whitespace runs (newlines included)
+    # so a multi-line -m can't split into prefix-less phantom entries.
+    entry = f"flag({args.kind}): {' '.join(args.m.split())}"
     with open(flags_path(root), "a", encoding="utf-8") as f:
         f.write(entry + "\n")
     print(f"OK: {entry} (report-only; delivered by finish, never committed)")
