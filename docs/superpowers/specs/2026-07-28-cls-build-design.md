@@ -65,14 +65,16 @@ One episode per file in `episodes/`, named `YYYY-MM-DD-<topic-slug>.md` (matchin
 ---
 name: 2026-07-28-example-episode
 description: one-line gist used by the consolidation pass to triage
-metadata:
-  type: episode
-  salience: [surprise, decision]
-  session: <session date+topic or id>
+type: episode
+salience: [surprise, decision]
+session: <session date+topic or id>
 ---
 3-15 lines, past tense: context, what happened, outcome,
 and why it mattered. A distillation, never a transcript.
 ```
+
+Frontmatter is flat, matching the convention of all shipped example files for the four existing types.
+(Some downstream instance corpora nest fields under a `metadata:` block; that is an instance-local variant, not the framework canon. Episode validation in `consolidate_pass.py` treats the flat form as canonical.)
 
 - `episode` becomes a fifth memory type alongside `user | feedback | project | reference`.
 - Lifecycle state is expressed by location, not frontmatter: `episodes/` = pending, `archive/` = forgotten. A state change is a file move, visible in a PR diff.
@@ -130,7 +132,7 @@ In the same pass and the same PR:
 ### Output
 
 One `consolidate/*` branch PR carrying promotions, moves, and expiries.
-The human merge is the gate, same T2 trust tier as the existing consolidation machinery.
+The human merge is the gate, identical to the existing consolidation machinery's human/MM merge gate.
 
 ## Prospective layer (minimal scope)
 
